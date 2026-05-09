@@ -14,10 +14,10 @@ if ([string]::IsNullOrWhiteSpace($Version)) {
 $tag = "v$Version"
 $artifactDir = Join-Path $root "release-artifacts\$tag"
 $assetNames = @(
-  "latest.json",
   "OpenClaw Mission Control_$($Version)_x64-setup.exe",
   "OpenClaw Mission Control_$($Version)_x64-setup.exe.sig",
-  "OpenClaw Mission Control_$($Version)_x64_en-US.msi"
+  "OpenClaw Mission Control_$($Version)_x64_en-US.msi",
+  "latest.json"
 )
 
 if (!(Test-Path -LiteralPath $artifactDir)) {
@@ -111,17 +111,34 @@ try {
 
 $uploadBase = $release.upload_url -replace "\{.*$", ""
 $existingAssets = Invoke-GitHubJson -Method Get -Uri "$apiRoot/releases/$($release.id)/assets?per_page=100"
+$uploadedAssets = @{}
 
 foreach ($name in $assetNames) {
-  $existing = $existingAssets | Where-Object { $_.name -eq $name } | Select-Object -First 1
-  if ($existing) {
+  $lookupNames = @($name, ($name -replace " ", ".")) | Select-Object -Unique
+  $matchingAssets = @($existingAssets | Where-Object { $lookupNames -contains $_.name })
+  foreach ($existing in $matchingAssets) {
     Invoke-GitHubJson -Method Delete -Uri "$apiRoot/releases/assets/$($existing.id)" | Out-Null
-    Write-Host "Deleted existing asset $name."
+    Write-Host "Deleted existing asset $($existing.name)."
   }
 
   $assetPath = Join-Path $artifactDir $name
+
+  if ($name -eq "latest.json") {
+    $setupName = "OpenClaw Mission Control_$($Version)_x64-setup.exe"
+    if (!$uploadedAssets.ContainsKey($setupName)) {
+      throw "Cannot upload latest.json before the NSIS setup asset has uploaded."
+    }
+
+    $manifest = Get-Content -Raw -LiteralPath $assetPath | ConvertFrom-Json
+    $manifest.platforms.'windows-x86_64'.url = $uploadedAssets[$setupName].browser_download_url
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($assetPath, (($manifest | ConvertTo-Json -Depth 10) + [Environment]::NewLine), $utf8NoBom)
+    Write-Host "Rewrote latest.json URL to GitHub asset URL: $($manifest.platforms.'windows-x86_64'.url)"
+  }
+
   $encodedName = [System.Uri]::EscapeDataString($name)
-  Invoke-GitHubUpload -Uri "$($uploadBase)?name=$encodedName" -Path $assetPath | Out-Null
+  $uploaded = Invoke-GitHubUpload -Uri "$($uploadBase)?name=$encodedName" -Path $assetPath
+  $uploadedAssets[$name] = $uploaded
   Write-Host "Uploaded $name."
 }
 
