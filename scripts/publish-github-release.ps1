@@ -1,12 +1,16 @@
 param(
   [string]$Owner = "tagartonline99-cmd",
   [string]$Repo = "openclaw-mission-control",
-  [string]$Version = "0.1.2"
+  [string]$Version = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $packageJson = Get-Content -Raw -LiteralPath (Join-Path $root "package.json") | ConvertFrom-Json
+  $Version = $packageJson.version
+}
 $tag = "v$Version"
 $artifactDir = Join-Path $root "release-artifacts\$tag"
 $assetNames = @(
@@ -96,7 +100,7 @@ try {
   $releaseBody = @{
     tag_name = $tag
     name = "OpenClaw Mission Control $Version"
-    body = "Corrected updater endpoint. This build checks the tagartonline99-cmd GitHub Releases feed."
+    body = "Updater verification release $Version. Confirms signed GitHub updater detection, prompt, install, relaunch, and data preservation."
     draft = $false
     prerelease = $false
   }

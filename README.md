@@ -119,7 +119,7 @@ npm.cmd run tauri build
 npm.cmd run release:prepare-updater
 ```
 
-Create GitHub release `v0.1.2` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
+Create GitHub release `v0.1.3` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
 
 For a controlled local dev launch that reuses an already-running Vite server, use:
 

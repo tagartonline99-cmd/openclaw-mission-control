@@ -11,6 +11,8 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
+const UPDATER_VERIFICATION_MARKER = "Updater verification release 0.1.3";
+
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;
   return Math.min(100, Math.round((downloaded / total) * 100));
@@ -127,6 +129,7 @@ export function UpdateManager({ autoCheck = false, compact = false }: { autoChec
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-amber-100">{UPDATER_VERIFICATION_MARKER}</p>
             <div className="rounded-md border border-white/10 bg-black/25 p-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <p className="text-sm leading-6 text-slate-300">{message}</p>
