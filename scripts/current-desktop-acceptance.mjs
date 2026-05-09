@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 
 const exePath =
   process.env.OPENCLAW_MC_EXE ??
   "C:\\Users\\User\\AppData\\Local\\OpenClaw Mission Control\\openclaw-mission-control.exe";
 const port = Number(process.env.OPENCLAW_MC_DEBUG_PORT ?? 9255);
+const expectedVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -244,6 +246,7 @@ async function main() {
 
     await route(client, "/launch-control", "Launch, budget, runner, and portfolio control");
     await waitFor(client, "document.body.innerText.includes('Approved Publishing And Outreach') && document.body.innerText.includes('Budget Ledger And Spend Controls') && document.body.innerText.includes('Portfolio Optimization')", "Launch Control panels");
+    await waitFor(client, "document.body.innerText.includes('Phase 17 Operating Core') && document.body.innerText.includes('MISSION TASKS') && document.body.innerText.includes('COMMAND/RESULT LEDGER')", "Business OS Launch Control panels");
     evidence.launchControlVisible = true;
     evidence.safetyCopyVisible = await client.evaluate("document.body.innerText.includes('Publishing, live messaging, outreach, and scaling require one approval per action')");
 
@@ -261,7 +264,7 @@ async function main() {
       })()`,
       "Tauri app version",
     );
-    assert(evidence.appVersion === "0.1.4", `Installed app version was ${evidence.appVersion}, expected 0.1.4`);
+    assert(evidence.appVersion === expectedVersion, `Installed app version was ${evidence.appVersion}, expected ${expectedVersion}`);
 
     const errors = await client.evaluate("JSON.stringify(window.__acceptanceErrors || [])");
     assert(errors === "[]", `Browser errors captured: ${errors}`);
