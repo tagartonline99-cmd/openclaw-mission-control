@@ -25,6 +25,7 @@ This build covers the local end-to-end MVP:
 - Phase 10 Production Asset Pipeline with local landing page drafts, content briefs, policy checks, claim review, and approval-locked publishing boundaries.
 - TeamLeader1A Chat with durable local conversation history, safe local replies, and approval-gated live TeamLeader1A turns.
 - Phases 11-16 Launch Control workspace for approved publishing/outreach posture, budget ledger visibility, controlled runner controls, portfolio optimization, diagnostics, signed updates, and local-first sync posture.
+- Phases 17-28 Business OS expansion: durable mission tasks, artifacts, command ledger, SEO source captures, keyword clusters, demand proof, static-site content drafts, affiliate offer review, read-only analytics snapshots, learning decisions, batch approvals, controlled job schedules, agent memory, publishing connector posture, spend/revenue ledger, and portfolio scoring.
 - Native Tauri plugin wiring for SQL, filesystem, dialog, and opener.
 
 ## Safety Position
@@ -121,7 +122,7 @@ npm.cmd run tauri build
 npm.cmd run release:prepare-updater
 ```
 
-Create GitHub release `v0.1.4` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
+Create GitHub release `v0.1.5` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
 
 For a controlled local dev launch that reuses an already-running Vite server, use:
 

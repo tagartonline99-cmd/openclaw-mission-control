@@ -12,16 +12,34 @@ import type {
   ApprovalRequest,
   ApprovalDecisionRecord,
   ApprovalStatus,
+  AffiliateOffer,
+  AnalyticsSnapshot,
+  BatchApprovalItem,
+  BatchApprovalPackage,
+  CommandLedgerEntry,
+  ContentItem,
+  DemandProofReport,
   Experiment,
+  ExperimentDecision,
   ExperimentAnalysis,
+  ExternalActionLockMode,
+  JobRun,
   MarketIntelligenceReport,
+  LearningCard,
+  MissionArtifact,
+  MissionTask,
   OpenClawApprovalPayload,
+  OfferClaimReview,
   OpenClawCommand,
   ObsidianNote,
   ProductionAsset,
   ProductionPack,
+  PublishingDiff,
+  ResearchSourceCapture,
   RealPilotRun,
   RiskLevel,
+  SeoKeywordCluster,
+  SiteProject,
   Task,
   TeamLeaderChatMessage,
   UserSettings,
@@ -88,6 +106,7 @@ type AppDataContextValue = {
   resetLocalData: () => Promise<void>;
   updateApprovalStatus: (approvalId: string, status: ApprovalStatus) => Promise<void>;
   updateSettings: (settings: UserSettings) => Promise<void>;
+  updateExternalActionLock: (mode: ExternalActionLockMode, reason: string) => Promise<void>;
   recordSystemLog: (input: { title: string; detail: string; severity?: "info" | "success" | "warning" | "danger" }) => Promise<void>;
   runSimulationNow: () => Promise<void>;
   setSimulationEnabled: (enabled: boolean) => void;
@@ -116,10 +135,20 @@ type AppDataContextValue = {
   completeAgentTask: (taskId: string) => Promise<void>;
   reviewAgentRun: (runId: string, status: AgentRunReviewStatus) => Promise<void>;
   createMarketIntelligenceReport: (questId: string) => Promise<string>;
+  createSeoResearchPack: (questId: string) => Promise<string>;
   createExperimentPlan: (input: ExperimentPlanInput) => Promise<string>;
   analyzeExperiment: (experimentId: string) => Promise<string>;
   createProductionPack: (questId: string) => Promise<string>;
   advanceProductionAsset: (assetId: string) => Promise<void>;
+  createSiteProject: (questId: string) => Promise<string>;
+  createContentItemFromCluster: (clusterId: string) => Promise<string>;
+  prepareStaticSiteDiff: (siteProjectId: string) => Promise<string>;
+  createAffiliateOffer: (questId: string) => Promise<string>;
+  reviewAffiliateOffer: (offerId: string) => Promise<string>;
+  syncSearchConsoleReadOnly: (questId?: string) => Promise<string>;
+  createLearningDecision: (questId: string) => Promise<string>;
+  createBatchApprovalFromDiff: (diffId: string) => Promise<string>;
+  runControlledJobNow: (scheduleId: string) => Promise<string>;
 };
 
 const AppDataContext = createContext<AppDataContextValue | null>(null);
@@ -206,6 +235,20 @@ function commandForPayload(payload: OpenClawApprovalPayload) {
   if (payload.actionKind === "agent_turn") return "openclaw.cmd agent --agent main --message <approved> --json";
   if (payload.actionKind === "url_research") return "openclaw.cmd agent --agent main --message <approved-url-research> --json";
   return `openclaw.cmd message send --channel ${payload.channel} --target ${payload.target} --message <approved>${payload.dryRun ? " --dry-run" : ""} --json`;
+}
+
+function connectorForPayload(payload: OpenClawApprovalPayload): CommandLedgerEntry["connector"] {
+  if (payload.actionKind === "channel_message" || payload.actionKind === "gateway_start" || payload.actionKind === "agent_turn" || payload.actionKind === "url_research") {
+    return "openclaw";
+  }
+  return "mission_control";
+}
+
+function ledgerStatusForApprovalStatus(status: ApprovalStatus): CommandLedgerEntry["status"] {
+  if (status === "approved") return "approved";
+  if (status === "rejected") return "cancelled";
+  if (status === "blocked") return "blocked";
+  return "approval_required";
 }
 
 function executionSummary(result: OpenClawBridgeResult) {
@@ -520,6 +563,112 @@ function marketReportFromQuest(state: AppDataState, questId: string): MarketInte
   };
 }
 
+function seoResearchPackFromQuest(state: AppDataState, questId: string) {
+  const quest = state.quests.find((item) => item.id === questId);
+  const idea = quest ? state.businessIdeas.find((item) => item.id === quest.businessIdeaId) : null;
+  const report = [...state.marketIntelligenceReports].filter((item) => item.questId === questId)[0] ?? (quest ? marketReportFromQuest(state, quest.id) : null);
+  if (!quest || !report) throw new Error("Quest not found for SEO research pack.");
+
+  const now = new Date().toISOString();
+  const sourceCapture: ResearchSourceCapture = {
+    id: id("source-capture"),
+    questId: quest.id,
+    reportId: report.id,
+    url: report.sourceUrls[0] ?? "manual://stored-mission-evidence",
+    title: `${quest.title} stored evidence capture`,
+    status: "manual",
+    captureMode: "manual",
+    evidenceSummary: report.demandSignals.map((signal) => signal.signal).join(" "),
+    citation: "Stored Mission Control evidence. Replace with approved URL capture before public citation.",
+    riskNotes: report.risks.join(" "),
+    capturedAt: now,
+  };
+  const cluster: SeoKeywordCluster = {
+    id: id("seo-cluster"),
+    questId: quest.id,
+    reportId: report.id,
+    name: `${quest.businessIdea} proof cluster`,
+    intent: report.keywordOpportunities[0]?.intent ?? (quest.type === "SEO quest" ? "informational" : "commercial"),
+    keywords:
+      report.keywordOpportunities.length > 0
+        ? report.keywordOpportunities.map((keyword) => keyword.keyword)
+        : [quest.businessIdea.toLowerCase(), `${quest.businessIdea.toLowerCase()} guide`, `${quest.businessIdea.toLowerCase()} comparison`],
+    targetAudience: idea?.targetAudience ?? "The selected quest audience.",
+    contentAngle: report.keywordOpportunities[0]?.contentAngle ?? idea?.trafficPlan ?? quest.nextAction,
+    monetizationFit: idea?.model === "Affiliate marketing" || idea?.model === "Content websites" ? "high" : "medium",
+    evidenceScore: report.evidenceScore,
+    status: report.evidenceScore >= 70 ? "ready_for_brief" : "needs_sources",
+    sourceCaptureIds: [sourceCapture.id],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const proof: DemandProofReport = {
+    id: id("demand-proof"),
+    questId: quest.id,
+    title: `${quest.title} demand proof`,
+    status: report.evidenceScore >= 70 ? "ready_for_validation" : "needs_more_evidence",
+    sourceCaptureIds: [sourceCapture.id],
+    keywordClusterIds: [cluster.id],
+    evidenceScore: report.evidenceScore,
+    demandSummary: report.teamLeaderSummary,
+    competitorGaps: report.competitorSnapshots.map((competitor) => competitor.gap),
+    assumptions: idea?.assumptions ?? ["Demand assumptions need approved source checks."],
+    recommendedNextStep: report.recommendedNextStep,
+    teamLeaderRecommendation:
+      report.evidenceScore >= 70
+        ? "Convert the strongest cluster into a claim-safe content brief, then review before publishing approval."
+        : "Collect more approved source captures before production or launch.",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const task: MissionTask = {
+    id: id("mission-task-seo"),
+    questId: quest.id,
+    type: "research",
+    title: `SEO demand proof pack for ${quest.title}`,
+    ownerAgentId: "agent-seo",
+    status: proof.status === "ready_for_validation" ? "ready_for_review" : "in_progress",
+    priority: "high",
+    approvalRequired: false,
+    dependencyIds: [],
+    artifactIds: [],
+    commandLedgerEntryIds: [],
+    successCriteria: ["Demand proof report exists", "Keyword cluster is scored", "Source capture risk notes are visible"],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const artifact: MissionArtifact = {
+    id: id("artifact-seo-proof"),
+    questId: quest.id,
+    taskId: task.id,
+    type: "keyword_map",
+    title: `${quest.title} SEO research pack`,
+    summary: `${cluster.keywords.length} keyword targets mapped with ${proof.evidenceScore}/100 evidence.`,
+    content: [
+      `## Demand Proof`,
+      proof.demandSummary,
+      "",
+      `## Keyword Cluster`,
+      cluster.keywords.map((keyword) => `- ${keyword}`).join("\n"),
+      "",
+      `## Gaps`,
+      proof.competitorGaps.map((gap) => `- ${gap}`).join("\n"),
+      "",
+      `## Safety`,
+      "This research pack is local evidence only. Public citation, publishing, outreach, and spend require approval.",
+    ].join("\n"),
+    status: proof.status === "ready_for_validation" ? "ready_for_review" : "draft",
+    storage: "sqlite",
+    sourceIds: [sourceCapture.id, cluster.id, proof.id],
+    createdByAgentId: "agent-seo",
+    createdAt: now,
+    updatedAt: now,
+  };
+  task.artifactIds = [artifact.id];
+
+  return { report, sourceCapture, cluster, proof, task, artifact };
+}
+
 function experimentAnalysisFromExperiment(experiment: Experiment): ExperimentAnalysis {
   const now = new Date().toISOString();
   const numericMetrics = experiment.metrics.filter((metric) => typeof metric.value === "number" && typeof metric.target === "number");
@@ -613,6 +762,257 @@ function productionPackForQuest(state: AppDataState, questId: string): { pack: P
     },
     assets,
   };
+}
+
+function slugify(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}
+
+function siteProjectForQuest(state: AppDataState, questId: string): SiteProject {
+  const quest = state.quests.find((item) => item.id === questId);
+  const idea = quest ? state.businessIdeas.find((item) => item.id === quest.businessIdeaId) : null;
+  if (!quest) throw new Error("Quest not found for site project.");
+  const now = new Date().toISOString();
+  const name = `${quest.businessIdea.split(" for ")[0]} Field Guide`;
+  return {
+    id: id("site-project"),
+    name,
+    primaryQuestId: quest.id,
+    questIds: [quest.id],
+    repoPath: `C:\\Users\\User\\.openclaw\\sites\\${slugify(name)}`,
+    framework: "plain_markdown",
+    status: "publishing_locked",
+    niche: quest.businessIdea,
+    audience: idea?.targetAudience ?? "Audience needs validation.",
+    disclosureText:
+      "Affiliate or commercial relationships must be disclosed clearly. Content must not contain guaranteed income claims, fabricated experience, or unsupported product claims.",
+    publishingRules: [
+      "Generate local Markdown only",
+      "Review diff before approval",
+      "Pass claim review before publishing",
+      "Require approval before git push, deployment, or external publication",
+    ],
+    monetizationPolicy: idea?.monetizationMethod ?? "Monetization method must be validated before launch.",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function contentItemForCluster(state: AppDataState, clusterId: string): ContentItem {
+  const cluster = state.seoKeywordClusters.find((item) => item.id === clusterId);
+  if (!cluster) throw new Error("Keyword cluster not found for content item.");
+  const quest = state.quests.find((item) => item.id === cluster.questId);
+  const site = state.siteProjects.find((item) => item.questIds.includes(cluster.questId)) ?? siteProjectForQuest(state, cluster.questId);
+  const now = new Date().toISOString();
+  const title = cluster.intent === "comparison" ? `${cluster.name}: Practical Comparison Guide` : `${cluster.name}: Evidence-First Guide`;
+  return {
+    id: id("content-item"),
+    siteProjectId: site.id,
+    questId: cluster.questId,
+    clusterId: cluster.id,
+    title,
+    slug: slugify(title),
+    type: cluster.intent === "comparison" || cluster.intent === "commercial" ? "comparison" : "article",
+    status: "draft",
+    targetKeywords: cluster.keywords,
+    outline: [
+      "Audience and problem",
+      "What the evidence supports",
+      "Comparison criteria or workflow steps",
+      "Limitations, risks, and assumptions",
+      "Affiliate disclosure and next safe step",
+    ],
+    draftMarkdown: [
+      `# ${title}`,
+      "",
+      "> Draft only. Review sources, claims, and disclosure before publishing.",
+      "",
+      `Target quest: ${quest?.title ?? cluster.questId}`,
+      "",
+      "## Target Keywords",
+      cluster.keywords.map((keyword) => `- ${keyword}`).join("\n"),
+      "",
+      "## Content Angle",
+      cluster.contentAngle,
+      "",
+      "## Disclosure",
+      "Affiliate disclosure required before public release.",
+    ].join("\n"),
+    disclosureRequired: true,
+    claimReviewStatus: "needs_review",
+    artifactIds: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function publishingDiffForSite(state: AppDataState, siteProjectId: string): PublishingDiff {
+  const site = state.siteProjects.find((item) => item.id === siteProjectId);
+  if (!site) throw new Error("Site project not found for publishing diff.");
+  const items = state.contentItems.filter((item) => item.siteProjectId === site.id && item.status !== "published");
+  const now = new Date().toISOString();
+  return {
+    id: id("publishing-diff"),
+    siteProjectId: site.id,
+    contentItemIds: items.map((item) => item.id),
+    title: `${site.name} local static-site diff`,
+    status: "ready_for_approval",
+    files: items.map((item) => ({
+      path: `content/${item.slug}.md`,
+      action: "create",
+      summary: `Create local ${item.type.replace(/_/g, " ")} draft for ${item.title}.`,
+      preview: item.draftMarkdown.slice(0, 1200),
+    })),
+    riskFlags: ["publishing_approval_required", "claim_review_required", "affiliate_disclosure_required", "git_push_locked"],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function affiliateOfferForQuest(state: AppDataState, questId: string): AffiliateOffer {
+  const quest = state.quests.find((item) => item.id === questId);
+  const idea = quest ? state.businessIdeas.find((item) => item.id === quest.businessIdeaId) : null;
+  if (!quest) throw new Error("Quest not found for affiliate offer.");
+  const site = state.siteProjects.find((item) => item.questIds.includes(questId));
+  const proof = state.demandProofReports.find((item) => item.questId === questId);
+  const now = new Date().toISOString();
+  return {
+    id: id("affiliate-offer"),
+    questId,
+    siteProjectId: site?.id,
+    name: `${quest.businessIdea} affiliate candidate`,
+    program: "Manual affiliate candidate",
+    productUrl: "https://example.com/affiliate-candidate",
+    commissionModel: "Manual review required before use",
+    disclosureRequired: true,
+    allowedClaims: [
+      "Explain comparison criteria",
+      "Use cited product facts only",
+      "Show affiliate disclosure before links",
+      "Mention limitations and assumptions",
+    ],
+    prohibitedClaims: [
+      "No guaranteed income, health, productivity, or business outcomes",
+      "No fake hands-on review language",
+      "No hidden affiliate relationship",
+      "No unsupported best/cheapest claims",
+    ],
+    status: "claim_review",
+    riskLevel: quest.riskLevel,
+    evidenceIds: [proof?.id, ...(proof?.sourceCaptureIds ?? [])].filter(Boolean) as string[],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function reviewForAffiliateOffer(offer: AffiliateOffer): OfferClaimReview {
+  const now = new Date().toISOString();
+  const blocked = offer.prohibitedClaims.some((claim) => claim.toLowerCase().includes("fake"));
+  return {
+    id: id("offer-review"),
+    offerId: offer.id,
+    questId: offer.questId,
+    reviewedBy: "TeamLeader1A",
+    status: blocked ? "needs_revision" : "passed",
+    findings: [
+      offer.disclosureRequired ? "Affiliate disclosure is required and visible." : "Disclosure requirement is unclear.",
+      `${offer.allowedClaims.length} allowed claim boundaries are defined.`,
+      `${offer.prohibitedClaims.length} prohibited claim boundaries are defined.`,
+    ],
+    requiredChanges:
+      blocked || offer.evidenceIds.length === 0
+        ? [
+            "Attach approved source captures before publishing",
+            "Remove any first-hand testing language unless verified",
+            "Verify affiliate program terms manually",
+          ]
+        : ["Keep disclosure close to affiliate links and preserve source citations."],
+    createdAt: now,
+  };
+}
+
+function analyticsSnapshotFromMetrics(state: AppDataState, questId?: string): AnalyticsSnapshot {
+  const relevantMetrics = state.searchConsoleMetrics.filter((metric) => !questId || metric.questId === questId);
+  const metrics = relevantMetrics.length > 0 ? relevantMetrics : state.searchConsoleMetrics;
+  const clicks = metrics.reduce((total, metric) => total + metric.clicks, 0);
+  const impressions = metrics.reduce((total, metric) => total + metric.impressions, 0);
+  const ctr = impressions > 0 ? clicks / impressions : 0;
+  const averagePosition =
+    metrics.length > 0 ? metrics.reduce((total, metric) => total + metric.position, 0) / metrics.length : 0;
+  const quest = questId ? state.quests.find((item) => item.id === questId) : undefined;
+  const recommendation: AnalyticsSnapshot["recommendation"] =
+    impressions >= 500 && clicks >= 20 ? "scale_later" : impressions >= 100 ? "continue" : impressions > 0 ? "revise" : "kill";
+  const now = new Date().toISOString();
+  return {
+    id: id("analytics-snapshot"),
+    questId,
+    propertyId: metrics[0]?.propertyId,
+    source: "google_search_console",
+    title: quest ? `${quest.title} Search Console snapshot` : "Portfolio Search Console snapshot",
+    clicks,
+    impressions,
+    ctr,
+    averagePosition,
+    topQueries: [...new Set(metrics.map((metric) => metric.query))].slice(0, 8),
+    topPages: [...new Set(metrics.map((metric) => metric.page))].slice(0, 8),
+    recommendation,
+    teamLeaderSummary:
+      recommendation === "scale_later"
+        ? "Search visibility is strong enough to consider a scaling review, but spend and publishing still require approval."
+        : recommendation === "continue"
+          ? "Search visibility is emerging. Continue improving content and collect more data."
+          : recommendation === "revise"
+            ? "Search visibility is thin. Revise content, source quality, and internal links before scaling."
+            : "No usable search signal yet. Keep the experiment small or kill/rework the quest.",
+    createdAt: now,
+  };
+}
+
+function learningFromQuestState(state: AppDataState, questId: string): { card: LearningCard; decision: ExperimentDecision } {
+  const quest = state.quests.find((item) => item.id === questId);
+  const analysis = state.experimentAnalyses.find((item) => item.questId === questId);
+  const snapshot = state.analyticsSnapshots.find((item) => item.questId === questId);
+  if (!quest) throw new Error("Quest not found for learning decision.");
+  const recommendation = analysis?.recommendation ?? snapshot?.recommendation ?? "revise";
+  const now = new Date().toISOString();
+  const card: LearningCard = {
+    id: id("learning-card"),
+    questId,
+    title: `${quest.title} learning review`,
+    whatWorked: snapshot?.impressions ? [`Collected ${snapshot.impressions} search impressions`] : ["Created a local experiment record"],
+    whatFailed: snapshot?.clicks === 0 ? ["No clicks recorded yet"] : ["Evidence is still incomplete"],
+    whatChanged:
+      recommendation === "scale_later"
+        ? "The quest can be considered for a separate scaling review."
+        : recommendation === "kill"
+          ? "The idea should be killed or redesigned before more work."
+          : "The next step is a smaller revision loop, not scaling.",
+    nextTest:
+      recommendation === "continue"
+        ? "Continue the current bounded test and sync read-only metrics again."
+        : recommendation === "scale_later"
+          ? "Prepare a scaling approval package with budget and risk caps."
+          : "Revise the content/research asset and rerun the safest evidence check.",
+    reusableLesson: "Every experiment result must produce a continue, revise, kill, or scale-later decision before more resources are allocated.",
+    createdAt: now,
+  };
+  const decision: ExperimentDecision = {
+    id: id("experiment-decision"),
+    questId,
+    experimentId: analysis?.experimentId,
+    analyticsSnapshotId: snapshot?.id,
+    decision: recommendation,
+    rationale: analysis?.notes ?? snapshot?.teamLeaderSummary ?? "TeamLeader1A generated a local decision from available evidence.",
+    nextAction: card.nextTest,
+    approvalRequired: recommendation === "scale_later",
+    createdBy: "TeamLeader1A",
+    createdAt: now,
+  };
+  return { card, decision };
 }
 
 function approvalDecisionDetail(status: ApprovalStatus, request?: ApprovalRequest) {
@@ -756,6 +1156,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 }
               : command,
           ),
+          commandLedgerEntries: current.commandLedgerEntries.map((entry) =>
+            entry.approvalId === approvalId || entry.commandId === existingApproval.commandId
+              ? {
+                  ...entry,
+                  status: "blocked",
+                  outputSummary: `Blocked by safety policy: ${blockedDetail}`,
+                  updatedAt: now,
+                }
+              : entry,
+          ),
           approvalDecisionRecords: [
             decisionRecord({
               approvalId,
@@ -787,6 +1197,21 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ...current,
         approvalRequests: current.approvalRequests.map((request) =>
           request.id === approvalId ? { ...request, status, safetyEvaluation: safetyEvaluation ?? request.safetyEvaluation } : request,
+        ),
+        commandLedgerEntries: current.commandLedgerEntries.map((entry) =>
+          entry.approvalId === approvalId || entry.commandId === existingApproval.commandId
+            ? {
+                ...entry,
+                status: ledgerStatusForApprovalStatus(status),
+                outputSummary:
+                  status === "approved"
+                    ? "Approved by user. Execution may run through its allowlisted connector."
+                    : status === "rejected"
+                      ? "Rejected by user. No external action will run."
+                      : entry.outputSummary,
+                updatedAt: now,
+              }
+            : entry,
         ),
         approvalDecisionRecords: [
           decisionRecord({
@@ -831,6 +1256,36 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           totalStartingCapital: settings.totalStartingCapital,
           remainingCapital: Math.max(settings.totalStartingCapital - current.dashboardSummary.allocatedCapital, 0),
         },
+      };
+      await persistOptimistic(next);
+    },
+    [persistOptimistic],
+  );
+
+  const updateExternalActionLock = useCallback(
+    async (mode: ExternalActionLockMode, reason: string) => {
+      const current = dataRef.current;
+      const now = new Date().toISOString();
+      const next: AppDataState = {
+        ...current,
+        externalActionLock: {
+          ...current.externalActionLock,
+          mode,
+          reason,
+          updatedBy: "user",
+          updatedAt: now,
+        },
+        activityLogs: [
+          {
+            id: id("log-external-lock"),
+            category: "system",
+            title: "External action lock updated",
+            detail: `Mode set to ${mode.replace(/_/g, " ")}. ${reason}`,
+            severity: mode === "locked" ? "warning" : "info",
+            createdAt: now,
+          },
+          ...current.activityLogs,
+        ],
       };
       await persistOptimistic(next);
     },
@@ -995,10 +1450,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         safetyEvaluation,
         blockedExplanation: isBlocked ? safetyEvaluation.blockedReasons.join(" ") : undefined,
       };
+      const ledgerEntry: CommandLedgerEntry = {
+        id: id("ledger-openclaw"),
+        questId: options.questId,
+        approvalId,
+        commandId,
+        connector: connectorForPayload(payload),
+        action: payload.actionKind,
+        status: isBlocked ? "blocked" : "approval_required",
+        externalAction: payload.actionKind !== "agent_turn",
+        approvalMode: "single",
+        riskLevel: command.riskLevel,
+        inputSummary: safetyEvaluation.normalizedPayloadSummary,
+        outputSummary: isBlocked
+          ? `Blocked by safety policy: ${safetyEvaluation.blockedReasons.join(" ")}`
+          : "Waiting for approval. No connector action has run.",
+        createdAt: now,
+        updatedAt: now,
+      };
       const next: AppDataState = {
         ...current,
         approvalRequests: [approval, ...current.approvalRequests],
         openClawCommands: [command, ...current.openClawCommands],
+        commandLedgerEntries: [ledgerEntry, ...current.commandLedgerEntries],
         approvalDecisionRecords: [
           decisionRecord({
             approvalId,
@@ -1071,6 +1545,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 }
               : command,
           ),
+          commandLedgerEntries: runningState.commandLedgerEntries.map((entry) =>
+            entry.approvalId === approval.id || entry.commandId === approval.commandId
+              ? {
+                  ...entry,
+                  status: "blocked",
+                  outputSummary: `Blocked by safety policy: ${blockedDetail}`,
+                  updatedAt: startedAt,
+                }
+              : entry,
+          ),
           approvalDecisionRecords: [
             decisionRecord({
               approvalId: approval.id,
@@ -1109,6 +1593,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 resultSummary: "Approved command is running through the OpenClaw allowlist.",
               }
             : command,
+        ),
+        commandLedgerEntries: runningState.commandLedgerEntries.map((entry) =>
+          entry.approvalId === approval.id || entry.commandId === approval.commandId
+            ? {
+                ...entry,
+                status: "running",
+                outputSummary: "Approved connector action is running.",
+                updatedAt: startedAt,
+              }
+            : entry,
         ),
       });
 
@@ -1166,6 +1660,50 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
               relatedCommandId: approval.commandId,
             }
           : null;
+      const sourceCaptureArtifacts =
+        approval.payload.actionKind === "url_research" && approval.questId
+          ? approval.payload.urls.map((url) => {
+              const captureId = id("source-capture");
+              const capture: ResearchSourceCapture = {
+                id: captureId,
+                questId: approval.questId as string,
+                url,
+                title: result.ok ? `Approved source capture: ${url}` : `Failed source capture: ${url}`,
+                status: result.ok ? "captured" : "failed",
+                captureMode: "approved_url",
+                evidenceSummary: summary,
+                citation: url,
+                riskNotes: approval.payload?.actionKind === "url_research" ? approval.payload.riskNotes : "Approved URL research boundary applied.",
+                approvalId: approval.id,
+                commandId: approval.commandId,
+                capturedAt: completedAt,
+              };
+              const artifact: MissionArtifact = {
+                id: id("artifact-source-capture"),
+                questId: approval.questId as string,
+                type: "source_capture",
+                title: capture.title,
+                summary: result.ok ? "Approved URL research completed and was captured locally." : "Approved URL research failed safely and was captured for audit.",
+                content: [
+                  `## URL`,
+                  url,
+                  "",
+                  `## Result`,
+                  summary,
+                  "",
+                  `## Safety Boundary`,
+                  "This capture came from an approved URL research action. It does not authorize publishing, scraping beyond the approved URL, spending, login automation, or form submission.",
+                ].join("\n"),
+                status: result.ok ? "ready_for_review" : "blocked",
+                storage: "sqlite",
+                sourceIds: [captureId, approval.id, approval.commandId ?? ""].filter(Boolean),
+                createdByAgentId: "teamleader1a",
+                createdAt: completedAt,
+                updatedAt: completedAt,
+              };
+              return { capture, artifact };
+            })
+          : [];
       const nextPilotRuns = current.realPilotRuns.map((run) => {
         if (run.id !== approval.pilotRunId) return run;
         const nextStatus =
@@ -1187,6 +1725,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ...current,
         openClawRuntimeStatus: maybeRuntimeStatus,
         realPilotRuns: nextPilotRuns,
+        researchSourceCaptures: sourceCaptureArtifacts.length
+          ? [...sourceCaptureArtifacts.map((item) => item.capture), ...current.researchSourceCaptures]
+          : current.researchSourceCaptures,
+        missionArtifacts: sourceCaptureArtifacts.length
+          ? [...sourceCaptureArtifacts.map((item) => item.artifact), ...current.missionArtifacts]
+          : current.missionArtifacts,
         approvalDecisionRecords: [
           decisionRecord({
             approvalId: approval.id,
@@ -1222,6 +1766,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 resultSummary: summary,
               }
             : command,
+        ),
+        commandLedgerEntries: current.commandLedgerEntries.map((entry) =>
+          entry.approvalId === approval.id || entry.commandId === approval.commandId
+            ? {
+                ...entry,
+                status: result.ok ? "completed" : "failed",
+                outputSummary: summary,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                updatedAt: completedAt,
+              }
+            : entry,
         ),
         openClawEvents: [
           {
@@ -1362,7 +1918,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         riskNotes: input.riskNotes.trim(),
         successCriteria: input.successCriteria.trim(),
         expectedResult: "TeamLeader1A reports findings from the approved URL research task or fails safely.",
-      });
+      }, { questId: input.questId });
     },
     [createOpenClawApproval],
   );
@@ -2016,6 +2572,63 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [persistOptimistic],
   );
 
+  const createSeoResearchPack = useCallback(
+    async (questId: string) => {
+      const current = dataRef.current;
+      const { report, sourceCapture, cluster, proof, task, artifact } = seoResearchPackFromQuest(current, questId);
+      const now = new Date().toISOString();
+      const reportExists = current.marketIntelligenceReports.some((item) => item.id === report.id);
+      const next: AppDataState = {
+        ...current,
+        marketIntelligenceReports: reportExists ? current.marketIntelligenceReports : [report, ...current.marketIntelligenceReports],
+        researchSourceCaptures: [sourceCapture, ...current.researchSourceCaptures],
+        seoKeywordClusters: [cluster, ...current.seoKeywordClusters],
+        demandProofReports: [proof, ...current.demandProofReports],
+        missionTasks: [task, ...current.missionTasks],
+        missionArtifacts: [artifact, ...current.missionArtifacts],
+        quests: current.quests.map((quest) =>
+          quest.id === questId
+            ? {
+                ...quest,
+                stage: quest.stage === "Idea discovered" ? "Researching" : quest.stage,
+                progress: Math.max(quest.progress, proof.evidenceScore >= 70 ? 64 : 52),
+                currentStatus: proof.status === "ready_for_validation" ? "SEO demand proof ready for validation review" : "SEO demand proof needs more approved sources",
+                nextAction: proof.recommendedNextStep,
+              }
+            : quest,
+        ),
+        agentMessages: [
+          {
+            id: id("msg-seo-proof"),
+            fromAgentId: "teamleader1a",
+            toAgentId: "TeamLeader1A" as const,
+            questId,
+            summary: "SEO demand proof pack prepared.",
+            details: proof.teamLeaderRecommendation,
+            createdAt: now,
+            visibility: "user_summary" as const,
+          },
+          ...current.agentMessages,
+        ].slice(0, 32),
+        activityLogs: [
+          {
+            id: id("log-seo-proof"),
+            category: "quest",
+            title: "SEO demand proof pack generated",
+            detail: `${proof.title} linked ${cluster.keywords.length} keywords, ${proof.competitorGaps.length} competitor gaps, and ${proof.evidenceScore}/100 evidence. No live scraping or publishing occurred.`,
+            severity: proof.status === "ready_for_validation" ? "success" : "warning",
+            createdAt: now,
+            relatedQuestId: questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return proof.id;
+    },
+    [persistOptimistic],
+  );
+
   const createExperimentPlan = useCallback(
     async (input: ExperimentPlanInput) => {
       const current = dataRef.current;
@@ -2235,6 +2848,507 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           ...current.activityLogs,
         ],
       });
+    },
+    [persistOptimistic],
+  );
+
+  const createSiteProject = useCallback(
+    async (questId: string) => {
+      const current = dataRef.current;
+      const existing = current.siteProjects.find((site) => site.primaryQuestId === questId || site.questIds.includes(questId));
+      if (existing) return existing.id;
+      const site = siteProjectForQuest(current, questId);
+      const now = new Date().toISOString();
+      const next: AppDataState = {
+        ...current,
+        siteProjects: [site, ...current.siteProjects],
+        activityLogs: [
+          {
+            id: id("log-site-project"),
+            category: "quest",
+            title: "Static site project created",
+            detail: `${site.name} is configured for local Markdown output at ${site.repoPath}. Publishing, git push, and deployment remain locked.`,
+            severity: "success",
+            createdAt: now,
+            relatedQuestId: questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return site.id;
+    },
+    [persistOptimistic],
+  );
+
+  const createContentItemFromCluster = useCallback(
+    async (clusterId: string) => {
+      const current = dataRef.current;
+      const cluster = current.seoKeywordClusters.find((item) => item.id === clusterId);
+      if (!cluster) throw new Error("Keyword cluster not found.");
+      const existingSite = current.siteProjects.find((site) => site.questIds.includes(cluster.questId));
+      const site = existingSite ?? siteProjectForQuest(current, cluster.questId);
+      const contentItem = contentItemForCluster({ ...current, siteProjects: existingSite ? current.siteProjects : [site, ...current.siteProjects] }, clusterId);
+      const now = new Date().toISOString();
+      const artifact: MissionArtifact = {
+        id: id("artifact-content-item"),
+        questId: contentItem.questId,
+        type: "draft_page",
+        title: contentItem.title,
+        summary: `Local static-site draft for ${contentItem.targetKeywords.slice(0, 2).join(", ")}.`,
+        content: contentItem.draftMarkdown,
+        status: "draft",
+        storage: "sqlite",
+        sourceIds: [cluster.id],
+        createdByAgentId: "agent-writer",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const itemWithArtifact: ContentItem = {
+        ...contentItem,
+        artifactIds: [artifact.id],
+      };
+      const next: AppDataState = {
+        ...current,
+        siteProjects: existingSite ? current.siteProjects : [site, ...current.siteProjects],
+        contentItems: [itemWithArtifact, ...current.contentItems],
+        missionArtifacts: [artifact, ...current.missionArtifacts],
+        quests: current.quests.map((quest) =>
+          quest.id === contentItem.questId
+            ? {
+                ...quest,
+                stage: "Production",
+                progress: Math.max(quest.progress, 72),
+                currentStatus: "Static-site content draft prepared locally",
+                nextAction: "Review claims, disclosure, and static-site diff before requesting publish approval.",
+              }
+            : quest,
+        ),
+        activityLogs: [
+          {
+            id: id("log-content-item"),
+            category: "quest",
+            title: "Static-site content draft created",
+            detail: `${contentItem.title} was generated as local Markdown. It has not been written, pushed, deployed, or published.`,
+            severity: "success",
+            createdAt: now,
+            relatedQuestId: contentItem.questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return itemWithArtifact.id;
+    },
+    [persistOptimistic],
+  );
+
+  const prepareStaticSiteDiff = useCallback(
+    async (siteProjectId: string) => {
+      const current = dataRef.current;
+      const diff = publishingDiffForSite(current, siteProjectId);
+      const now = new Date().toISOString();
+      const ledger: CommandLedgerEntry = {
+        id: id("ledger-static-site"),
+        connector: "static_site",
+        action: "prepare_local_diff",
+        status: "approval_required",
+        externalAction: true,
+        approvalMode: "batch",
+        riskLevel: "medium",
+        inputSummary: `${diff.files.length} local Markdown files prepared for static-site review.`,
+        outputSummary: "Diff is ready for approval. No git push, deploy, or external publishing has run.",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const next: AppDataState = {
+        ...current,
+        publishingDiffs: [diff, ...current.publishingDiffs],
+        commandLedgerEntries: [ledger, ...current.commandLedgerEntries],
+        contentItems: current.contentItems.map((item) =>
+          diff.contentItemIds.includes(item.id)
+            ? {
+                ...item,
+                status: "diff_ready",
+                updatedAt: now,
+              }
+            : item,
+        ),
+        activityLogs: [
+          {
+            id: id("log-static-diff"),
+            category: "approval",
+            title: "Static-site publishing diff prepared",
+            detail: `${diff.title} contains ${diff.files.length} local file changes. Publishing requires an explicit approval package.`,
+            severity: "warning",
+            createdAt: now,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return diff.id;
+    },
+    [persistOptimistic],
+  );
+
+  const createAffiliateOffer = useCallback(
+    async (questId: string) => {
+      const current = dataRef.current;
+      const offer = affiliateOfferForQuest(current, questId);
+      const now = new Date().toISOString();
+      const task: MissionTask = {
+        id: id("mission-task-offer"),
+        questId,
+        type: "review",
+        title: `Claim review for ${offer.name}`,
+        ownerAgentId: "teamleader1a",
+        status: "in_progress",
+        priority: "high",
+        approvalRequired: false,
+        dependencyIds: [],
+        artifactIds: [],
+        commandLedgerEntryIds: [],
+        successCriteria: ["Disclosure rules are clear", "Allowed claims are source-backed", "Prohibited claims are blocked"],
+        createdAt: now,
+        updatedAt: now,
+      };
+      const next: AppDataState = {
+        ...current,
+        affiliateOffers: [offer, ...current.affiliateOffers],
+        missionTasks: [task, ...current.missionTasks],
+        activityLogs: [
+          {
+            id: id("log-affiliate-offer"),
+            category: "quest",
+            title: "Affiliate offer candidate created",
+            detail: `${offer.name} is in claim review. No affiliate API, link publishing, or external action has run.`,
+            severity: "warning",
+            createdAt: now,
+            relatedQuestId: questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return offer.id;
+    },
+    [persistOptimistic],
+  );
+
+  const reviewAffiliateOffer = useCallback(
+    async (offerId: string) => {
+      const current = dataRef.current;
+      const offer = current.affiliateOffers.find((item) => item.id === offerId);
+      if (!offer) throw new Error("Affiliate offer not found.");
+      const review = reviewForAffiliateOffer(offer);
+      const now = new Date().toISOString();
+      const nextStatus: AffiliateOffer["status"] = review.status === "passed" ? "approved_local" : review.status === "blocked" ? "blocked" : "claim_review";
+      const artifact: MissionArtifact = {
+        id: id("artifact-offer-review"),
+        questId: offer.questId,
+        type: "decision_record",
+        title: `${offer.name} claim review`,
+        summary: review.status === "passed" ? "Offer claim rules passed local review." : "Offer needs revision before it can be used in publishable content.",
+        content: [
+          `## Findings`,
+          review.findings.map((finding) => `- ${finding}`).join("\n"),
+          "",
+          `## Required Changes`,
+          review.requiredChanges.map((change) => `- ${change}`).join("\n"),
+          "",
+          `## Safety`,
+          "This review does not publish links, join affiliate programs, or claim verified product experience.",
+        ].join("\n"),
+        status: review.status === "passed" ? "approved_local" : "ready_for_review",
+        storage: "sqlite",
+        sourceIds: [offer.id, ...offer.evidenceIds],
+        createdByAgentId: "teamleader1a",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const next: AppDataState = {
+        ...current,
+        offerClaimReviews: [review, ...current.offerClaimReviews],
+        affiliateOffers: current.affiliateOffers.map((item) =>
+          item.id === offer.id
+            ? {
+                ...item,
+                status: nextStatus,
+                updatedAt: now,
+              }
+            : item,
+        ),
+        missionArtifacts: [artifact, ...current.missionArtifacts],
+        contentItems: current.contentItems.map((item) =>
+          item.questId === offer.questId
+            ? {
+                ...item,
+                claimReviewStatus: review.status === "passed" ? "passed" : "needs_review",
+                updatedAt: now,
+              }
+            : item,
+        ),
+        activityLogs: [
+          {
+            id: id("log-affiliate-review"),
+            category: "quest",
+            title: "Affiliate offer claim review completed",
+            detail: `${offer.name}: ${review.status.replace(/_/g, " ")}. Publishing still requires approval.`,
+            severity: review.status === "passed" ? "success" : review.status === "blocked" ? "danger" : "warning",
+            createdAt: now,
+            relatedQuestId: offer.questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return review.id;
+    },
+    [persistOptimistic],
+  );
+
+  const syncSearchConsoleReadOnly = useCallback(
+    async (questId?: string) => {
+      const current = dataRef.current;
+      const now = new Date().toISOString();
+      const snapshot = analyticsSnapshotFromMetrics(current, questId);
+      const next: AppDataState = {
+        ...current,
+        analyticsSnapshots: [snapshot, ...current.analyticsSnapshots],
+        analyticsConnectors: current.analyticsConnectors.map((connector) =>
+          connector.type === "google_search_console"
+            ? {
+                ...connector,
+                status: connector.authMode === "secure_reference" ? "connected" : connector.status,
+                lastSyncAt: now,
+                notes:
+                  connector.authMode === "secure_reference"
+                    ? "Read-only Search Console sync completed."
+                    : "Read-only snapshot generated from local/manual metrics. OAuth secure token storage is still required for real GSC API sync.",
+                updatedAt: now,
+              }
+            : connector,
+        ),
+        experimentAnalyses: questId
+          ? [
+              {
+                id: id("experiment-analysis-gsc"),
+                experimentId: current.experiments.find((experiment) => experiment.questId === questId)?.id ?? "search-console",
+                questId,
+                confidenceScore: clampScore(snapshot.impressions > 0 ? Math.min(75, snapshot.impressions / 4) + snapshot.clicks * 2 : 10),
+                recommendation: snapshot.recommendation,
+                conversionRate: snapshot.ctr,
+                breakEvenProgress: 0,
+                revenue: 0,
+                cost: 0,
+                evidenceStrength: snapshot.impressions >= 500 ? "strong" : snapshot.impressions >= 100 ? "directional" : "thin",
+                notes: snapshot.teamLeaderSummary,
+                createdAt: now,
+              },
+              ...current.experimentAnalyses,
+            ]
+          : current.experimentAnalyses,
+        activityLogs: [
+          {
+            id: id("log-gsc-sync"),
+            category: "experiment",
+            title: "Read-only Search Console snapshot created",
+            detail: `${snapshot.title}: ${snapshot.impressions} impressions, ${snapshot.clicks} clicks, ${Math.round(snapshot.ctr * 1000) / 10}% CTR. No write action occurred.`,
+            severity: snapshot.recommendation === "scale_later" ? "success" : snapshot.recommendation === "kill" ? "danger" : "info",
+            createdAt: now,
+            relatedQuestId: questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return snapshot.id;
+    },
+    [persistOptimistic],
+  );
+
+  const createLearningDecision = useCallback(
+    async (questId: string) => {
+      const current = dataRef.current;
+      const { card, decision } = learningFromQuestState(current, questId);
+      const now = new Date().toISOString();
+      const next: AppDataState = {
+        ...current,
+        learningCards: [card, ...current.learningCards],
+        experimentDecisions: [decision, ...current.experimentDecisions],
+        decisionLogs: [
+          {
+            id: id("decision-learning"),
+            questId,
+            title: `${card.title}: ${decision.decision.replace(/_/g, " ")}`,
+            decision: decision.nextAction,
+            rationale: decision.rationale,
+            risk: decision.approvalRequired ? "medium" : "low",
+            createdBy: "TeamLeader1A",
+            createdAt: now,
+          },
+          ...current.decisionLogs,
+        ],
+        activityLogs: [
+          {
+            id: id("log-learning-decision"),
+            category: "experiment",
+            title: "Experiment learning decision created",
+            detail: `${decision.decision.replace(/_/g, " ")}: ${decision.nextAction}`,
+            severity: decision.decision === "kill" ? "danger" : decision.decision === "scale_later" ? "success" : "info",
+            createdAt: now,
+            relatedQuestId: questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return decision.id;
+    },
+    [persistOptimistic],
+  );
+
+  const createBatchApprovalFromDiff = useCallback(
+    async (diffId: string) => {
+      const current = dataRef.current;
+      const diff = current.publishingDiffs.find((item) => item.id === diffId);
+      if (!diff) throw new Error("Publishing diff not found.");
+      const site = current.siteProjects.find((item) => item.id === diff.siteProjectId);
+      const now = new Date().toISOString();
+      const approvalId = id("approval-batch");
+      const batchId = id("batch-approval");
+      const items: BatchApprovalItem[] = diff.files.map((file) => ({
+        id: id("batch-item"),
+        batchId,
+        targetType: "publishing_diff_file",
+        targetId: file.path,
+        summary: `${file.action} ${file.path}: ${file.summary}`,
+        status: "pending",
+      }));
+      const batch: BatchApprovalPackage = {
+        id: batchId,
+        title: `${diff.title} batch approval`,
+        status: "pending",
+        approvalId,
+        questId: site?.primaryQuestId,
+        sourceDiffId: diff.id,
+        itemIds: items.map((item) => item.id),
+        maxActions: items.length,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        riskFlags: diff.riskFlags,
+        rollbackPlan: "Do not deploy automatically. If later published manually, revert the static-site commit and archive the local diff if issues appear.",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const approval: ApprovalRequest = {
+        id: approvalId,
+        type: "Publish externally",
+        title: batch.title,
+        questId: batch.questId,
+        requestedBy: "TeamLeader1A",
+        riskLevel: "medium",
+        reason: `Approve an itemized batch of ${items.length} static-site file changes. This records approval only; publishing execution remains separate.`,
+        safetyChecklist: [
+          "Every file is listed",
+          "Batch has an expiry",
+          "Rollback plan is visible",
+          "Claims and affiliate disclosures must pass review",
+          "No deployment or git push executes from this approval",
+        ],
+        blockedBehaviors: phase5BlockedBehaviors,
+        status: "pending",
+        createdAt: now,
+      };
+      const next: AppDataState = {
+        ...current,
+        batchApprovalPackages: [batch, ...current.batchApprovalPackages],
+        batchApprovalItems: [...items, ...current.batchApprovalItems],
+        approvalRequests: [approval, ...current.approvalRequests],
+        publishingDiffs: current.publishingDiffs.map((item) =>
+          item.id === diff.id
+            ? {
+                ...item,
+                approvalId,
+                updatedAt: now,
+              }
+            : item,
+        ),
+        approvalDecisionRecords: [
+          decisionRecord({
+            approvalId,
+            decision: "created",
+            reason: `Batch approval package created for ${items.length} file changes.`,
+            payloadSummary: batch.title,
+          }),
+          ...current.approvalDecisionRecords,
+        ],
+        activityLogs: [
+          {
+            id: id("log-batch-approval"),
+            category: "approval",
+            title: "Batch approval package created",
+            detail: `${batch.title} expires at ${batch.expiresAt}. No publishing command has run.`,
+            severity: "warning",
+            createdAt: now,
+            relatedQuestId: batch.questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return batch.id;
+    },
+    [persistOptimistic],
+  );
+
+  const runControlledJobNow = useCallback(
+    async (scheduleId: string) => {
+      const current = dataRef.current;
+      const schedule = current.jobSchedules.find((item) => item.id === scheduleId);
+      if (!schedule) throw new Error("Job schedule not found.");
+      const now = new Date().toISOString();
+      const completedAt = new Date(Date.now() + 1000).toISOString();
+      const blocked = schedule.status === "blocked" || (!schedule.safeReadOnly && schedule.requiresApprovalAtExecution);
+      const run: JobRun = {
+        id: id("job-run"),
+        scheduleId,
+        name: schedule.name,
+        status: blocked ? "blocked" : "success",
+        startedAt: now,
+        completedAt,
+        summary: blocked
+          ? "Job blocked because it is not safe read-only and needs approval at execution time."
+          : "Controlled local job completed. No external write action, spending, publishing, or messaging occurred.",
+        relatedLogIds: [],
+      };
+      const next: AppDataState = {
+        ...current,
+        jobRuns: [run, ...current.jobRuns],
+        jobSchedules: current.jobSchedules.map((item) =>
+          item.id === schedule.id
+            ? {
+                ...item,
+                lastRunAt: completedAt,
+                nextRunAt: new Date(Date.now() + item.intervalMinutes * 60 * 1000).toISOString(),
+                updatedAt: completedAt,
+              }
+            : item,
+        ),
+        activityLogs: [
+          {
+            id: id("log-job-run"),
+            category: "system",
+            title: blocked ? "Controlled job blocked" : "Controlled job completed",
+            detail: run.summary,
+            severity: blocked ? "warning" : "success",
+            createdAt: completedAt,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return run.id;
     },
     [persistOptimistic],
   );
@@ -2607,6 +3721,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       resetLocalData,
       updateApprovalStatus,
       updateSettings,
+      updateExternalActionLock,
       recordSystemLog,
       runSimulationNow,
       setSimulationEnabled,
@@ -2635,10 +3750,20 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       completeAgentTask,
       reviewAgentRun,
       createMarketIntelligenceReport,
+      createSeoResearchPack,
       createExperimentPlan,
       analyzeExperiment,
       createProductionPack,
       advanceProductionAsset,
+      createSiteProject,
+      createContentItemFromCluster,
+      prepareStaticSiteDiff,
+      createAffiliateOffer,
+      reviewAffiliateOffer,
+      syncSearchConsoleReadOnly,
+      createLearningDecision,
+      createBatchApprovalFromDiff,
+      runControlledJobNow,
     }),
     [
       data,
@@ -2650,6 +3775,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       resetLocalData,
       updateApprovalStatus,
       updateSettings,
+      updateExternalActionLock,
       recordSystemLog,
       runSimulationNow,
       selectObsidianVault,
@@ -2677,10 +3803,20 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       completeAgentTask,
       reviewAgentRun,
       createMarketIntelligenceReport,
+      createSeoResearchPack,
       createExperimentPlan,
       analyzeExperiment,
       createProductionPack,
       advanceProductionAsset,
+      createSiteProject,
+      createContentItemFromCluster,
+      prepareStaticSiteDiff,
+      createAffiliateOffer,
+      reviewAffiliateOffer,
+      syncSearchConsoleReadOnly,
+      createLearningDecision,
+      createBatchApprovalFromDiff,
+      runControlledJobNow,
     ],
   );
 

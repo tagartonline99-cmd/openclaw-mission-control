@@ -14,7 +14,7 @@ function label(value: string) {
 }
 
 export function ExperimentAnalyticsWorkbench() {
-  const { data, createExperimentPlan, analyzeExperiment } = useAppData();
+  const { data, createExperimentPlan, analyzeExperiment, syncSearchConsoleReadOnly, createLearningDecision } = useAppData();
   const [questId, setQuestId] = useState(data.quests[0]?.id ?? "");
   const [title, setTitle] = useState("Bounded validation experiment");
   const [hypothesis, setHypothesis] = useState("A small reversible test can validate demand before any larger production, publishing, or spend.");
@@ -37,6 +37,7 @@ export function ExperimentAnalyticsWorkbench() {
   }
 
   const latestAnalysis = data.experimentAnalyses[0];
+  const latestSnapshot = data.analyticsSnapshots[0];
 
   return (
     <div className="space-y-5">
@@ -61,8 +62,8 @@ export function ExperimentAnalyticsWorkbench() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs uppercase text-slate-500">Latest confidence</p>
-            <p className="mt-2 text-2xl font-semibold text-stone-50">{latestAnalysis?.confidenceScore ?? 0}/100</p>
+            <p className="text-xs uppercase text-slate-500">GSC snapshots</p>
+            <p className="mt-2 text-2xl font-semibold text-stone-50">{data.analyticsSnapshots.length}</p>
           </CardContent>
         </Card>
       </div>
@@ -115,6 +116,14 @@ export function ExperimentAnalyticsWorkbench() {
             <Button onClick={() => void createPlan()}>
               <Play className="h-4 w-4" />
               Create Local Experiment Plan
+            </Button>
+            <Button variant="secondary" className="ml-2" onClick={() => void syncSearchConsoleReadOnly(questId)}>
+              <BarChart3 className="h-4 w-4" />
+              Sync Read-Only GSC Snapshot
+            </Button>
+            <Button variant="outline" className="ml-2" onClick={() => void createLearningDecision(questId)}>
+              <ShieldCheck className="h-4 w-4" />
+              Create Learning Decision
             </Button>
           </div>
         </CardContent>
@@ -202,9 +211,40 @@ export function ExperimentAnalyticsWorkbench() {
             )}
             <div className="rounded-md border border-white/10 bg-black/25 p-3">
               <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500"><BarChart3 className="h-3.5 w-3.5" /> Read-only integrations</p>
-              <p className="mt-2 text-sm leading-6 text-slate-300">
-                Search Console, analytics, affiliate dashboard, and revenue integrations are reserved for later connector phases.
-              </p>
+              {latestSnapshot ? (
+                <div className="mt-2 space-y-2 text-sm leading-6 text-slate-300">
+                  <p className="font-semibold text-stone-100">{latestSnapshot.title}</p>
+                  <p>{latestSnapshot.impressions} impressions / {latestSnapshot.clicks} clicks / {Math.round(latestSnapshot.ctr * 1000) / 10}% CTR / avg position {Math.round(latestSnapshot.averagePosition * 10) / 10}</p>
+                  <p className="text-teal-100">{latestSnapshot.teamLeaderSummary}</p>
+                </div>
+              ) : (
+                <p className="mt-2 text-sm leading-6 text-slate-300">
+                  Google Search Console is read-only first. Use the snapshot button to record local/manual metrics until OAuth secure storage is connected.
+                </p>
+              )}
+              <div className="mt-3 space-y-2">
+                {data.analyticsConnectors.map((connector) => (
+                  <div key={connector.id} className="flex items-center justify-between gap-2 rounded-md border border-white/10 bg-black/25 p-2">
+                    <span className="text-sm text-slate-300">{connector.type.replace(/_/g, " ")}</span>
+                    <Badge tone={connector.status === "connected" ? "emerald" : "amber"}>{connector.status.replace(/_/g, " ")}</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">Learning loop</p>
+              {data.experimentDecisions.slice(0, 3).map((decision) => (
+                <div key={decision.id} className="mt-3 rounded-md border border-white/10 bg-black/25 p-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-semibold text-stone-100">{label(decision.decision)}</span>
+                    <Badge tone={decision.approvalRequired ? "red" : "teal"}>{decision.approvalRequired ? "approval needed" : "local"}</Badge>
+                  </div>
+                  <p className="mt-1 text-sm leading-5 text-slate-300">{decision.nextAction}</p>
+                </div>
+              ))}
+              {data.learningCards.slice(0, 2).map((card) => (
+                <p key={card.id} className="mt-3 text-sm leading-6 text-amber-100">{card.reusableLesson}</p>
+              ))}
             </div>
           </CardContent>
         </Card>

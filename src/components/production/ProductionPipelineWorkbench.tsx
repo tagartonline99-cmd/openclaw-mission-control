@@ -12,13 +12,49 @@ function label(value: string) {
 }
 
 export function ProductionPipelineWorkbench() {
-  const { data, createProductionPack, advanceProductionAsset } = useAppData();
+  const {
+    data,
+    createProductionPack,
+    advanceProductionAsset,
+    createSiteProject,
+    createContentItemFromCluster,
+    prepareStaticSiteDiff,
+    createAffiliateOffer,
+    reviewAffiliateOffer,
+    createBatchApprovalFromDiff,
+  } = useAppData();
   const [questId, setQuestId] = useState(data.quests[0]?.id ?? "");
   const selectedQuest = data.quests.find((quest) => quest.id === questId);
+  const siteProject = data.siteProjects.find((site) => site.questIds.includes(questId));
+  const clusters = data.seoKeywordClusters.filter((cluster) => cluster.questId === questId);
+  const siteContentItems = siteProject ? data.contentItems.filter((item) => item.siteProjectId === siteProject.id) : [];
+  const siteDiffs = siteProject ? data.publishingDiffs.filter((diff) => diff.siteProjectId === siteProject.id) : [];
+  const affiliateOffers = data.affiliateOffers.filter((offer) => offer.questId === questId);
 
   async function createPack() {
     if (!questId) return;
     await createProductionPack(questId);
+  }
+
+  async function createStaticSite() {
+    if (!questId) return;
+    await createSiteProject(questId);
+  }
+
+  async function createContentDraft() {
+    const cluster = clusters[0];
+    if (!cluster) return;
+    await createContentItemFromCluster(cluster.id);
+  }
+
+  async function createDiff() {
+    if (!siteProject) return;
+    await prepareStaticSiteDiff(siteProject.id);
+  }
+
+  async function createOffer() {
+    if (!questId) return;
+    await createAffiliateOffer(questId);
   }
 
   return (
@@ -38,14 +74,14 @@ export function ProductionPipelineWorkbench() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs uppercase text-slate-500">Ready review</p>
-            <p className="mt-2 text-2xl font-semibold text-stone-50">{data.productionPacks.filter((pack) => pack.status === "ready_for_review").length}</p>
+            <p className="text-xs uppercase text-slate-500">Site projects</p>
+            <p className="mt-2 text-2xl font-semibold text-stone-50">{data.siteProjects.length}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs uppercase text-slate-500">Published</p>
-            <p className="mt-2 text-2xl font-semibold text-stone-50">0</p>
+            <p className="text-xs uppercase text-slate-500">Content drafts</p>
+            <p className="mt-2 text-2xl font-semibold text-stone-50">{data.contentItems.length}</p>
           </CardContent>
         </Card>
       </div>
@@ -77,6 +113,104 @@ export function ProductionPipelineWorkbench() {
               <Sparkles className="h-4 w-4" />
               Create Pack
             </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-teal-100" />
+            Phase 19-20 Static Site And Offer Pipeline
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 lg:grid-cols-[1fr_auto]">
+            <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+              <p className="font-semibold text-stone-100">{siteProject?.name ?? "No static site project for this quest yet"}</p>
+              <p className="mt-1 text-sm leading-6 text-slate-300">
+                {siteProject
+                  ? `${siteProject.framework} output at ${siteProject.repoPath}. Git push, deployment, and public publishing are still locked.`
+                  : "Create a local static-site project after SEO demand proof exists. It will generate Markdown and diffs for review only."}
+              </p>
+            </div>
+            <div className="flex flex-wrap items-end gap-2">
+              <Button variant="secondary" onClick={() => void createStaticSite()}>
+                <Sparkles className="h-4 w-4" />
+                Create Site
+              </Button>
+              <Button variant="outline" disabled={clusters.length === 0} onClick={() => void createContentDraft()}>
+                <FileText className="h-4 w-4" />
+                Draft From SEO Cluster
+              </Button>
+              <Button variant="outline" disabled={!siteProject || siteContentItems.length === 0} onClick={() => void createDiff()}>
+                <PackageCheck className="h-4 w-4" />
+                Prepare Diff
+              </Button>
+              <Button variant="outline" onClick={() => void createOffer()}>
+                <ShieldAlert className="h-4 w-4" />
+                Create Offer
+              </Button>
+            </div>
+          </div>
+          <div className="grid gap-4 xl:grid-cols-3">
+            {siteProject ? (
+              <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-stone-100">Publishing rules</p>
+                  <Badge tone="red">{siteProject.status.replace(/_/g, " ")}</Badge>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {siteProject.publishingRules.map((rule) => (
+                    <p key={rule} className="text-sm leading-5 text-slate-300">{rule}</p>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+            {siteContentItems.slice(0, 3).map((item) => (
+              <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-stone-100">{item.title}</p>
+                  <Badge tone={item.status === "blocked" ? "red" : item.status === "approved_local" ? "emerald" : "amber"}>{label(item.status)}</Badge>
+                </div>
+                <p className="mt-2 text-xs uppercase text-slate-500">{item.slug}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{item.outline.slice(0, 3).join(" / ")}</p>
+              </div>
+            ))}
+            {siteDiffs.slice(0, 2).map((diff) => (
+              <div key={diff.id} className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-stone-100">{diff.title}</p>
+                  <Badge tone="amber">{label(diff.status)}</Badge>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{diff.files.length} local file changes prepared for review.</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {diff.riskFlags.map((flag) => <Badge key={flag} tone="red">{flag.replace(/_/g, " ")}</Badge>)}
+                </div>
+                <Button variant="secondary" size="sm" className="mt-3" onClick={() => void createBatchApprovalFromDiff(diff.id)}>
+                  <ShieldAlert className="h-4 w-4" />
+                  Create Batch Approval
+                </Button>
+              </div>
+            ))}
+            {affiliateOffers.slice(0, 3).map((offer) => (
+              <div key={offer.id} className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-stone-100">{offer.name}</p>
+                  <Badge tone={offer.status === "approved_local" ? "emerald" : offer.status === "blocked" ? "red" : "amber"}>{label(offer.status)}</Badge>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{offer.program} / {offer.commissionModel}</p>
+                <p className="mt-2 text-xs text-red-100">Disclosure required: {String(offer.disclosureRequired)}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button variant="outline" size="sm" onClick={() => void reviewAffiliateOffer(offer.id)}>
+                    <CheckCircle2 className="h-4 w-4" />
+                    Run Claim Review
+                  </Button>
+                  <Badge tone="red">No fake reviews</Badge>
+                  <Badge tone="amber">Manual terms check</Badge>
+                </div>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>

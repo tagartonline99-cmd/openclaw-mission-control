@@ -108,6 +108,9 @@ export type RealPilotStatus =
   | "exported"
   | "failed";
 export type MarketReportStatus = "draft" | "ready" | "needs_more_sources" | "blocked";
+export type ResearchSourceCaptureStatus = "pending_approval" | "captured" | "failed" | "blocked" | "manual";
+export type SeoKeywordClusterStatus = "draft" | "needs_sources" | "ready_for_brief" | "blocked";
+export type DemandProofStatus = "draft" | "needs_more_evidence" | "ready_for_validation" | "blocked";
 export type ExperimentRecommendation = "continue" | "revise" | "kill" | "scale_later";
 export type ProductionAssetType =
   | "landing_page"
@@ -119,6 +122,43 @@ export type ProductionAssetType =
   | "product_draft";
 export type ProductionAssetStatus = "draft" | "claim_review" | "ready_for_user_review" | "approved_local" | "blocked";
 export type ProductionPackStatus = "draft" | "ready_for_review" | "needs_revision" | "approved_local" | "blocked";
+export type SiteProjectStatus = "draft" | "local_ready" | "publishing_locked" | "published" | "archived";
+export type StaticSiteFramework = "astro" | "next" | "hugo" | "plain_markdown";
+export type ContentItemType = "article" | "comparison" | "review" | "landing_page" | "disclosure" | "pillar";
+export type ContentItemStatus = "brief" | "draft" | "review" | "approved_local" | "diff_ready" | "published" | "blocked";
+export type PublishingDiffStatus = "draft" | "ready_for_approval" | "approved" | "published" | "blocked";
+export type AffiliateOfferStatus = "candidate" | "claim_review" | "approved_local" | "blocked" | "archived";
+export type OfferClaimReviewStatus = "passed" | "needs_revision" | "blocked";
+export type AnalyticsConnectorType = "google_search_console";
+export type AnalyticsConnectorStatus = "not_connected" | "needs_auth" | "connected" | "sync_error";
+export type BatchApprovalStatus = "draft" | "pending" | "approved" | "rejected" | "expired" | "cancelled";
+export type BatchApprovalItemStatus = "pending" | "approved" | "rejected" | "executed" | "skipped";
+export type JobScheduleType = "gsc_sync" | "report_generation" | "static_repo_check" | "approved_research_batch" | "obsidian_export";
+export type JobScheduleStatus = "active" | "paused" | "blocked";
+export type JobRunStatus = "queued" | "running" | "success" | "failed" | "blocked";
+export type SkillGapStatus = "open" | "approved" | "blocked" | "learned";
+export type PublishingConnectorType = "static_site" | "wordpress" | "newsletter" | "social";
+export type PublishingConnectorStatus = "available" | "needs_auth" | "disabled" | "blocked";
+export type SpendStatus = "planned" | "approved" | "rejected" | "recorded";
+export type PortfolioRecommendation = "kill" | "revise" | "pause" | "continue" | "scale_later" | "archive";
+export type MissionTaskType = "research" | "content" | "validation" | "production" | "publishing" | "analytics" | "review";
+export type MissionTaskStatus = "queued" | "in_progress" | "blocked" | "ready_for_review" | "done" | "cancelled";
+export type MissionArtifactType =
+  | "source_capture"
+  | "research_report"
+  | "keyword_map"
+  | "content_brief"
+  | "draft_page"
+  | "validation_report"
+  | "experiment_plan"
+  | "analytics_snapshot"
+  | "decision_record"
+  | "publishing_diff";
+export type MissionArtifactStatus = "draft" | "ready_for_review" | "approved_local" | "blocked" | "archived";
+export type CommandLedgerStatus = "planned" | "approval_required" | "approved" | "running" | "completed" | "failed" | "blocked" | "cancelled";
+export type CommandConnector = "openclaw" | "mission_control" | "obsidian" | "static_site" | "analytics" | "manual";
+export type ApprovalMode = "not_required" | "single" | "batch";
+export type ExternalActionLockMode = "locked" | "approval_only" | "batch_approval_enabled";
 
 export interface Skill {
   id: string;
@@ -272,6 +312,57 @@ export interface MarketIntelligenceReport {
   updatedAt: string;
 }
 
+export interface ResearchSourceCapture {
+  id: string;
+  questId: string;
+  reportId?: string;
+  url: string;
+  title: string;
+  statusCode?: number;
+  status: ResearchSourceCaptureStatus;
+  captureMode: "approved_url" | "manual" | "imported";
+  evidenceSummary: string;
+  citation: string;
+  riskNotes: string;
+  approvalId?: string;
+  commandId?: string;
+  capturedAt: string;
+}
+
+export interface SeoKeywordCluster {
+  id: string;
+  questId: string;
+  reportId?: string;
+  name: string;
+  intent: KeywordOpportunity["intent"];
+  keywords: string[];
+  targetAudience: string;
+  contentAngle: string;
+  monetizationFit: "low" | "medium" | "high";
+  evidenceScore: number;
+  status: SeoKeywordClusterStatus;
+  sourceCaptureIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface DemandProofReport {
+  id: string;
+  questId: string;
+  title: string;
+  status: DemandProofStatus;
+  sourceCaptureIds: string[];
+  keywordClusterIds: string[];
+  evidenceScore: number;
+  demandSummary: string;
+  competitorGaps: string[];
+  assumptions: string[];
+  recommendedNextStep: string;
+  teamLeaderRecommendation: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ExperimentAnalysis {
   id: string;
   experimentId: string;
@@ -312,6 +403,359 @@ export interface ProductionPack {
   reviewChecklist: string[];
   teamLeaderSummary: string;
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface SiteProject {
+  id: string;
+  name: string;
+  primaryQuestId: string;
+  questIds: string[];
+  repoPath: string;
+  framework: StaticSiteFramework;
+  status: SiteProjectStatus;
+  niche: string;
+  audience: string;
+  disclosureText: string;
+  publishingRules: string[];
+  monetizationPolicy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContentItem {
+  id: string;
+  siteProjectId: string;
+  questId: string;
+  clusterId?: string;
+  title: string;
+  slug: string;
+  type: ContentItemType;
+  status: ContentItemStatus;
+  targetKeywords: string[];
+  outline: string[];
+  draftMarkdown: string;
+  disclosureRequired: boolean;
+  claimReviewStatus: "not_started" | "needs_review" | "passed" | "blocked";
+  approvalId?: string;
+  artifactIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublishingDiffFile {
+  path: string;
+  action: "create" | "update" | "delete";
+  summary: string;
+  preview: string;
+}
+
+export interface PublishingDiff {
+  id: string;
+  siteProjectId: string;
+  contentItemIds: string[];
+  title: string;
+  status: PublishingDiffStatus;
+  files: PublishingDiffFile[];
+  riskFlags: string[];
+  approvalId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AffiliateOffer {
+  id: string;
+  questId: string;
+  siteProjectId?: string;
+  name: string;
+  program: string;
+  productUrl: string;
+  commissionModel: string;
+  disclosureRequired: boolean;
+  allowedClaims: string[];
+  prohibitedClaims: string[];
+  status: AffiliateOfferStatus;
+  riskLevel: RiskLevel;
+  evidenceIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OfferClaimReview {
+  id: string;
+  offerId: string;
+  questId: string;
+  reviewedBy: "TeamLeader1A";
+  status: OfferClaimReviewStatus;
+  findings: string[];
+  requiredChanges: string[];
+  createdAt: string;
+}
+
+export interface AnalyticsConnector {
+  id: string;
+  type: AnalyticsConnectorType;
+  status: AnalyticsConnectorStatus;
+  authMode: "oauth_pending" | "secure_reference" | "manual_import";
+  propertyCount: number;
+  lastSyncAt?: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SearchConsoleProperty {
+  id: string;
+  connectorId: string;
+  siteUrl: string;
+  permissionLevel: "owner" | "full" | "restricted" | "unknown";
+  status: "active" | "needs_verification" | "archived";
+  linkedSiteProjectId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SearchConsoleMetric {
+  id: string;
+  propertyId: string;
+  questId?: string;
+  page: string;
+  query: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  position: number;
+  startDate: string;
+  endDate: string;
+}
+
+export interface AnalyticsSnapshot {
+  id: string;
+  questId?: string;
+  propertyId?: string;
+  source: "google_search_console" | "manual";
+  title: string;
+  clicks: number;
+  impressions: number;
+  ctr: number;
+  averagePosition: number;
+  topQueries: string[];
+  topPages: string[];
+  recommendation: ExperimentRecommendation;
+  teamLeaderSummary: string;
+  createdAt: string;
+}
+
+export interface LearningCard {
+  id: string;
+  questId: string;
+  title: string;
+  whatWorked: string[];
+  whatFailed: string[];
+  whatChanged: string;
+  nextTest: string;
+  reusableLesson: string;
+  createdAt: string;
+}
+
+export interface ExperimentDecision {
+  id: string;
+  questId: string;
+  experimentId?: string;
+  analyticsSnapshotId?: string;
+  decision: ExperimentRecommendation;
+  rationale: string;
+  nextAction: string;
+  approvalRequired: boolean;
+  createdBy: "TeamLeader1A";
+  createdAt: string;
+}
+
+export interface BatchApprovalItem {
+  id: string;
+  batchId: string;
+  targetType: "publishing_diff_file" | "url_research" | "content_item";
+  targetId: string;
+  summary: string;
+  status: BatchApprovalItemStatus;
+}
+
+export interface BatchApprovalPackage {
+  id: string;
+  title: string;
+  status: BatchApprovalStatus;
+  approvalId?: string;
+  questId?: string;
+  sourceDiffId?: string;
+  itemIds: string[];
+  maxActions: number;
+  expiresAt: string;
+  riskFlags: string[];
+  rollbackPlan: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobSchedule {
+  id: string;
+  name: string;
+  type: JobScheduleType;
+  status: JobScheduleStatus;
+  intervalMinutes: number;
+  safeReadOnly: boolean;
+  requiresApprovalAtExecution: boolean;
+  lastRunAt?: string;
+  nextRunAt: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface JobRun {
+  id: string;
+  scheduleId: string;
+  name: string;
+  status: JobRunStatus;
+  startedAt: string;
+  completedAt?: string;
+  summary: string;
+  relatedLogIds: string[];
+}
+
+export interface AgentPerformanceMemory {
+  id: string;
+  agentId: string;
+  acceptedArtifacts: number;
+  revisionRequests: number;
+  blockedActions: number;
+  usefulnessScore: number;
+  accuracyScore: number;
+  notes: string[];
+  updatedAt: string;
+}
+
+export interface SkillGapRequest {
+  id: string;
+  agentId: string;
+  questId?: string;
+  skill: string;
+  reason: string;
+  proposedMode: "Build" | "Install" | "Learn";
+  status: SkillGapStatus;
+  approvalId?: string;
+  createdAt: string;
+}
+
+export interface PublishingConnector {
+  id: string;
+  type: PublishingConnectorType;
+  name: string;
+  status: PublishingConnectorStatus;
+  mode: "draft_only" | "approval_required";
+  target: string;
+  notes: string;
+  lastCheckedAt?: string;
+}
+
+export interface SpendEntry {
+  id: string;
+  questId?: string;
+  amount: number;
+  currency: "USD";
+  category: "tool" | "content" | "ads" | "domain" | "hosting" | "contractor" | "other";
+  status: SpendStatus;
+  approvalId?: string;
+  note: string;
+  createdAt: string;
+}
+
+export interface RevenueRecord {
+  id: string;
+  questId?: string;
+  source: string;
+  amount: number;
+  currency: "USD";
+  mode: "manual" | "csv_import" | "read_only_connector";
+  note: string;
+  createdAt: string;
+}
+
+export interface PortfolioScore {
+  id: string;
+  questId: string;
+  evidenceScore: number;
+  riskScore: number;
+  effortScore: number;
+  costScore: number;
+  revenueScore: number;
+  learningValue: number;
+  totalScore: number;
+  recommendation: PortfolioRecommendation;
+  rationale: string;
+  createdAt: string;
+}
+
+export interface MissionTask {
+  id: string;
+  questId: string;
+  type: MissionTaskType;
+  title: string;
+  ownerAgentId: string;
+  status: MissionTaskStatus;
+  priority: "low" | "normal" | "high" | "urgent";
+  approvalRequired: boolean;
+  dependencyIds: string[];
+  artifactIds: string[];
+  commandLedgerEntryIds: string[];
+  successCriteria: string[];
+  blockedReason?: string;
+  dueAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MissionArtifact {
+  id: string;
+  questId: string;
+  taskId?: string;
+  type: MissionArtifactType;
+  title: string;
+  summary: string;
+  content: string;
+  status: MissionArtifactStatus;
+  storage: "sqlite" | "obsidian" | "local_file" | "static_repo";
+  sourceIds: string[];
+  path?: string;
+  createdByAgentId: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommandLedgerEntry {
+  id: string;
+  questId?: string;
+  taskId?: string;
+  approvalId?: string;
+  commandId?: string;
+  connector: CommandConnector;
+  action: string;
+  status: CommandLedgerStatus;
+  externalAction: boolean;
+  approvalMode: ApprovalMode;
+  riskLevel: RiskLevel;
+  inputSummary: string;
+  outputSummary?: string;
+  stdout?: string;
+  stderr?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ExternalActionLock {
+  id: "global-external-action-lock";
+  mode: ExternalActionLockMode;
+  reason: string;
+  lockedActions: string[];
+  updatedBy: "TeamLeader1A" | "user" | "system";
   updatedAt: string;
 }
 

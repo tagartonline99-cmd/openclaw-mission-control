@@ -28,6 +28,8 @@ export type OpenClawAgentProfile = {
 };
 
 export type UrlResearchInput = {
+  questId?: string;
+  reportId?: string;
   purpose: string;
   urls: string[];
   extractionGoal: string;

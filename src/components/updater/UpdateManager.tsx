@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "Updater-enabled release 0.1.4";
+const UPDATER_VERIFICATION_MARKER = "Business OS release 0.1.5";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;

@@ -1,30 +1,58 @@
 import type {
   ActivityLog,
+  AffiliateOffer,
   Agent,
   AgentMessage,
+  AgentPerformanceMemory,
+  AnalyticsConnector,
+  AnalyticsSnapshot,
   ApprovalRequest,
+  BatchApprovalItem,
+  BatchApprovalPackage,
   Budget,
   BusinessIdea,
   DashboardSummary,
   DecisionLog,
   Experiment,
   ExperimentAnalysis,
+  CommandLedgerEntry,
+  ContentItem,
+  DemandProofReport,
+  ExternalActionLock,
+  ExperimentDecision,
   ImprovementProposal,
+  JobRun,
+  JobSchedule,
+  LearningCard,
   MarketIntelligenceReport,
+  MissionArtifact,
+  MissionTask,
   ObsidianNote,
   OpenClawCapability,
   OpenClawCommand,
   OpenClawEvent,
   OpenClawPermission,
   OpenClawRuntimeStatus,
+  OfferClaimReview,
   ProductionAsset,
   ProductionPack,
+  PublishingDiff,
+  PublishingConnector,
+  PortfolioScore,
   Quest,
+  ResearchSourceCapture,
+  SearchConsoleMetric,
+  SearchConsoleProperty,
+  SeoKeywordCluster,
+  SiteProject,
   Skill,
+  SkillGapRequest,
+  SpendEntry,
   Task,
   TeamLeaderChatMessage,
   UserSettings,
   ValidationReport,
+  RevenueRecord,
 } from "../types";
 
 const now = "2026-05-09T11:30:00+08:00";
@@ -662,6 +690,107 @@ export const marketIntelligenceReports: MarketIntelligenceReport[] = [
   },
 ];
 
+export const researchSourceCaptures: ResearchSourceCapture[] = [
+  {
+    id: "source-home-office-benchmark",
+    questId: "quest-home-office",
+    reportId: "market-home-office-intel",
+    url: "https://example.com/home-office-benchmark",
+    title: "Home office benchmark source placeholder",
+    statusCode: 200,
+    status: "manual",
+    captureMode: "manual",
+    evidenceSummary: "Stored benchmark note points to recurring demand for budget small-space office gear.",
+    citation: "Manual seed evidence; replace with approved URL capture before publishing.",
+    riskNotes: "Needs live source review and product claim verification.",
+    capturedAt: "2026-05-09T10:40:00+08:00",
+  },
+  {
+    id: "source-ai-tools-beginner",
+    questId: "quest-ai-tools",
+    reportId: "market-ai-tools-intel",
+    url: "https://example.com/beginner-ai-tools",
+    title: "Beginner AI tools source placeholder",
+    statusCode: 200,
+    status: "manual",
+    captureMode: "manual",
+    evidenceSummary: "Stored note suggests demand for practical beginner workflows and limitation-forward comparisons.",
+    citation: "Manual seed evidence; approved URL research required before public citation.",
+    riskNotes: "Fast-changing tool details require claim date and limitation review.",
+    capturedAt: "2026-05-09T10:50:00+08:00",
+  },
+];
+
+export const seoKeywordClusters: SeoKeywordCluster[] = [
+  {
+    id: "cluster-home-office-budget",
+    questId: "quest-home-office",
+    reportId: "market-home-office-intel",
+    name: "Budget small-space setup",
+    intent: "commercial",
+    keywords: ["best budget desk for small room", "cheap ergonomic home office setup", "small home office gear under 150"],
+    targetAudience: "Remote workers and students with small rooms and tight budgets.",
+    contentAngle: "Evidence-backed buying guides that compare dimensions, return policy, durability, and price without overstating benefits.",
+    monetizationFit: "high",
+    evidenceScore: 66,
+    status: "needs_sources",
+    sourceCaptureIds: ["source-home-office-benchmark"],
+    createdAt: "2026-05-09T10:42:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "cluster-ai-tools-beginner",
+    questId: "quest-ai-tools",
+    reportId: "market-ai-tools-intel",
+    name: "Beginner AI workflow choices",
+    intent: "comparison",
+    keywords: ["beginner AI tools for work", "how to choose AI writing tool", "AI tools limitations for beginners"],
+    targetAudience: "Small teams and beginners choosing practical AI tools.",
+    contentAngle: "Decision checklists that explain constraints, costs, privacy, and realistic workflow fit.",
+    monetizationFit: "medium",
+    evidenceScore: 58,
+    status: "needs_sources",
+    sourceCaptureIds: ["source-ai-tools-beginner"],
+    createdAt: "2026-05-09T10:52:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const demandProofReports: DemandProofReport[] = [
+  {
+    id: "proof-home-office",
+    questId: "quest-home-office",
+    title: "Budget home office demand proof",
+    status: "needs_more_evidence",
+    sourceCaptureIds: ["source-home-office-benchmark"],
+    keywordClusterIds: ["cluster-home-office-budget"],
+    evidenceScore: 64,
+    demandSummary: "Search intent and audience pain are present, but public production needs stronger live citations and product-claim checks.",
+    competitorGaps: ["Small-space filtering is weak", "Return policy and durability comparisons are shallow", "Budget setup paths are often generic"],
+    assumptions: ["Affiliate programs allow compliant disclosure", "Long-tail queries remain reachable", "The site can add better evidence than thin listicles"],
+    recommendedNextStep: "Run approved URL research for real citations, then convert the strongest cluster into a content brief.",
+    teamLeaderRecommendation: "Continue research; do not publish or spend yet.",
+    createdAt: "2026-05-09T10:55:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "proof-ai-tools",
+    questId: "quest-ai-tools",
+    title: "Beginner AI tools demand proof",
+    status: "needs_more_evidence",
+    sourceCaptureIds: ["source-ai-tools-beginner"],
+    keywordClusterIds: ["cluster-ai-tools-beginner"],
+    evidenceScore: 58,
+    demandSummary: "Demand is visible, but high competition and claim risk require careful source capture and limitation-first content.",
+    competitorGaps: ["Tool directories over-index on breadth", "Many articles omit limitations", "Beginner privacy and workflow tradeoffs are under-explained"],
+    assumptions: ["Limitation-forward content can differentiate", "Affiliate options can be disclosed safely", "Search demand persists despite fast tool changes"],
+    recommendedNextStep: "Capture approved sources and build claim-safe briefs before any publishing approval.",
+    teamLeaderRecommendation: "Proceed only with evidence-first briefs and no public claims until review.",
+    createdAt: "2026-05-09T10:58:00+08:00",
+    updatedAt: now,
+  },
+];
+
 export const experimentAnalyses: ExperimentAnalysis[] = [
   {
     id: "analysis-ai-tools-briefs",
@@ -750,6 +879,595 @@ export const productionPacks: ProductionPack[] = [
     updatedAt: now,
   },
 ];
+
+export const siteProjects: SiteProject[] = [
+  {
+    id: "site-home-office",
+    name: "Budget Workspace Field Guide",
+    primaryQuestId: "quest-home-office",
+    questIds: ["quest-home-office"],
+    repoPath: "C:\\Users\\User\\.openclaw\\sites\\budget-workspace-field-guide",
+    framework: "plain_markdown",
+    status: "publishing_locked",
+    niche: "Budget home office gear for small spaces",
+    audience: "Remote workers, students, and freelancers setting up practical workspaces.",
+    disclosureText:
+      "This site may use affiliate links. Recommendations must be based on transparent criteria, source checks, and no guaranteed outcome claims.",
+    publishingRules: [
+      "Generate local Markdown first",
+      "Show file diff before approval",
+      "Require claim review before publishing",
+      "Require approval before git push or deploy",
+    ],
+    monetizationPolicy: "Affiliate content is allowed only with clear disclosure, evidence-backed comparisons, and no fabricated product experience.",
+    createdAt: "2026-05-09T11:00:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const contentItems: ContentItem[] = [
+  {
+    id: "content-home-small-desk-guide",
+    siteProjectId: "site-home-office",
+    questId: "quest-home-office",
+    clusterId: "cluster-home-office-budget",
+    title: "Best Budget Desks For Small Rooms",
+    slug: "best-budget-desks-small-rooms",
+    type: "comparison",
+    status: "review",
+    targetKeywords: ["best budget desk for small room", "small home office desk under 150"],
+    outline: [
+      "Who this guide is for",
+      "How to compare small-room desks",
+      "Dimensions, durability, return policy, and price criteria",
+      "Disclosure and limitations",
+      "Next steps before purchase",
+    ],
+    draftMarkdown:
+      "# Best Budget Desks For Small Rooms\n\nDraft only. Add approved source citations and claim review before publishing.\n\n## Disclosure\n\nAffiliate disclosure required before public release.",
+    disclosureRequired: true,
+    claimReviewStatus: "needs_review",
+    artifactIds: ["artifact-home-demand-brief"],
+    createdAt: "2026-05-09T11:04:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const publishingDiffs: PublishingDiff[] = [
+  {
+    id: "diff-home-office-guide",
+    siteProjectId: "site-home-office",
+    contentItemIds: ["content-home-small-desk-guide"],
+    title: "Local Markdown export for budget desk guide",
+    status: "ready_for_approval",
+    files: [
+      {
+        path: "content/best-budget-desks-small-rooms.md",
+        action: "create",
+        summary: "Create local comparison guide draft with disclosure placeholder and review warnings.",
+        preview:
+          "# Best Budget Desks For Small Rooms\n\nDraft only. Add approved source citations and claim review before publishing.\n",
+      },
+    ],
+    riskFlags: ["affiliate_disclosure_required", "claim_review_required", "publishing_approval_required"],
+    createdAt: "2026-05-09T11:08:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const affiliateOffers: AffiliateOffer[] = [
+  {
+    id: "offer-budget-desk-roundup",
+    questId: "quest-home-office",
+    siteProjectId: "site-home-office",
+    name: "Budget desk comparison affiliate offer",
+    program: "Manual affiliate candidate",
+    productUrl: "https://example.com/budget-desk",
+    commissionModel: "Unknown until program terms are reviewed",
+    disclosureRequired: true,
+    allowedClaims: [
+      "Compare published dimensions and price ranges",
+      "Explain selection criteria and limitations",
+      "Use transparent affiliate disclosure",
+    ],
+    prohibitedClaims: [
+      "Do not claim hands-on testing unless verified",
+      "Do not promise health, income, or productivity outcomes",
+      "Do not hide affiliate relationship",
+    ],
+    status: "claim_review",
+    riskLevel: "medium",
+    evidenceIds: ["source-home-office-benchmark", "artifact-home-demand-brief"],
+    createdAt: "2026-05-09T11:12:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const offerClaimReviews: OfferClaimReview[] = [
+  {
+    id: "review-budget-desk-roundup",
+    offerId: "offer-budget-desk-roundup",
+    questId: "quest-home-office",
+    reviewedBy: "TeamLeader1A",
+    status: "needs_revision",
+    findings: [
+      "Disclosure requirement is clear",
+      "Published product data can be compared",
+      "Hands-on testing claims are not supported yet",
+    ],
+    requiredChanges: [
+      "Replace any first-hand testing language with source-backed comparison language",
+      "Add date-stamped source notes",
+      "Verify affiliate program terms before publishing",
+    ],
+    createdAt: "2026-05-09T11:15:00+08:00",
+  },
+];
+
+export const analyticsConnectors: AnalyticsConnector[] = [
+  {
+    id: "connector-gsc",
+    type: "google_search_console",
+    status: "needs_auth",
+    authMode: "oauth_pending",
+    propertyCount: 1,
+    notes: "Read-only Google Search Console connector scaffold. OAuth and secure token storage must be completed before real sync.",
+    createdAt: "2026-05-09T11:20:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const searchConsoleProperties: SearchConsoleProperty[] = [
+  {
+    id: "gsc-property-home-office",
+    connectorId: "connector-gsc",
+    siteUrl: "https://example.com/",
+    permissionLevel: "unknown",
+    status: "needs_verification",
+    linkedSiteProjectId: "site-home-office",
+    createdAt: "2026-05-09T11:20:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const searchConsoleMetrics: SearchConsoleMetric[] = [
+  {
+    id: "gsc-metric-home-desk",
+    propertyId: "gsc-property-home-office",
+    questId: "quest-home-office",
+    page: "/best-budget-desks-small-rooms/",
+    query: "best budget desk for small room",
+    clicks: 0,
+    impressions: 18,
+    ctr: 0,
+    position: 54.2,
+    startDate: "2026-05-02",
+    endDate: "2026-05-09",
+  },
+];
+
+export const analyticsSnapshots: AnalyticsSnapshot[] = [
+  {
+    id: "analytics-snapshot-home-office",
+    questId: "quest-home-office",
+    propertyId: "gsc-property-home-office",
+    source: "google_search_console",
+    title: "Budget home office early search visibility",
+    clicks: 0,
+    impressions: 18,
+    ctr: 0,
+    averagePosition: 54.2,
+    topQueries: ["best budget desk for small room"],
+    topPages: ["/best-budget-desks-small-rooms/"],
+    recommendation: "revise",
+    teamLeaderSummary: "Early visibility is too thin for scaling. Improve source-backed content and wait for more impressions before stronger decisions.",
+    createdAt: "2026-05-09T11:22:00+08:00",
+  },
+];
+
+export const learningCards: LearningCard[] = [
+  {
+    id: "learning-home-office-thin-signal",
+    questId: "quest-home-office",
+    title: "Thin search signal requires stronger source-backed content",
+    whatWorked: ["A long-tail query appeared in early search visibility", "The small-room angle remains concrete"],
+    whatFailed: ["No clicks yet", "Average position is too low for confidence"],
+    whatChanged: "The next pass should improve evidence quality and internal linking before any scaling request.",
+    nextTest: "Revise the budget desk guide with approved source captures and wait for the next read-only GSC snapshot.",
+    reusableLesson: "Do not scale SEO content until impressions and clicks show directional traction.",
+    createdAt: "2026-05-09T11:25:00+08:00",
+  },
+];
+
+export const experimentDecisions: ExperimentDecision[] = [
+  {
+    id: "decision-home-office-revise-from-gsc",
+    questId: "quest-home-office",
+    experimentId: "exp-home-office-serp",
+    analyticsSnapshotId: "analytics-snapshot-home-office",
+    decision: "revise",
+    rationale: "Search Console visibility is too thin for scaling, but enough to justify a content improvement pass.",
+    nextAction: "Revise source quality and content structure, then re-check read-only analytics.",
+    approvalRequired: false,
+    createdBy: "TeamLeader1A",
+    createdAt: "2026-05-09T11:26:00+08:00",
+  },
+];
+
+export const batchApprovalItems: BatchApprovalItem[] = [
+  {
+    id: "batch-item-home-office-guide",
+    batchId: "batch-static-site-home-office",
+    targetType: "publishing_diff_file",
+    targetId: "content/best-budget-desks-small-rooms.md",
+    summary: "Create local Markdown guide after claim review and disclosure checks.",
+    status: "pending",
+  },
+];
+
+export const batchApprovalPackages: BatchApprovalPackage[] = [
+  {
+    id: "batch-static-site-home-office",
+    title: "Publish reviewed budget desk guide batch",
+    status: "pending",
+    approvalId: "approval-notion-launch",
+    questId: "quest-home-office",
+    sourceDiffId: "diff-home-office-guide",
+    itemIds: ["batch-item-home-office-guide"],
+    maxActions: 1,
+    expiresAt: "2026-05-16T11:30:00+08:00",
+    riskFlags: ["publishing_approval_required", "affiliate_disclosure_required", "claim_review_required"],
+    rollbackPlan: "Revert the static site commit and keep local draft archived if any claim issue is found.",
+    createdAt: "2026-05-09T11:28:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const jobSchedules: JobSchedule[] = [
+  {
+    id: "job-gsc-readonly",
+    name: "Read-only Search Console refresh",
+    type: "gsc_sync",
+    status: "paused",
+    intervalMinutes: 1440,
+    safeReadOnly: true,
+    requiresApprovalAtExecution: false,
+    nextRunAt: "2026-05-10T11:30:00+08:00",
+    createdAt: "2026-05-09T11:30:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "job-static-repo-check",
+    name: "Static site repo status check",
+    type: "static_repo_check",
+    status: "paused",
+    intervalMinutes: 720,
+    safeReadOnly: true,
+    requiresApprovalAtExecution: false,
+    nextRunAt: "2026-05-10T11:45:00+08:00",
+    createdAt: "2026-05-09T11:30:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const jobRuns: JobRun[] = [
+  {
+    id: "job-run-initial",
+    scheduleId: "job-gsc-readonly",
+    name: "Read-only Search Console refresh",
+    status: "success",
+    startedAt: "2026-05-09T11:32:00+08:00",
+    completedAt: "2026-05-09T11:32:05+08:00",
+    summary: "Local/manual Search Console snapshot available. No write action occurred.",
+    relatedLogIds: ["log-6"],
+  },
+];
+
+export const agentPerformanceMemories: AgentPerformanceMemory[] = [
+  {
+    id: "memory-teamleader1a-performance",
+    agentId: "teamleader1a",
+    acceptedArtifacts: 8,
+    revisionRequests: 2,
+    blockedActions: 6,
+    usefulnessScore: 96,
+    accuracyScore: 93,
+    notes: ["Strong at blocking premature launches", "Needs richer source-backed portfolio scoring next"],
+    updatedAt: now,
+  },
+  {
+    id: "memory-agent-seo-performance",
+    agentId: "agent-seo",
+    acceptedArtifacts: 5,
+    revisionRequests: 3,
+    blockedActions: 1,
+    usefulnessScore: 89,
+    accuracyScore: 86,
+    notes: ["Good keyword clustering", "Needs real Search Console and keyword API data before high-confidence scoring"],
+    updatedAt: now,
+  },
+];
+
+export const skillGapRequests: SkillGapRequest[] = [
+  {
+    id: "skillgap-gsc-real-sync",
+    agentId: "agent-seo",
+    questId: "quest-home-office",
+    skill: "Real Google Search Console OAuth sync",
+    reason: "SEO decisions need read-only query/page metrics from verified properties.",
+    proposedMode: "Build",
+    status: "open",
+    createdAt: "2026-05-09T11:35:00+08:00",
+  },
+  {
+    id: "skillgap-static-site-writer",
+    agentId: "agent-production",
+    questId: "quest-home-office",
+    skill: "Static-site repo writer with diff preview",
+    reason: "Content drafts need local file output before any publishing approval.",
+    proposedMode: "Build",
+    status: "open",
+    createdAt: "2026-05-09T11:36:00+08:00",
+  },
+];
+
+export const publishingConnectors: PublishingConnector[] = [
+  {
+    id: "pub-static-site",
+    type: "static_site",
+    name: "Local static-site repo",
+    status: "available",
+    mode: "approval_required",
+    target: "Local repo path per site project",
+    notes: "Can prepare local Markdown diffs. Git push/deploy remains approval-gated and not yet executable.",
+    lastCheckedAt: now,
+  },
+  {
+    id: "pub-wordpress-drafts",
+    type: "wordpress",
+    name: "WordPress draft connector",
+    status: "needs_auth",
+    mode: "draft_only",
+    target: "Not connected",
+    notes: "Reserved for draft creation only after credential storage and per-action approvals are implemented.",
+  },
+  {
+    id: "pub-newsletter-drafts",
+    type: "newsletter",
+    name: "Newsletter draft connector",
+    status: "disabled",
+    mode: "draft_only",
+    target: "Not connected",
+    notes: "No sending. Draft preparation only after list consent and connector approval.",
+  },
+  {
+    id: "pub-social-drafts",
+    type: "social",
+    name: "Social draft connector",
+    status: "blocked",
+    mode: "draft_only",
+    target: "Not connected",
+    notes: "Bulk posting and spam are blocked. Future mode may prepare drafts only.",
+  },
+];
+
+export const spendEntries: SpendEntry[] = [
+  {
+    id: "spend-home-office-domain-planned",
+    questId: "quest-home-office",
+    amount: 12,
+    currency: "USD",
+    category: "domain",
+    status: "planned",
+    approvalId: "approval-notion-launch",
+    note: "Example planned domain cost. No purchase has occurred.",
+    createdAt: "2026-05-09T11:38:00+08:00",
+  },
+];
+
+export const revenueRecords: RevenueRecord[] = [
+  {
+    id: "revenue-placeholder-zero",
+    questId: "quest-home-office",
+    source: "Manual ledger",
+    amount: 0,
+    currency: "USD",
+    mode: "manual",
+    note: "No real revenue recorded yet.",
+    createdAt: "2026-05-09T11:39:00+08:00",
+  },
+];
+
+export const portfolioScores: PortfolioScore[] = [
+  {
+    id: "portfolio-score-home-office",
+    questId: "quest-home-office",
+    evidenceScore: 64,
+    riskScore: 42,
+    effortScore: 58,
+    costScore: 84,
+    revenueScore: 0,
+    learningValue: 78,
+    totalScore: 57,
+    recommendation: "continue",
+    rationale: "Low cost and decent learning value justify another evidence pass, but revenue is still unproven.",
+    createdAt: "2026-05-09T11:40:00+08:00",
+  },
+];
+
+export const missionTasks: MissionTask[] = [
+  {
+    id: "mission-task-home-research",
+    questId: "quest-home-office",
+    type: "research",
+    title: "Build source-backed SEO demand proof",
+    ownerAgentId: "agent-researcher",
+    status: "in_progress",
+    priority: "high",
+    approvalRequired: false,
+    dependencyIds: [],
+    artifactIds: ["artifact-home-demand-brief"],
+    commandLedgerEntryIds: ["ledger-home-keyword-scan"],
+    successCriteria: ["At least 20 qualified keywords", "At least 5 evidence-backed competitor gaps", "No unsupported product claims"],
+    createdAt: "2026-05-09T10:05:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "mission-task-ai-content",
+    questId: "quest-ai-tools",
+    type: "content",
+    title: "Create claim-safe beginner AI content brief set",
+    ownerAgentId: "agent-content",
+    status: "ready_for_review",
+    priority: "high",
+    approvalRequired: false,
+    dependencyIds: [],
+    artifactIds: ["artifact-ai-brief-map"],
+    commandLedgerEntryIds: ["ledger-ai-cluster-plan"],
+    successCriteria: ["12 briefs mapped to intent", "Affiliate disclosures included", "Limitations and policy notes present"],
+    createdAt: "2026-05-08T14:00:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "mission-task-notion-launch-gate",
+    questId: "quest-notion-pack",
+    type: "publishing",
+    title: "Hold smoke test launch behind approval",
+    ownerAgentId: "teamleader1a",
+    status: "blocked",
+    priority: "urgent",
+    approvalRequired: true,
+    dependencyIds: [],
+    artifactIds: ["artifact-notion-launch-review"],
+    commandLedgerEntryIds: ["ledger-notion-launch-approval"],
+    successCriteria: ["User approves launch", "Budget cap remains explicit", "Success and kill metrics are visible"],
+    blockedReason: "External launch remains locked until approval and final review.",
+    createdAt: "2026-05-09T09:40:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const missionArtifacts: MissionArtifact[] = [
+  {
+    id: "artifact-home-demand-brief",
+    questId: "quest-home-office",
+    taskId: "mission-task-home-research",
+    type: "research_report",
+    title: "Budget home office demand proof brief",
+    summary: "Directional demand exists, but source quality and competitor gaps need another approved research pass before production.",
+    content:
+      "Evidence includes stored search-intent clusters, competitor monetization notes, and audience pain points. The next real action should be approved URL research against explicit sources only.",
+    status: "ready_for_review",
+    storage: "sqlite",
+    sourceIds: ["market-home-office-intel", "exp-home-office-serp"],
+    createdByAgentId: "agent-researcher",
+    createdAt: "2026-05-09T10:12:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "artifact-ai-brief-map",
+    questId: "quest-ai-tools",
+    taskId: "mission-task-ai-content",
+    type: "content_brief",
+    title: "Beginner AI tools claim-safe brief map",
+    summary: "A local content map that emphasizes limitations, privacy, realistic workflows, and affiliate disclosure safety.",
+    content:
+      "Draft cluster: tool choice checklist, beginner workflow setup, limitations guide, comparison pages with disclosure blocks, and no outcome guarantees.",
+    status: "ready_for_review",
+    storage: "sqlite",
+    sourceIds: ["market-ai-tools-intel", "analysis-ai-tools-briefs"],
+    createdByAgentId: "agent-content",
+    createdAt: "2026-05-09T10:58:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "artifact-notion-launch-review",
+    questId: "quest-notion-pack",
+    taskId: "mission-task-notion-launch-gate",
+    type: "experiment_plan",
+    title: "Notion template smoke test launch review",
+    summary: "The smoke test plan is locally ready, but public launch and spend need explicit approval.",
+    content:
+      "Minimum test: publish a reviewed landing page and free sample, cap budget at $25, measure email signups and pre-order clicks, kill if signup conversion is below threshold.",
+    status: "blocked",
+    storage: "sqlite",
+    sourceIds: ["approval-notion-launch", "exp-notion-smoke"],
+    createdByAgentId: "teamleader1a",
+    createdAt: "2026-05-09T09:45:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const commandLedgerEntries: CommandLedgerEntry[] = [
+  {
+    id: "ledger-home-keyword-scan",
+    questId: "quest-home-office",
+    taskId: "mission-task-home-research",
+    commandId: "cmd-keyword-scan",
+    connector: "mission_control",
+    action: "research.keywords.scan",
+    status: "completed",
+    externalAction: false,
+    approvalMode: "not_required",
+    riskLevel: "low",
+    inputSummary: "Use stored quest evidence to estimate reachable keyword opportunities.",
+    outputSummary: "Mock scan returned long-tail candidates and competitor notes.",
+    createdAt: "2026-05-09T10:10:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "ledger-ai-cluster-plan",
+    questId: "quest-ai-tools",
+    taskId: "mission-task-ai-content",
+    commandId: "cmd-content-cluster",
+    connector: "mission_control",
+    action: "content.cluster.plan",
+    status: "completed",
+    externalAction: false,
+    approvalMode: "not_required",
+    riskLevel: "medium",
+    inputSummary: "Build a local beginner AI tools content cluster with claim review required.",
+    outputSummary: "Cluster plan produced; publishing remains locked.",
+    createdAt: "2026-05-08T14:00:00+08:00",
+    updatedAt: now,
+  },
+  {
+    id: "ledger-notion-launch-approval",
+    questId: "quest-notion-pack",
+    taskId: "mission-task-notion-launch-gate",
+    approvalId: "approval-notion-launch",
+    connector: "manual",
+    action: "launch_experiment_approval",
+    status: "approval_required",
+    externalAction: true,
+    approvalMode: "single",
+    riskLevel: "low",
+    inputSummary: "Launch the Notion template smoke test with a $25 cap after user approval.",
+    outputSummary: "Waiting for approval. No external launch has run.",
+    createdAt: "2026-05-09T09:40:00+08:00",
+    updatedAt: now,
+  },
+];
+
+export const externalActionLock: ExternalActionLock = {
+  id: "global-external-action-lock",
+  mode: "approval_only",
+  reason: "Mission Control may prepare work locally, but external action needs explicit single or batch approval.",
+  lockedActions: [
+    "spending",
+    "publishing",
+    "launching",
+    "scaling",
+    "channel messaging",
+    "browser automation",
+    "scraping",
+    "payments",
+    "purchases",
+    "login automation",
+  ],
+  updatedBy: "TeamLeader1A",
+  updatedAt: now,
+};
 
 export const obsidianNotes: ObsidianNote[] = [
   {

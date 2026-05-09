@@ -13,22 +13,32 @@ function label(value: string) {
 }
 
 export function MarketIntelligenceWorkbench() {
-  const { data, createMarketIntelligenceReport, requestUrlResearch } = useAppData();
+  const { data, createMarketIntelligenceReport, createSeoResearchPack, requestUrlResearch } = useAppData();
   const [questId, setQuestId] = useState(data.quests[0]?.id ?? "");
   const selectedQuest = data.quests.find((quest) => quest.id === questId);
   const reports = data.marketIntelligenceReports;
   const questReports = reports.filter((report) => report.questId === questId);
   const latestReport = questReports[0] ?? reports[0];
+  const sourceCaptures = data.researchSourceCaptures.filter((capture) => capture.questId === questId);
+  const keywordClusters = data.seoKeywordClusters.filter((cluster) => cluster.questId === questId);
+  const demandProof = data.demandProofReports.find((proof) => proof.questId === questId);
 
   async function createReport() {
     if (!questId) return;
     await createMarketIntelligenceReport(questId);
   }
 
+  async function createProofPack() {
+    if (!questId) return;
+    await createSeoResearchPack(questId);
+  }
+
   function requestApprovedResearch(reportId: string) {
     const report = data.marketIntelligenceReports.find((item) => item.id === reportId);
     if (!report) return;
     void requestUrlResearch({
+      questId: report.questId,
+      reportId: report.id,
       purpose: `Collect approved market evidence for ${report.title}`,
       urls: report.sourceUrls.length > 0 ? report.sourceUrls : ["https://example.com"],
       extractionGoal: "Summarize page title/status, demand evidence, competitor positioning, pricing signals, citations, and policy risks.",
@@ -54,15 +64,15 @@ export function MarketIntelligenceWorkbench() {
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs uppercase text-slate-500">Keyword ops</p>
-            <p className="mt-2 text-2xl font-semibold text-stone-50">{reports.reduce((total, report) => total + report.keywordOpportunities.length, 0)}</p>
+            <p className="text-xs uppercase text-slate-500">Keyword clusters</p>
+            <p className="mt-2 text-2xl font-semibold text-stone-50">{data.seoKeywordClusters.length}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4">
-            <p className="text-xs uppercase text-slate-500">Avg evidence</p>
+            <p className="text-xs uppercase text-slate-500">Source captures</p>
             <p className="mt-2 text-2xl font-semibold text-stone-50">
-              {reports.length ? Math.round(reports.reduce((total, report) => total + report.evidenceScore, 0) / reports.length) : 0}/100
+              {data.researchSourceCaptures.length}
             </p>
           </CardContent>
         </Card>
@@ -97,6 +107,15 @@ export function MarketIntelligenceWorkbench() {
               <Sparkles className="h-4 w-4" />
               Generate Report
             </Button>
+          </div>
+          <div className="lg:col-span-3 flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => void createProofPack()}>
+              <ShieldCheck className="h-4 w-4" />
+              Build SEO Demand Proof Pack
+            </Button>
+            <Badge tone="teal">{sourceCaptures.length} source captures for selected quest</Badge>
+            <Badge tone="amber">{keywordClusters.length} keyword clusters for selected quest</Badge>
+            {demandProof ? <Badge tone={demandProof.status === "ready_for_validation" ? "emerald" : "amber"}>{demandProof.status.replace(/_/g, " ")}</Badge> : null}
           </div>
         </CardContent>
       </Card>
@@ -164,10 +183,39 @@ export function MarketIntelligenceWorkbench() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <ShieldCheck className="h-4 w-4 text-teal-100" />
-              Evidence Review
+              Evidence Review And Demand Proof
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            {demandProof ? (
+              <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-stone-100">{demandProof.title}</p>
+                  <Badge tone={demandProof.status === "ready_for_validation" ? "emerald" : "amber"}>{demandProof.evidenceScore}/100</Badge>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{demandProof.demandSummary}</p>
+                <p className="mt-2 text-sm leading-6 text-amber-100">{demandProof.teamLeaderRecommendation}</p>
+              </div>
+            ) : null}
+            {keywordClusters.slice(0, 3).map((cluster) => (
+              <div key={cluster.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="font-semibold text-stone-100">{cluster.name}</p>
+                  <Badge tone={cluster.status === "ready_for_brief" ? "emerald" : "amber"}>{cluster.intent}</Badge>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{cluster.contentAngle}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {cluster.keywords.slice(0, 4).map((keyword) => <Badge key={keyword} tone="teal">{keyword}</Badge>)}
+                </div>
+              </div>
+            ))}
+            {sourceCaptures.slice(0, 3).map((capture) => (
+              <div key={capture.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                <p className="font-semibold text-stone-100">{capture.title}</p>
+                <p className="mt-1 text-xs text-slate-500">{capture.captureMode} / {capture.status}</p>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{capture.evidenceSummary}</p>
+              </div>
+            ))}
             {latestReport ? (
               <>
                 <div className="rounded-md border border-white/10 bg-black/25 p-3">

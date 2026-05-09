@@ -1,31 +1,59 @@
 import { isTauri } from "@tauri-apps/api/core";
 import {
   activityLogs,
+  affiliateOffers,
   agentMessages,
+  agentPerformanceMemories,
   agents,
+  analyticsConnectors,
+  analyticsSnapshots,
   approvalRequests,
+  batchApprovalItems,
+  batchApprovalPackages,
   budgets,
   businessIdeas,
+  contentItems,
   dashboardSummary,
   decisionLogs,
+  demandProofReports,
   experimentAnalyses,
   experimentQueue,
   experiments,
+  experimentDecisions,
+  commandLedgerEntries,
+  externalActionLock,
   improvementProposals,
   improvementQueue,
+  jobRuns,
+  jobSchedules,
   marketIntelligenceReports,
+  learningCards,
+  researchSourceCaptures,
+  seoKeywordClusters,
+  siteProjects,
+  missionArtifacts,
+  missionTasks,
   obsidianNotes,
   openClawCapabilities,
   openClawCommands,
   openClawEvents,
   openClawPermissions,
   openClawRuntimeStatus,
+  offerClaimReviews,
   productionAssets,
   productionPacks,
+  publishingDiffs,
+  publishingConnectors,
+  portfolioScores,
   quests,
   researchQueue,
+  revenueRecords,
+  searchConsoleMetrics,
+  searchConsoleProperties,
   safetyRules,
   skills,
+  spendEntries,
+  skillGapRequests,
   tasks,
   teamLeaderChatMessages,
   userSettings,
@@ -33,37 +61,65 @@ import {
 } from "../data/mockData";
 import type {
   ActivityLog,
+  AffiliateOffer,
   Agent,
   AgentArtifact,
   AgentMessage,
+  AgentPerformanceMemory,
+  AnalyticsConnector,
+  AnalyticsSnapshot,
   AgentOrchestrationRun,
   AgentRunReview,
   AllowlistEntry,
   ApprovalRequest,
   ApprovalDecisionRecord,
+  BatchApprovalItem,
+  BatchApprovalPackage,
   Budget,
   BusinessIdea,
   DashboardSummary,
   DecisionLog,
+  DemandProofReport,
   Experiment,
+  ExperimentDecision,
   ExperimentAnalysis,
+  CommandLedgerEntry,
+  ContentItem,
+  ExternalActionLock,
   ImprovementProposal,
+  JobRun,
+  JobSchedule,
+  LearningCard,
   MarketIntelligenceReport,
+  MissionArtifact,
+  MissionTask,
   ObsidianNote,
   OpenClawCapability,
   OpenClawCommand,
   OpenClawEvent,
   OpenClawPermission,
   OpenClawRuntimeStatus,
+  OfferClaimReview,
   ProductionAsset,
   ProductionPack,
+  PublishingDiff,
+  PublishingConnector,
+  PortfolioScore,
   Quest,
+  ResearchSourceCapture,
   RealPilotRun,
+  SearchConsoleMetric,
+  SearchConsoleProperty,
+  SeoKeywordCluster,
+  SiteProject,
   Skill,
+  SpendEntry,
+  SkillGapRequest,
   Task,
   TeamLeaderChatMessage,
   UserSettings,
   ValidationReport,
+  RevenueRecord,
 } from "../types";
 import { safetyPolicyService } from "./safetyPolicyService";
 
@@ -77,10 +133,33 @@ export interface AppDataState {
   budgets: Budget[];
   validationReports: ValidationReport[];
   experiments: Experiment[];
+  experimentDecisions: ExperimentDecision[];
   marketIntelligenceReports: MarketIntelligenceReport[];
+  researchSourceCaptures: ResearchSourceCapture[];
+  seoKeywordClusters: SeoKeywordCluster[];
+  demandProofReports: DemandProofReport[];
   experimentAnalyses: ExperimentAnalysis[];
   productionAssets: ProductionAsset[];
   productionPacks: ProductionPack[];
+  siteProjects: SiteProject[];
+  contentItems: ContentItem[];
+  publishingDiffs: PublishingDiff[];
+  publishingConnectors: PublishingConnector[];
+  spendEntries: SpendEntry[];
+  revenueRecords: RevenueRecord[];
+  portfolioScores: PortfolioScore[];
+  affiliateOffers: AffiliateOffer[];
+  offerClaimReviews: OfferClaimReview[];
+  analyticsConnectors: AnalyticsConnector[];
+  searchConsoleProperties: SearchConsoleProperty[];
+  searchConsoleMetrics: SearchConsoleMetric[];
+  analyticsSnapshots: AnalyticsSnapshot[];
+  learningCards: LearningCard[];
+  jobSchedules: JobSchedule[];
+  jobRuns: JobRun[];
+  missionTasks: MissionTask[];
+  missionArtifacts: MissionArtifact[];
+  commandLedgerEntries: CommandLedgerEntry[];
   obsidianNotes: ObsidianNote[];
   decisionLogs: DecisionLog[];
   improvementProposals: ImprovementProposal[];
@@ -89,8 +168,12 @@ export interface AppDataState {
   agentArtifacts: AgentArtifact[];
   agentRunReviews: AgentRunReview[];
   agentMessages: AgentMessage[];
+  agentPerformanceMemories: AgentPerformanceMemory[];
+  skillGapRequests: SkillGapRequest[];
   teamLeaderChatMessages: TeamLeaderChatMessage[];
   approvalRequests: ApprovalRequest[];
+  batchApprovalPackages: BatchApprovalPackage[];
+  batchApprovalItems: BatchApprovalItem[];
   approvalDecisionRecords: ApprovalDecisionRecord[];
   allowlistEntries: AllowlistEntry[];
   activityLogs: ActivityLog[];
@@ -101,6 +184,7 @@ export interface AppDataState {
   openClawRuntimeStatus: OpenClawRuntimeStatus;
   realPilotRuns: RealPilotRun[];
   userSettings: UserSettings;
+  externalActionLock: ExternalActionLock;
   dashboardSummary: DashboardSummary;
   researchQueue: string[];
   experimentQueue: string[];
@@ -121,10 +205,33 @@ type EntityKey =
   | "budgets"
   | "validationReports"
   | "experiments"
+  | "experimentDecisions"
   | "marketIntelligenceReports"
+  | "researchSourceCaptures"
+  | "seoKeywordClusters"
+  | "demandProofReports"
   | "experimentAnalyses"
   | "productionAssets"
   | "productionPacks"
+  | "siteProjects"
+  | "contentItems"
+  | "publishingDiffs"
+  | "publishingConnectors"
+  | "spendEntries"
+  | "revenueRecords"
+  | "portfolioScores"
+  | "affiliateOffers"
+  | "offerClaimReviews"
+  | "analyticsConnectors"
+  | "searchConsoleProperties"
+  | "searchConsoleMetrics"
+  | "analyticsSnapshots"
+  | "learningCards"
+  | "jobSchedules"
+  | "jobRuns"
+  | "missionTasks"
+  | "missionArtifacts"
+  | "commandLedgerEntries"
   | "obsidianNotes"
   | "decisionLogs"
   | "improvementProposals"
@@ -133,8 +240,12 @@ type EntityKey =
   | "agentArtifacts"
   | "agentRunReviews"
   | "agentMessages"
+  | "agentPerformanceMemories"
+  | "skillGapRequests"
   | "teamLeaderChatMessages"
   | "approvalRequests"
+  | "batchApprovalPackages"
+  | "batchApprovalItems"
   | "approvalDecisionRecords"
   | "allowlistEntries"
   | "activityLogs"
@@ -144,7 +255,7 @@ type EntityKey =
   | "openClawPermissions"
   | "realPilotRuns";
 
-type SingletonKey = "openClawRuntimeStatus" | "userSettings" | "dashboardSummary";
+type SingletonKey = "openClawRuntimeStatus" | "userSettings" | "dashboardSummary" | "externalActionLock";
 
 type EntityConfig = {
   stateKey: EntityKey;
@@ -176,11 +287,36 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "budgets", tableName: "budgets" },
   { stateKey: "validationReports", tableName: "validation_reports" },
   { stateKey: "experiments", tableName: "experiments" },
+  { stateKey: "experimentDecisions", tableName: "experiment_decisions" },
   { stateKey: "marketIntelligenceReports", tableName: "market_intelligence_reports" },
+  { stateKey: "researchSourceCaptures", tableName: "research_source_captures" },
+  { stateKey: "seoKeywordClusters", tableName: "seo_keyword_clusters" },
+  { stateKey: "demandProofReports", tableName: "demand_proof_reports" },
   { stateKey: "experimentAnalyses", tableName: "experiment_analyses" },
   { stateKey: "productionAssets", tableName: "production_assets" },
   { stateKey: "productionPacks", tableName: "production_packs" },
+  { stateKey: "siteProjects", tableName: "site_projects" },
+  { stateKey: "contentItems", tableName: "content_items" },
+  { stateKey: "publishingDiffs", tableName: "publishing_diffs" },
+  { stateKey: "publishingConnectors", tableName: "publishing_connectors" },
+  { stateKey: "spendEntries", tableName: "spend_entries" },
+  { stateKey: "revenueRecords", tableName: "revenue_records" },
+  { stateKey: "portfolioScores", tableName: "portfolio_scores" },
+  { stateKey: "affiliateOffers", tableName: "affiliate_offers" },
+  { stateKey: "offerClaimReviews", tableName: "offer_claim_reviews" },
+  { stateKey: "analyticsConnectors", tableName: "analytics_connectors" },
+  { stateKey: "searchConsoleProperties", tableName: "search_console_properties" },
+  { stateKey: "searchConsoleMetrics", tableName: "search_console_metrics" },
+  { stateKey: "analyticsSnapshots", tableName: "analytics_snapshots" },
+  { stateKey: "learningCards", tableName: "learning_cards" },
+  { stateKey: "jobSchedules", tableName: "job_schedules" },
+  { stateKey: "jobRuns", tableName: "job_runs" },
+  { stateKey: "missionTasks", tableName: "mission_tasks" },
+  { stateKey: "missionArtifacts", tableName: "mission_artifacts" },
+  { stateKey: "commandLedgerEntries", tableName: "command_ledger_entries" },
   { stateKey: "approvalRequests", tableName: "approval_requests" },
+  { stateKey: "batchApprovalPackages", tableName: "batch_approval_packages" },
+  { stateKey: "batchApprovalItems", tableName: "batch_approval_items" },
   { stateKey: "approvalDecisionRecords", tableName: "approval_decision_records" },
   { stateKey: "allowlistEntries", tableName: "allowlist_entries" },
   { stateKey: "activityLogs", tableName: "activity_logs" },
@@ -192,6 +328,8 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "agentArtifacts", tableName: "agent_artifacts" },
   { stateKey: "agentRunReviews", tableName: "agent_run_reviews" },
   { stateKey: "agentMessages", tableName: "agent_messages" },
+  { stateKey: "agentPerformanceMemories", tableName: "agent_performance_memories" },
+  { stateKey: "skillGapRequests", tableName: "skill_gap_requests" },
   { stateKey: "teamLeaderChatMessages", tableName: "teamleader_chat_messages" },
   { stateKey: "openClawCommands", tableName: "openclaw_commands" },
   { stateKey: "openClawEvents", tableName: "openclaw_events" },
@@ -204,6 +342,7 @@ export const singletonConfigs: SingletonConfig[] = [
   { stateKey: "openClawRuntimeStatus", tableName: "openclaw_runtime_status", id: "runtime-mock" },
   { stateKey: "userSettings", tableName: "settings", id: "user-settings" },
   { stateKey: "dashboardSummary", tableName: "settings", id: "dashboard-summary" },
+  { stateKey: "externalActionLock", tableName: "settings", id: "global-external-action-lock" },
 ];
 
 export const initialAppDataState: AppDataState = {
@@ -214,10 +353,33 @@ export const initialAppDataState: AppDataState = {
   budgets,
   validationReports,
   experiments,
+  experimentDecisions,
   marketIntelligenceReports,
+  researchSourceCaptures,
+  seoKeywordClusters,
+  demandProofReports,
   experimentAnalyses,
   productionAssets,
   productionPacks,
+  siteProjects,
+  contentItems,
+  publishingDiffs,
+  publishingConnectors,
+  spendEntries,
+  revenueRecords,
+  portfolioScores,
+  affiliateOffers,
+  offerClaimReviews,
+  analyticsConnectors,
+  searchConsoleProperties,
+  searchConsoleMetrics,
+  analyticsSnapshots,
+  learningCards,
+  jobSchedules,
+  jobRuns,
+  missionTasks,
+  missionArtifacts,
+  commandLedgerEntries,
   obsidianNotes,
   decisionLogs,
   improvementProposals,
@@ -226,8 +388,12 @@ export const initialAppDataState: AppDataState = {
   agentArtifacts: [],
   agentRunReviews: [],
   agentMessages,
+  agentPerformanceMemories,
+  skillGapRequests,
   teamLeaderChatMessages,
   approvalRequests,
+  batchApprovalPackages,
+  batchApprovalItems,
   approvalDecisionRecords: [],
   allowlistEntries: [],
   activityLogs,
@@ -238,6 +404,7 @@ export const initialAppDataState: AppDataState = {
   openClawRuntimeStatus,
   realPilotRuns: [],
   userSettings,
+  externalActionLock,
   dashboardSummary,
   researchQueue,
   experimentQueue,
@@ -438,6 +605,8 @@ async function loadSqlState(db: SqlDatabase): Promise<AppDataState> {
     },
   };
   state.dashboardSummary = (settingsById.get("dashboard-summary") as DashboardSummary | undefined) ?? state.dashboardSummary;
+  state.externalActionLock =
+    (settingsById.get("global-external-action-lock") as ExternalActionLock | undefined) ?? state.externalActionLock;
   state.openClawRuntimeStatus =
     (runtimeById.get("runtime-mock") as OpenClawRuntimeStatus | undefined) ?? state.openClawRuntimeStatus;
 
@@ -491,6 +660,34 @@ function markInterruptedCommands(state: AppDataState) {
 }
 
 function normalizePhase6BState(state: AppDataState) {
+  state.missionTasks ??= cloneState(initialAppDataState).missionTasks;
+  state.missionArtifacts ??= cloneState(initialAppDataState).missionArtifacts;
+  state.commandLedgerEntries ??= cloneState(initialAppDataState).commandLedgerEntries;
+  state.researchSourceCaptures ??= cloneState(initialAppDataState).researchSourceCaptures;
+  state.seoKeywordClusters ??= cloneState(initialAppDataState).seoKeywordClusters;
+  state.demandProofReports ??= cloneState(initialAppDataState).demandProofReports;
+  state.siteProjects ??= cloneState(initialAppDataState).siteProjects;
+  state.contentItems ??= cloneState(initialAppDataState).contentItems;
+  state.publishingDiffs ??= cloneState(initialAppDataState).publishingDiffs;
+  state.affiliateOffers ??= cloneState(initialAppDataState).affiliateOffers;
+  state.offerClaimReviews ??= cloneState(initialAppDataState).offerClaimReviews;
+  state.analyticsConnectors ??= cloneState(initialAppDataState).analyticsConnectors;
+  state.searchConsoleProperties ??= cloneState(initialAppDataState).searchConsoleProperties;
+  state.searchConsoleMetrics ??= cloneState(initialAppDataState).searchConsoleMetrics;
+  state.analyticsSnapshots ??= cloneState(initialAppDataState).analyticsSnapshots;
+  state.experimentDecisions ??= cloneState(initialAppDataState).experimentDecisions;
+  state.learningCards ??= cloneState(initialAppDataState).learningCards;
+  state.batchApprovalPackages ??= cloneState(initialAppDataState).batchApprovalPackages;
+  state.batchApprovalItems ??= cloneState(initialAppDataState).batchApprovalItems;
+  state.jobSchedules ??= cloneState(initialAppDataState).jobSchedules;
+  state.jobRuns ??= cloneState(initialAppDataState).jobRuns;
+  state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
+  state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;
+  state.publishingConnectors ??= cloneState(initialAppDataState).publishingConnectors;
+  state.spendEntries ??= cloneState(initialAppDataState).spendEntries;
+  state.revenueRecords ??= cloneState(initialAppDataState).revenueRecords;
+  state.portfolioScores ??= cloneState(initialAppDataState).portfolioScores;
+  state.externalActionLock ??= cloneState(initialAppDataState).externalActionLock;
   state.approvalDecisionRecords ??= [];
   state.allowlistEntries = safetyPolicyService.migrateSettingsAllowlists(state.userSettings, state.allowlistEntries ?? []);
   for (const request of state.approvalRequests) {

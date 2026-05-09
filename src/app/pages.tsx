@@ -199,6 +199,7 @@ export function TeamLeaderChatPage() {
 }
 
 export function AgentsPage() {
+  const { data } = useAppData();
   return (
     <div className="space-y-5">
       <PageIntro
@@ -207,6 +208,52 @@ export function AgentsPage() {
         description="Each agent has a role, current mission, workload, performance score, and suggested skill upgrades. Only TeamLeader1A communicates with the user."
       />
       <AgentRosterGrid />
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle>Agent Performance Memory</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {data.agentPerformanceMemories.map((memory) => {
+              const agent = data.agents.find((item) => item.id === memory.agentId);
+              return (
+                <div key={memory.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{agent?.name ?? memory.agentId}</p>
+                    <Badge tone="teal">{memory.usefulnessScore}/100 useful</Badge>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-300">
+                    {memory.acceptedArtifacts} accepted artifacts / {memory.revisionRequests} revisions / {memory.blockedActions} blocked actions
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {memory.notes.map((note) => <Badge key={note} tone="slate">{note}</Badge>)}
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader>
+            <CardTitle>Skill Gap Requests</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {data.skillGapRequests.map((request) => {
+              const agent = data.agents.find((item) => item.id === request.agentId);
+              return (
+                <div key={request.id} className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{request.skill}</p>
+                    <Badge tone={request.status === "blocked" ? "red" : "amber"}>{request.status}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs uppercase text-slate-500">{agent?.name ?? request.agentId} / {request.proposedMode}</p>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">{request.reason}</p>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -359,11 +406,14 @@ export function ProductionPipelinePage() {
 }
 
 export function LaunchControlPage() {
-  const { data, adapter, simulationEnabled, setSimulationEnabled, runSimulationNow } = useAppData();
+  const { data, adapter, simulationEnabled, setSimulationEnabled, runSimulationNow, updateExternalActionLock, runControlledJobNow } = useAppData();
   const readyPacks = data.productionPacks.filter((pack) => pack.status === "ready_for_review" || pack.status === "approved_local");
   const riskyApprovals = data.approvalRequests.filter((request) =>
     ["Publish externally", "Launch experiment", "Scale successful idea", "Send approved channel message"].includes(request.type),
   );
+  const activeMissionTasks = data.missionTasks.filter((task) => !["done", "cancelled"].includes(task.status));
+  const readyArtifacts = data.missionArtifacts.filter((artifact) => artifact.status === "ready_for_review" || artifact.status === "approved_local");
+  const recentLedger = data.commandLedgerEntries.slice(0, 5);
   const activeQuests = data.quests
     .filter((quest) => !["Archived", "Failed", "Retired"].includes(quest.stage))
     .sort((left, right) => right.progress - left.progress);
@@ -396,6 +446,97 @@ export function LaunchControlPage() {
         <MetricCard label="Storage" value={adapter} detail="Local-first persistence status." icon={<Database className="h-4 w-4" />} tone="amber" />
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Lock className="h-4 w-4 text-red-100" /> Phase 17 Operating Core</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[420px_1fr]">
+            <div className="rounded-md border border-red-300/20 bg-red-500/8 p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold uppercase text-red-100">Global external action lock</p>
+                  <p className="mt-1 font-display text-xl font-semibold text-stone-100">{data.externalActionLock.mode.replace(/_/g, " ")}</p>
+                </div>
+                <Badge tone={data.externalActionLock.mode === "locked" ? "red" : "amber"}>{data.externalActionLock.updatedBy}</Badge>
+              </div>
+              <p className="mt-3 text-sm leading-6 text-red-50">{data.externalActionLock.reason}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {data.externalActionLock.lockedActions.slice(0, 8).map((action) => <Badge key={action} tone="red">{action}</Badge>)}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button variant="danger" size="sm" onClick={() => void updateExternalActionLock("locked", "User locked every external action. Local planning can continue.")}>
+                  Lock all external
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void updateExternalActionLock("approval_only", "External actions may be requested, but only after explicit approval.")}>
+                  Approval only
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => void updateExternalActionLock("batch_approval_enabled", "Itemized batch approvals are allowed when every item, limit, and expiry is visible.")}>
+                  Batch approval mode
+                </Button>
+              </div>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">
+              <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Mission tasks</p>
+                <p className="mt-1 text-2xl font-semibold text-stone-100">{activeMissionTasks.length}</p>
+                <p className="mt-1 text-xs text-slate-400">Research, content, validation, production, publishing, analytics, and review tasks.</p>
+              </div>
+              <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Reviewable artifacts</p>
+                <p className="mt-1 text-2xl font-semibold text-stone-100">{readyArtifacts.length}</p>
+                <p className="mt-1 text-xs text-slate-400">Briefs, reports, plans, drafts, snapshots, and diffs before external action.</p>
+              </div>
+              <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Ledger entries</p>
+                <p className="mt-1 text-2xl font-semibold text-stone-100">{data.commandLedgerEntries.length}</p>
+                <p className="mt-1 text-xs text-slate-400">Every connector action is linked to quest, approval, command, and result.</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase text-slate-500">Active operating tasks</p>
+              {activeMissionTasks.slice(0, 4).map((task) => (
+                <div key={task.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{task.title}</p>
+                    <Badge tone={task.approvalRequired ? "red" : "teal"}>{task.status.replace(/_/g, " ")}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs uppercase text-slate-500">{task.type} / {data.agents.find((agent) => agent.id === task.ownerAgentId)?.name ?? task.ownerAgentId}</p>
+                  {task.blockedReason ? <p className="mt-2 text-sm text-red-100">{task.blockedReason}</p> : null}
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase text-slate-500">Artifact ledger</p>
+              {data.missionArtifacts.slice(0, 4).map((artifact) => (
+                <div key={artifact.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{artifact.title}</p>
+                    <Badge tone={artifact.status === "blocked" ? "red" : artifact.status === "approved_local" ? "emerald" : "amber"}>{artifact.status.replace(/_/g, " ")}</Badge>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">{artifact.summary}</p>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase text-slate-500">Command/result ledger</p>
+              {recentLedger.map((entry) => (
+                <div key={entry.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <code className="text-xs text-teal-100">{entry.connector}.{entry.action}</code>
+                    <Badge tone={entry.status === "blocked" || entry.status === "failed" ? "red" : entry.status === "completed" ? "emerald" : "amber"}>{entry.status.replace(/_/g, " ")}</Badge>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">{entry.outputSummary ?? entry.inputSummary}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid gap-5 xl:grid-cols-2">
         <Card>
           <CardHeader>
@@ -417,6 +558,20 @@ export function LaunchControlPage() {
             )}
             <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3 text-sm leading-6 text-red-100">
               Publishing, live messaging, outreach, and scaling require one approval per action. Broadcast, hidden recipients, spam batches, fake reviews, and misleading claims remain blocked.
+            </div>
+            <div className="rounded-md border border-white/10 bg-black/25 p-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">Publishing connectors</p>
+              <div className="mt-3 grid gap-2 md:grid-cols-2">
+                {data.publishingConnectors.map((connector) => (
+                  <div key={connector.id} className="rounded-md border border-white/10 bg-black/25 p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-stone-100">{connector.name}</span>
+                      <Badge tone={connector.status === "available" ? "emerald" : connector.status === "blocked" ? "red" : "amber"}>{connector.status.replace(/_/g, " ")}</Badge>
+                    </div>
+                    <p className="mt-1 text-xs text-slate-400">{connector.mode.replace(/_/g, " ")} / {connector.notes}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </CardContent>
         </Card>
@@ -441,6 +596,24 @@ export function LaunchControlPage() {
                 </div>
               </div>
             ))}
+            <div className="rounded-md border border-white/10 bg-black/25 p-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">Spend ledger</p>
+              {data.spendEntries.map((entry) => (
+                <div key={entry.id} className="mt-2 flex items-center justify-between gap-2 rounded-md border border-white/10 bg-black/25 p-2">
+                  <span className="text-sm text-slate-300">{entry.category} / {entry.note}</span>
+                  <Badge tone={entry.status === "approved" || entry.status === "recorded" ? "emerald" : "amber"}>{formatCurrency(entry.amount)} {entry.status}</Badge>
+                </div>
+              ))}
+            </div>
+            <div className="rounded-md border border-white/10 bg-black/25 p-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">Revenue records</p>
+              {data.revenueRecords.map((record) => (
+                <div key={record.id} className="mt-2 flex items-center justify-between gap-2 rounded-md border border-white/10 bg-black/25 p-2">
+                  <span className="text-sm text-slate-300">{record.source} / {record.mode.replace(/_/g, " ")}</span>
+                  <Badge tone={record.amount > 0 ? "emerald" : "slate"}>{formatCurrency(record.amount)}</Badge>
+                </div>
+              ))}
+            </div>
             <p className="text-xs leading-5 text-slate-500">Real payments and purchases are not connected. Spend records are local planning controls until a separate approved spend workflow exists.</p>
           </CardContent>
         </Card>
@@ -455,6 +628,7 @@ export function LaunchControlPage() {
             {activeQuests.map((quest) => {
               const validation = data.validationReports.find((report) => report.questId === quest.id);
               const completion = validation ? calculateValidationCompletion(validation) : 0;
+              const score = data.portfolioScores.find((item) => item.questId === quest.id);
               return (
                 <div key={quest.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -465,6 +639,15 @@ export function LaunchControlPage() {
                     </div>
                   </div>
                   <p className="mt-2 text-sm leading-6 text-slate-300">{quest.nextAction}</p>
+                  {score ? (
+                    <div className="mt-2 rounded-md border border-teal-300/20 bg-teal-400/8 p-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-stone-100">Portfolio score {score.totalScore}/100</span>
+                        <Badge tone={score.recommendation === "scale_later" ? "emerald" : score.recommendation === "kill" ? "red" : "amber"}>{score.recommendation.replace(/_/g, " ")}</Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-400">{score.rationale}</p>
+                    </div>
+                  ) : null}
                   <div className="mt-3 grid gap-3 md:grid-cols-2">
                     <div>
                       <div className="mb-1 flex justify-between text-xs uppercase text-slate-500">
@@ -504,6 +687,33 @@ export function LaunchControlPage() {
                     <Badge tone={log.severity === "danger" ? "red" : log.severity === "success" ? "emerald" : "slate"}>{log.severity}</Badge>
                   </div>
                   <p className="mt-1 text-xs text-slate-500">{formatDateTime(log.createdAt)}</p>
+                </div>
+              ))}
+              <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Job schedules</p>
+                <div className="mt-3 space-y-2">
+                  {data.jobSchedules.map((schedule) => (
+                    <div key={schedule.id} className="rounded-md border border-white/10 bg-black/25 p-2">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-sm font-semibold text-stone-100">{schedule.name}</span>
+                        <Badge tone={schedule.safeReadOnly ? "teal" : "red"}>{schedule.status}</Badge>
+                      </div>
+                      <p className="mt-1 text-xs text-slate-500">Next: {formatDateTime(schedule.nextRunAt)}</p>
+                      <Button variant="outline" size="sm" className="mt-2" onClick={() => void runControlledJobNow(schedule.id)}>
+                        <Play className="h-4 w-4" />
+                        Run now
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {data.jobRuns.slice(0, 3).map((run) => (
+                <div key={run.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{run.name}</p>
+                    <Badge tone={run.status === "success" ? "emerald" : run.status === "blocked" ? "red" : "amber"}>{run.status}</Badge>
+                  </div>
+                  <p className="mt-1 text-sm leading-5 text-slate-300">{run.summary}</p>
                 </div>
               ))}
             </CardContent>
