@@ -39,7 +39,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI5MDYyMEQyNTg2MzE5QUYKUldTdkdXTlkwaUFHS2ZMWTBwaFNDektUQ1o3LytmVDk1bCs2YzlpSHVQSnVXRktBbVpQMUJiVEsK",
       "endpoints": [
-        "https://github.com/tagartonline99/openclaw-mission-control/releases/latest/download/latest.json"
+        "https://github.com/tagartonline99-cmd/openclaw-mission-control/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

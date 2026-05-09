@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
-const repoOwner = "tagartonline99";
+const repoOwner = "tagartonline99-cmd";
 const repoName = "openclaw-mission-control";
 const root = process.cwd();
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));

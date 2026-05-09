@@ -102,7 +102,7 @@ The app is configured to check GitHub Releases for signed updates after launch a
 Update endpoint:
 
 ```text
-https://github.com/tagartonline99/openclaw-mission-control/releases/latest/download/latest.json
+https://github.com/tagartonline99-cmd/openclaw-mission-control/releases/latest/download/latest.json
 ```
 
 The updater public key is committed in `src-tauri/tauri.conf.json`. The private signing key must stay outside the repo:
