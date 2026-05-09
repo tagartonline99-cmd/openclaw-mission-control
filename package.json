@@ -10,7 +10,9 @@
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "release:prepare-updater": "node scripts/prepare-updater-release.mjs",
-    "acceptance:phase5b": "node scripts/phase5b-desktop-acceptance.mjs"
+    "acceptance:phase5b": "node scripts/phase5b-desktop-acceptance.mjs",
+    "acceptance:current": "node scripts/current-desktop-acceptance.mjs",
+    "acceptance:update-installed": "node scripts/update-installed-app.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
