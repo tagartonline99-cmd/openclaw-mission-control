@@ -1,0 +1,49 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "OpenClaw Mission Control",
+  "version": "0.1.1",
+  "identifier": "com.openclaw.missioncontrol",
+  "build": {
+    "beforeDevCommand": "npm.cmd run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm.cmd run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "OpenClaw Mission Control",
+        "width": 1440,
+        "height": 960,
+        "minWidth": 1180,
+        "minHeight": 760,
+        "resizable": true,
+        "fullscreen": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "createUpdaterArtifacts": true,
+    "targets": "all",
+    "category": "Productivity",
+    "icon": ["icons/icon.ico"]
+  },
+  "plugins": {
+    "sql": {
+      "preload": ["sqlite:openclaw-mission-control.db"]
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI5MDYyMEQyNTg2MzE5QUYKUldTdkdXTlkwaUFHS2ZMWTBwaFNDektUQ1o3LytmVDk1bCs2YzlpSHVQSnVXRktBbVpQMUJiVEsK",
+      "endpoints": [
+        "https://github.com/tagartonline99/openclaw-mission-control/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}
