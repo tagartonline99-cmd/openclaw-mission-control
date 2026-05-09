@@ -27,6 +27,7 @@ import {
   safetyRules,
   skills,
   tasks,
+  teamLeaderChatMessages,
   userSettings,
   validationReports,
 } from "../data/mockData";
@@ -60,6 +61,7 @@ import type {
   RealPilotRun,
   Skill,
   Task,
+  TeamLeaderChatMessage,
   UserSettings,
   ValidationReport,
 } from "../types";
@@ -87,6 +89,7 @@ export interface AppDataState {
   agentArtifacts: AgentArtifact[];
   agentRunReviews: AgentRunReview[];
   agentMessages: AgentMessage[];
+  teamLeaderChatMessages: TeamLeaderChatMessage[];
   approvalRequests: ApprovalRequest[];
   approvalDecisionRecords: ApprovalDecisionRecord[];
   allowlistEntries: AllowlistEntry[];
@@ -130,6 +133,7 @@ type EntityKey =
   | "agentArtifacts"
   | "agentRunReviews"
   | "agentMessages"
+  | "teamLeaderChatMessages"
   | "approvalRequests"
   | "approvalDecisionRecords"
   | "allowlistEntries"
@@ -188,6 +192,7 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "agentArtifacts", tableName: "agent_artifacts" },
   { stateKey: "agentRunReviews", tableName: "agent_run_reviews" },
   { stateKey: "agentMessages", tableName: "agent_messages" },
+  { stateKey: "teamLeaderChatMessages", tableName: "teamleader_chat_messages" },
   { stateKey: "openClawCommands", tableName: "openclaw_commands" },
   { stateKey: "openClawEvents", tableName: "openclaw_events" },
   { stateKey: "openClawCapabilities", tableName: "openclaw_capabilities" },
@@ -221,6 +226,7 @@ export const initialAppDataState: AppDataState = {
   agentArtifacts: [],
   agentRunReviews: [],
   agentMessages,
+  teamLeaderChatMessages,
   approvalRequests,
   approvalDecisionRecords: [],
   allowlistEntries: [],

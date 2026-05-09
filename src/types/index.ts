@@ -392,6 +392,16 @@ export interface AgentMessage {
   visibility: "internal_report" | "user_summary";
 }
 
+export interface TeamLeaderChatMessage {
+  id: string;
+  role: "user" | "teamleader" | "system";
+  content: string;
+  createdAt: string;
+  mode: "local" | "approval_requested" | "live_result" | "system";
+  relatedApprovalId?: string;
+  relatedCommandId?: string;
+}
+
 export interface AgentArtifact {
   id: string;
   runId: string;

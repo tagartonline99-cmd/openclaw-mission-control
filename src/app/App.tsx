@@ -9,6 +9,7 @@ import {
   DashboardPage,
   ExperimentsPage,
   IdeasPage,
+  LaunchControlPage,
   MarketIntelligencePage,
   OpenClawSystemPage,
   ProductionPipelinePage,
@@ -16,6 +17,7 @@ import {
   RealPilotPage,
   SecondBrainPage,
   SettingsPage,
+  TeamLeaderChatPage,
   ValidationPage,
 } from "./pages";
 
@@ -27,6 +29,7 @@ export function App() {
           <Route element={<AppLayout />}>
             <Route path="/" element={<DashboardPage />} />
             <Route path="/agents" element={<AgentsPage />} />
+            <Route path="/teamleader-chat" element={<TeamLeaderChatPage />} />
             <Route path="/orchestration" element={<AgentOrchestrationPage />} />
             <Route path="/quests" element={<QuestsPage />} />
             <Route path="/ideas" element={<IdeasPage />} />
@@ -35,6 +38,7 @@ export function App() {
             <Route path="/market-intelligence" element={<MarketIntelligencePage />} />
             <Route path="/experiments" element={<ExperimentsPage />} />
             <Route path="/production" element={<ProductionPipelinePage />} />
+            <Route path="/launch-control" element={<LaunchControlPage />} />
             <Route path="/second-brain" element={<SecondBrainPage />} />
             <Route path="/approvals" element={<ApprovalsPage />} />
             <Route path="/activity-log" element={<ActivityLogPage />} />

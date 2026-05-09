@@ -8,7 +8,7 @@ The app does not claim guaranteed income. Business ideas are treated as hypothes
 
 This build covers the local end-to-end MVP:
 
-- Polished desktop-first UI with routes for Dashboard, Agents, Orchestration, Quests, Ideas, Validation, Real Pilot, Market Intel, Experiments, Production, Second Brain, Approvals, Activity Log, OpenClaw System, and Settings.
+- Polished desktop-first UI with routes for Dashboard, Agents, TeamLeader1A Chat, Orchestration, Quests, Ideas, Validation, Real Pilot, Market Intel, Experiments, Production, Launch Control, Second Brain, Approvals, Activity Log, OpenClaw System, and Settings.
 - App-wide data provider that loads local state once and exposes durable mutations.
 - SQLite-ready Tauri SQL adapter using `sqlite:openclaw-mission-control.db` in the desktop shell.
 - Browser development fallback using `localStorage` so Vite can be verified without native APIs.
@@ -23,6 +23,8 @@ This build covers the local end-to-end MVP:
 - Phase 8 Market Intelligence Workbench with local demand signals, competitor snapshots, keyword opportunities, evidence scoring, citation notes, and approval-gated URL research requests.
 - Phase 9 Experiment Builder and Analytics with bounded local test plans, confidence scoring, break-even progress, and continue/revise/kill/scale-later recommendations.
 - Phase 10 Production Asset Pipeline with local landing page drafts, content briefs, policy checks, claim review, and approval-locked publishing boundaries.
+- TeamLeader1A Chat with durable local conversation history, safe local replies, and approval-gated live TeamLeader1A turns.
+- Phases 11-16 Launch Control workspace for approved publishing/outreach posture, budget ledger visibility, controlled runner controls, portfolio optimization, diagnostics, signed updates, and local-first sync posture.
 - Native Tauri plugin wiring for SQL, filesystem, dialog, and opener.
 
 ## Safety Position
@@ -119,7 +121,7 @@ npm.cmd run tauri build
 npm.cmd run release:prepare-updater
 ```
 
-Create GitHub release `v0.1.3` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
+Create GitHub release `v0.1.4` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
 
 For a controlled local dev launch that reuses an already-running Vite server, use:
 

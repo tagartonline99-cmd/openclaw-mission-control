@@ -23,6 +23,7 @@ import type {
   RealPilotRun,
   RiskLevel,
   Task,
+  TeamLeaderChatMessage,
   UserSettings,
 } from "../types";
 import { renderMarkdownNote } from "../utils/markdown";
@@ -97,6 +98,7 @@ type AppDataContextValue = {
   syncOpenClawAgents: () => Promise<void>;
   requestGatewayStart: () => Promise<void>;
   requestTeamLeaderTurn: (message: string) => Promise<void>;
+  sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean }) => Promise<void>;
   requestUrlResearch: (input: UrlResearchInput) => Promise<void>;
   requestChannelMessage: (input: ChannelMessageInput) => Promise<void>;
   createRealPilotRun: (input: RealPilotDraftInput) => Promise<string>;
@@ -141,6 +143,45 @@ function decisionRecord(input: Omit<ApprovalDecisionRecord, "id" | "createdAt" |
     ...input,
     actor: input.actor ?? "TeamLeader1A",
   };
+}
+
+function buildTeamLeaderLocalReply(state: AppDataState, userMessage: string) {
+  const pendingApprovals = state.approvalRequests.filter((request) => request.status === "pending");
+  const blockedApprovals = state.approvalRequests.filter((request) => request.status === "blocked");
+  const activeQuests = state.quests.filter((quest) => !["Archived", "Failed", "Retired"].includes(quest.stage));
+  const topQuest = [...activeQuests].sort((a, b) => b.progress - a.progress)[0];
+  const riskyCommands = state.openClawCommands.filter((command) => command.status === "requires_approval" || command.status === "queued");
+  const bottlenecks = state.dashboardSummary.currentBottlenecks.slice(0, 2);
+  const lower = userMessage.toLowerCase();
+
+  const focus =
+    lower.includes("approval") || lower.includes("approve")
+      ? "approval desk"
+      : lower.includes("quest") || lower.includes("business")
+        ? "quest portfolio"
+        : lower.includes("openclaw") || lower.includes("agent")
+          ? "OpenClaw agent layer"
+          : "mission status";
+
+  return [
+    `TeamLeader1A local reply (${focus}): I can help from the local control layer right now. This reply did not browse, publish, message anyone, spend money, launch anything, or run an external OpenClaw command.`,
+    topQuest
+      ? `Best current quest to inspect: ${topQuest.title}. Stage: ${topQuest.stage}. Progress: ${topQuest.progress}%. Next action: ${topQuest.nextAction}`
+      : "No active quest is selected. Create or restore a quest before trying to launch any experiment.",
+    pendingApprovals.length > 0
+      ? `Pending approvals: ${pendingApprovals.length}. Review them before any risky action can move forward.`
+      : "No pending approvals are currently blocking the local plan.",
+    blockedApprovals.length > 0
+      ? `Blocked records: ${blockedApprovals.length}. These should be revised instead of forced through.`
+      : "No newly blocked approval records need attention.",
+    riskyCommands.length > 0
+      ? `OpenClaw commands waiting or queued: ${riskyCommands.length}. They remain locked behind approval gates.`
+      : "No OpenClaw command is waiting to execute.",
+    bottlenecks.length > 0
+      ? `Current bottlenecks: ${bottlenecks.join("; ")}.`
+      : "No major bottleneck is listed in the dashboard summary.",
+    "Recommended next move: use a validation or pilot workflow to collect evidence, then ask for a live TeamLeader1A turn only if you want the local OpenClaw runtime to respond through the approval gate.",
+  ].join("\n\n");
 }
 
 const phase5BlockedBehaviors = [
@@ -1113,6 +1154,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
               visibility: "user_summary" as const,
             }
           : null;
+      const chatMessage: TeamLeaderChatMessage | null =
+        approval.payload.actionKind === "agent_turn"
+          ? {
+              id: id("tl-chat-live-result"),
+              role: "teamleader",
+              content: summary,
+              createdAt: completedAt,
+              mode: "live_result",
+              relatedApprovalId: approval.id,
+              relatedCommandId: approval.commandId,
+            }
+          : null;
       const nextPilotRuns = current.realPilotRuns.map((run) => {
         if (run.id !== approval.pilotRunId) return run;
         const nextStatus =
@@ -1193,6 +1246,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           ...current.activityLogs,
         ],
         agentMessages: message ? [message, ...current.agentMessages].slice(0, 24) : current.agentMessages,
+        teamLeaderChatMessages: chatMessage ? [...current.teamLeaderChatMessages, chatMessage].slice(-120) : current.teamLeaderChatMessages,
       };
       await persist(next);
     },
@@ -1221,6 +1275,81 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       });
     },
     [createOpenClawApproval],
+  );
+
+  const sendTeamLeaderChatMessage = useCallback(
+    async (message: string, options: { requestLiveTurn?: boolean } = {}) => {
+      const trimmed = message.trim();
+      if (!trimmed) return;
+
+      const now = new Date().toISOString();
+      if (options.requestLiveTurn) {
+        const result = await createOpenClawApproval({
+          actionKind: "agent_turn",
+          agentProfileId: "main",
+          message: trimmed,
+          expectedResult: "TeamLeader1A returns a local planning or research summary.",
+        });
+        const current = dataRef.current;
+        const userChat: TeamLeaderChatMessage = {
+          id: id("tl-chat-user"),
+          role: "user",
+          content: trimmed,
+          createdAt: now,
+          mode: "approval_requested",
+          relatedApprovalId: result.approvalId,
+          relatedCommandId: result.commandId,
+        };
+        const teamLeaderChat: TeamLeaderChatMessage = {
+          id: id("tl-chat-teamleader-approval"),
+          role: "teamleader",
+          content: result.blocked
+            ? `I blocked that live turn request before execution: ${result.safetyEvaluation.blockedReasons.join(" ")}`
+            : "I created a live TeamLeader1A approval request. Nothing has executed yet. Review it in Approvals, then approve only if the prompt is safe.",
+          createdAt: new Date().toISOString(),
+          mode: result.blocked ? "system" : "approval_requested",
+          relatedApprovalId: result.approvalId,
+          relatedCommandId: result.commandId,
+        };
+        await persistOptimistic({
+          ...current,
+          teamLeaderChatMessages: [...current.teamLeaderChatMessages, userChat, teamLeaderChat].slice(-120),
+        });
+        return;
+      }
+
+      const current = dataRef.current;
+      const userChat: TeamLeaderChatMessage = {
+        id: id("tl-chat-user"),
+        role: "user",
+        content: trimmed,
+        createdAt: now,
+        mode: "local",
+      };
+      const teamLeaderChat: TeamLeaderChatMessage = {
+        id: id("tl-chat-teamleader"),
+        role: "teamleader",
+        content: buildTeamLeaderLocalReply(current, trimmed),
+        createdAt: new Date().toISOString(),
+        mode: "local",
+      };
+      await persistOptimistic({
+        ...current,
+        teamLeaderChatMessages: [...current.teamLeaderChatMessages, userChat, teamLeaderChat].slice(-120),
+        activityLogs: [
+          {
+            id: id("log-teamleader-chat"),
+            category: "agent",
+            title: "TeamLeader1A local chat reply",
+            detail: "A local TeamLeader1A reply was generated without running external commands or risky actions.",
+            severity: "info",
+            createdAt: new Date().toISOString(),
+          },
+          ...current.activityLogs,
+        ],
+      });
+    },
+    [createOpenClawApproval, persistOptimistic],
   );
 
   const requestUrlResearch = useCallback(
@@ -2488,6 +2617,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       syncOpenClawAgents,
       requestGatewayStart,
       requestTeamLeaderTurn,
+      sendTeamLeaderChatMessage,
       requestUrlResearch,
       requestChannelMessage,
       createRealPilotRun,
@@ -2529,6 +2659,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       syncOpenClawAgents,
       requestGatewayStart,
       requestTeamLeaderTurn,
+      sendTeamLeaderChatMessage,
       requestUrlResearch,
       requestChannelMessage,
       createRealPilotRun,

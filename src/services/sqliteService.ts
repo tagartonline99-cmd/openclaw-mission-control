@@ -26,6 +26,7 @@ export const sqliteTables = [
   "agent_artifacts",
   "agent_run_reviews",
   "agent_messages",
+  "teamleader_chat_messages",
   "openclaw_commands",
   "openclaw_events",
   "openclaw_capabilities",

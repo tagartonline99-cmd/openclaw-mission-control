@@ -4,8 +4,11 @@ import {
   BarChart3,
   BookOpen,
   Brain,
+  Bell,
   CheckCircle2,
+  CloudOff,
   Coins,
+  Database,
   FlaskConical,
   FolderOpen,
   Gauge,
@@ -13,8 +16,10 @@ import {
   Lightbulb,
   ListChecks,
   Lock,
+  MessageSquare,
   Pause,
   Play,
+  Rocket,
   ScrollText,
   ShieldCheck,
   SlidersHorizontal,
@@ -179,6 +184,20 @@ export function DashboardPage() {
   );
 }
 
+export function TeamLeaderChatPage() {
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="Command Channel"
+        title="Talk to TeamLeader1A"
+        description="Use this as the direct user channel. Local replies are safe and instant; live OpenClaw turns remain approval-gated."
+        action={<Badge tone="amber"><MessageSquare className="h-3.5 w-3.5" /> TeamLeader1A only</Badge>}
+      />
+      <TeamLeaderChat full />
+    </div>
+  );
+}
+
 export function AgentsPage() {
   return (
     <div className="space-y-5">
@@ -335,6 +354,173 @@ export function ProductionPipelinePage() {
         description="Create local landing pages, briefs, lead magnets, templates, newsletters, and product drafts with claim checks before anything goes public."
       />
       <ProductionPipelineWorkbench />
+    </div>
+  );
+}
+
+export function LaunchControlPage() {
+  const { data, adapter, simulationEnabled, setSimulationEnabled, runSimulationNow } = useAppData();
+  const readyPacks = data.productionPacks.filter((pack) => pack.status === "ready_for_review" || pack.status === "approved_local");
+  const riskyApprovals = data.approvalRequests.filter((request) =>
+    ["Publish externally", "Launch experiment", "Scale successful idea", "Send approved channel message"].includes(request.type),
+  );
+  const activeQuests = data.quests
+    .filter((quest) => !["Archived", "Failed", "Retired"].includes(quest.stage))
+    .sort((left, right) => right.progress - left.progress);
+  const recentLogs = data.activityLogs.slice(0, 5);
+
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="Phases 11-16"
+        title="Launch, budget, runner, and portfolio control"
+        description="The final operating layer keeps publishing, messaging, spend, scheduling, scaling, diagnostics, and optional cloud posture visible without unlocking risky automation."
+        action={
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => void runSimulationNow()}>
+              <Play className="h-4 w-4" />
+              Run safe tick
+            </Button>
+            <Button variant={simulationEnabled ? "danger" : "outline"} onClick={() => setSimulationEnabled(!simulationEnabled)}>
+              {simulationEnabled ? <Pause className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
+              {simulationEnabled ? "Pause runner" : "Start runner"}
+            </Button>
+          </div>
+        }
+      />
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <MetricCard label="Ready local packs" value={String(readyPacks.length)} detail="Reviewable assets, not published." icon={<Rocket className="h-4 w-4" />} tone="teal" />
+        <MetricCard label="Risky approvals" value={String(riskyApprovals.length)} detail="Launch, publish, scale, or send gates." icon={<ShieldCheck className="h-4 w-4" />} tone="red" />
+        <MetricCard label="Remaining capital" value={formatCurrency(data.dashboardSummary.remainingCapital)} detail="No spend executes automatically." icon={<WalletCards className="h-4 w-4" />} tone="emerald" />
+        <MetricCard label="Storage" value={adapter} detail="Local-first persistence status." icon={<Database className="h-4 w-4" />} tone="amber" />
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Rocket className="h-4 w-4 text-amber-100" /> Approved Publishing And Outreach</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {readyPacks.length === 0 ? (
+              <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">No production pack is ready for review yet. Build a local pack first; publishing stays locked behind approval.</p>
+            ) : (
+              readyPacks.map((pack) => (
+                <div key={pack.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{pack.title}</p>
+                    <Badge tone={pack.status === "approved_local" ? "emerald" : "amber"}>{pack.status.replace(/_/g, " ")}</Badge>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">{pack.teamLeaderSummary}</p>
+                </div>
+              ))
+            )}
+            <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3 text-sm leading-6 text-red-100">
+              Publishing, live messaging, outreach, and scaling require one approval per action. Broadcast, hidden recipients, spam batches, fake reviews, and misleading claims remain blocked.
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><Coins className="h-4 w-4 text-emerald-100" /> Budget Ledger And Spend Controls</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {data.budgets.map((budget) => (
+              <div key={budget.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-stone-100">{data.quests.find((quest) => quest.id === budget.questId)?.title ?? "Portfolio reserve"}</p>
+                  <Badge tone={budget.spent > 0 ? "amber" : "teal"}>{formatCurrency(budget.spent)} spent</Badge>
+                </div>
+                <div className="mt-3">
+                  <div className="mb-1 flex justify-between text-xs uppercase text-slate-500">
+                    <span>Allocated</span>
+                    <span>{formatCurrency(budget.allocated)} / {formatCurrency(budget.startingCapital)}</span>
+                  </div>
+                  <Progress value={budget.startingCapital ? Math.min(100, Math.round((budget.allocated / budget.startingCapital) * 100)) : 0} tone="emerald" />
+                </div>
+              </div>
+            ))}
+            <p className="text-xs leading-5 text-slate-500">Real payments and purchases are not connected. Spend records are local planning controls until a separate approved spend workflow exists.</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2"><TrendingUp className="h-4 w-4 text-teal-100" /> Portfolio Optimization</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {activeQuests.map((quest) => {
+              const validation = data.validationReports.find((report) => report.questId === quest.id);
+              const completion = validation ? calculateValidationCompletion(validation) : 0;
+              return (
+                <div key={quest.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{quest.title}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone={quest.stage === "Scaling" ? "emerald" : quest.stage === "Publishing approval" ? "red" : "teal"}>{quest.stage}</Badge>
+                      <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${riskTone(quest.riskLevel)}`}>{quest.riskLevel}</span>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-slate-300">{quest.nextAction}</p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    <div>
+                      <div className="mb-1 flex justify-between text-xs uppercase text-slate-500">
+                        <span>Quest progress</span>
+                        <span>{quest.progress}%</span>
+                      </div>
+                      <Progress value={quest.progress} tone="teal" />
+                    </div>
+                    <div>
+                      <div className="mb-1 flex justify-between text-xs uppercase text-slate-500">
+                        <span>Validation proof</span>
+                        <span>{completion}%</span>
+                      </div>
+                      <Progress value={completion} tone={completion >= 80 ? "emerald" : "amber"} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </CardContent>
+        </Card>
+
+        <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Bell className="h-4 w-4 text-amber-100" /> Controlled Runner</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Runner status</p>
+                <p className="mt-1 text-lg font-semibold text-stone-100">{simulationEnabled ? "Running while app is open" : "Paused"}</p>
+              </div>
+              {recentLogs.map((log) => (
+                <div key={log.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <p className="font-semibold text-stone-100">{log.title}</p>
+                    <Badge tone={log.severity === "danger" ? "red" : log.severity === "success" ? "emerald" : "slate"}>{log.severity}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">{formatDateTime(log.createdAt)}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><CloudOff className="h-4 w-4 text-slate-200" /> Hardening And Sync Posture</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3 text-sm leading-6 text-slate-300">
+              <p className="rounded-md border border-white/10 bg-black/25 p-3">Diagnostics: {data.openClawRuntimeStatus.status}. {data.openClawRuntimeStatus.notes}</p>
+              <p className="rounded-md border border-white/10 bg-black/25 p-3">Auto-updates are signed through GitHub Releases. Secrets are not stored in the repo.</p>
+              <p className="rounded-md border border-white/10 bg-black/25 p-3">Team/cloud sync remains optional and disabled by default. Local-first mode is the source of truth.</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
     </div>
   );
 }

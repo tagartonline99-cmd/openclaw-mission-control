@@ -22,6 +22,7 @@ import type {
   Quest,
   Skill,
   Task,
+  TeamLeaderChatMessage,
   UserSettings,
   ValidationReport,
 } from "../types";
@@ -1007,6 +1008,17 @@ export const agentMessages: AgentMessage[] = [
     details: "Notion pack is closest to a test. Home office SEO needs more proof. Lead-gen remains blocked.",
     createdAt: "2026-05-09T11:05:00+08:00",
     visibility: "user_summary",
+  },
+];
+
+export const teamLeaderChatMessages: TeamLeaderChatMessage[] = [
+  {
+    id: "tl-chat-welcome",
+    role: "teamleader",
+    content:
+      "Mission Control is online. Talk to me here, and I will summarize what the OpenClaw agents are doing, what is blocked, what needs approval, and the next safest move. I will not spend, publish, launch, scrape, message, or run external automation without a separate approval.",
+    createdAt: "2026-05-09T11:10:00+08:00",
+    mode: "system",
   },
 ];
 
