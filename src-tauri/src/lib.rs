@@ -20,6 +20,9 @@ struct OpenClawBridgeResult {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AgentTurnRequest {
+    agent_profile_id: Option<String>,
+    agent_role: Option<String>,
+    mission_run_id: Option<String>,
     message: String,
     timeout_seconds: Option<u64>,
 }
@@ -109,6 +112,22 @@ fn validate_agent_message(message: &str) -> Result<(), String> {
     }
     reject_control_chars(trimmed, "Message")?;
     reject_blocked_intent(trimmed)
+}
+
+fn validate_agent_profile_id(value: Option<&str>) -> Result<String, String> {
+    let trimmed = value.unwrap_or("main").trim();
+    if trimmed.is_empty() || trimmed.len() > 64 {
+        return Err("OpenClaw agent profile id is required and must be short".into());
+    }
+    if !trimmed.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-') {
+        return Err("OpenClaw agent profile id contains unsupported characters".into());
+    }
+    let lower = trimmed.to_lowercase();
+    let allowed = ["main", "researcher", "seo", "writer", "content", "production", "publish", "action"];
+    if !allowed.contains(&lower.as_str()) {
+        return Err(format!("OpenClaw agent profile is not allowlisted for local mission turns: {trimmed}"));
+    }
+    Ok(trimmed.to_string())
 }
 
 fn cli_text(value: &str) -> String {
@@ -312,11 +331,21 @@ fn openclaw_gateway_start() -> Result<OpenClawBridgeResult, String> {
 #[tauri::command]
 fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult, String> {
     validate_agent_message(&request.message)?;
+    let agent_profile_id = validate_agent_profile_id(request.agent_profile_id.as_deref())?;
+    let agent_role = request.agent_role.as_deref().unwrap_or("OpenClaw agent").trim();
+    reject_control_chars(agent_role, "Agent role")?;
+    let mission_context = request
+        .mission_run_id
+        .as_deref()
+        .map(|id| format!("Mission run: {id}. "))
+        .unwrap_or_default();
     let guarded_message = cli_text(&format!(
-        "OpenClaw Mission Control approved local TeamLeader1A turn.\n\
-         Rules: local planning and research only; do not spend money; do not publish externally; \
-         do not deliver messages to external channels; do not run browser automation; do not scrape; \
-         do not request credentials; summarize findings and next safe approval-gated step.\n\n\
+        "OpenClaw Mission Control approved local {agent_role} turn. {mission_context}\n\
+         Rules: local planning and artifact drafting only; do not spend money; do not publish externally; \
+         do not deliver messages to external channels; do not run browser automation; do not browse; do not scrape; \
+         do not log in; do not submit forms; do not bypass CAPTCHA or website terms; do not request credentials; \
+         do not use --deliver, broadcast, purchases, fake reviews, spam, or uncontrolled crawling. \
+         Produce a concise artifact for TeamLeader1A review with evidence needs, assumptions, risks, and next safe approval-gated step.\n\n\
          User request:\n{}",
         request.message.trim()
     ));
@@ -325,7 +354,7 @@ fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult
         vec![
             "agent".into(),
             "--agent".into(),
-            "main".into(),
+            agent_profile_id,
             "--message".into(),
             guarded_message,
             "--json".into(),

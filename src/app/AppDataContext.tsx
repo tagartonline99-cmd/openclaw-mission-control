@@ -9,6 +9,7 @@ import type {
   AgentOrchestrationRun,
   AgentRunReview,
   AgentRunReviewStatus,
+  AgentTurnResult,
   ApprovalRequest,
   ApprovalDecisionRecord,
   ApprovalStatus,
@@ -27,6 +28,14 @@ import type {
   MarketIntelligenceReport,
   LearningCard,
   MissionArtifact,
+  MissionAgentId,
+  MissionAgentStep,
+  MissionApprovalBatch,
+  MissionBriefSection,
+  MissionBriefSectionKind,
+  MissionDraft,
+  MissionDraftStepPlan,
+  MissionRun,
   MissionTask,
   OpenClawApprovalPayload,
   OfferClaimReview,
@@ -117,7 +126,12 @@ type AppDataContextValue = {
   syncOpenClawAgents: () => Promise<void>;
   requestGatewayStart: () => Promise<void>;
   requestTeamLeaderTurn: (message: string) => Promise<void>;
-  sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean }) => Promise<void>;
+  sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string }) => Promise<void>;
+  createMissionDraftFromMessage: (input: { message: string; questId: string }) => Promise<string>;
+  requestMissionStart: (draftId: string) => Promise<string>;
+  retryMissionStep: (stepId: string) => Promise<void>;
+  skipMissionStep: (stepId: string) => Promise<void>;
+  convertMissionStepToLocalDraft: (stepId: string) => Promise<void>;
   requestUrlResearch: (input: UrlResearchInput) => Promise<void>;
   requestChannelMessage: (input: ChannelMessageInput) => Promise<void>;
   createRealPilotRun: (input: RealPilotDraftInput) => Promise<string>;
@@ -226,19 +240,21 @@ const phase5BlockedBehaviors = [
 function payloadSummary(payload: OpenClawApprovalPayload) {
   if (payload.actionKind === "gateway_start") return "Start the local loopback OpenClaw gateway.";
   if (payload.actionKind === "agent_turn") return payload.message;
+  if (payload.actionKind === "mission_start") return `${payload.title}: ${payload.stepCount} approved local agent turns.`;
   if (payload.actionKind === "url_research") return `${payload.purpose} / ${payload.urls.join(", ")}`;
   return `${payload.channel} -> ${payload.target}: ${payload.message}`;
 }
 
 function commandForPayload(payload: OpenClawApprovalPayload) {
   if (payload.actionKind === "gateway_start") return "openclaw.cmd gateway start";
-  if (payload.actionKind === "agent_turn") return "openclaw.cmd agent --agent main --message <approved> --json";
+  if (payload.actionKind === "agent_turn") return `openclaw.cmd agent --agent ${payload.agentProfileId} --message <approved> --json`;
+  if (payload.actionKind === "mission_start") return `mission batch: ${payload.stepCount} local OpenClaw agent turns`;
   if (payload.actionKind === "url_research") return "openclaw.cmd agent --agent main --message <approved-url-research> --json";
   return `openclaw.cmd message send --channel ${payload.channel} --target ${payload.target} --message <approved>${payload.dryRun ? " --dry-run" : ""} --json`;
 }
 
 function connectorForPayload(payload: OpenClawApprovalPayload): CommandLedgerEntry["connector"] {
-  if (payload.actionKind === "channel_message" || payload.actionKind === "gateway_start" || payload.actionKind === "agent_turn" || payload.actionKind === "url_research") {
+  if (payload.actionKind === "channel_message" || payload.actionKind === "gateway_start" || payload.actionKind === "agent_turn" || payload.actionKind === "mission_start" || payload.actionKind === "url_research") {
     return "openclaw";
   }
   return "mission_control";
@@ -260,7 +276,8 @@ function executionSummary(result: OpenClawBridgeResult) {
 
 function requestTitle(payload: OpenClawApprovalPayload) {
   if (payload.actionKind === "gateway_start") return "Start local OpenClaw gateway";
-  if (payload.actionKind === "agent_turn") return "Run approved TeamLeader1A local turn";
+  if (payload.actionKind === "agent_turn") return payload.agentRole ? `Run approved ${payload.agentRole} local turn` : "Run approved OpenClaw local turn";
+  if (payload.actionKind === "mission_start") return "Start approved TeamLeader1A mission";
   if (payload.actionKind === "url_research") return "Run approved URL research";
   return payload.dryRun ? "Dry-run approved channel message" : "Send approved channel message";
 }
@@ -268,6 +285,7 @@ function requestTitle(payload: OpenClawApprovalPayload) {
 function riskForPayload(payload: OpenClawApprovalPayload): RiskLevel {
   if (payload.actionKind === "gateway_start") return "medium";
   if (payload.actionKind === "agent_turn") return "medium";
+  if (payload.actionKind === "mission_start") return "medium";
   if (payload.actionKind === "url_research") return "high";
   return payload.dryRun ? "medium" : "high";
 }
@@ -343,6 +361,171 @@ function buildRealPilotNote(run: RealPilotRun, state: AppDataState): ObsidianNot
     body: reportLines.join("\n"),
     linkedQuestId: run.questId,
   };
+}
+
+const missionAgentOrder: MissionAgentId[] = [
+  "agent-researcher",
+  "agent-seo",
+  "agent-writer",
+  "agent-content",
+  "agent-production",
+  "agent-publish",
+  "agent-action",
+  "teamleader1a",
+];
+
+const missionBriefKindByAgent: Record<MissionAgentId, MissionBriefSectionKind> = {
+  teamleader1a: "overview",
+  "agent-researcher": "research",
+  "agent-seo": "seo",
+  "agent-writer": "content",
+  "agent-content": "content",
+  "agent-production": "production",
+  "agent-publish": "approvals",
+  "agent-action": "experiment",
+};
+
+const missionProfileFallbackByAgent: Record<MissionAgentId, string> = {
+  teamleader1a: "main",
+  "agent-researcher": "researcher",
+  "agent-seo": "seo",
+  "agent-writer": "writer",
+  "agent-content": "content",
+  "agent-production": "production",
+  "agent-publish": "publish",
+  "agent-action": "action",
+};
+
+function missionAgentName(state: AppDataState, agentId: MissionAgentId) {
+  return state.agents.find((agent) => agent.id === agentId)?.name ?? agentId;
+}
+
+function missionAgentProfileId(state: AppDataState, agentId: MissionAgentId) {
+  const agentName = missionAgentName(state, agentId);
+  return state.userSettings.openClawRoleMap[agentName] ?? missionProfileFallbackByAgent[agentId];
+}
+
+function titleForMissionAgent(agentId: MissionAgentId) {
+  if (agentId === "agent-researcher") return "Market research and demand evidence";
+  if (agentId === "agent-seo") return "SEO plan and keyword opportunity map";
+  if (agentId === "agent-writer") return "Conversion-safe writing angles and drafts";
+  if (agentId === "agent-content") return "Content calendar and asset pipeline";
+  if (agentId === "agent-production") return "Production proposal and build checklist";
+  if (agentId === "agent-publish") return "Publishing approval checklist";
+  if (agentId === "agent-action") return "Operational checklist and approved-action queue";
+  return "TeamLeader1A final review and recommendation";
+}
+
+function expectedArtifactForMissionAgent(agentId: MissionAgentId) {
+  if (agentId === "agent-researcher") return "Research brief with target audience, competitor gaps, demand evidence, assumptions, and missing proof.";
+  if (agentId === "agent-seo") return "SEO plan with keyword clusters, search intent, ranking opportunities, and source needs.";
+  if (agentId === "agent-writer") return "Draft copy angles, article ideas, email/script outlines, and unsupported-claim warnings.";
+  if (agentId === "agent-content") return "Content calendar, asset sequence, dependencies, and approval checkpoints.";
+  if (agentId === "agent-production") return "Production proposal, local asset checklist, launch-readiness gaps, and cost/risk notes.";
+  if (agentId === "agent-publish") return "Publishing checklist only, including what remains locked until separate approval.";
+  if (agentId === "agent-action") return "Operational workflow, task queue, blocked external actions, and approval recommendations.";
+  return "Final TeamLeader1A synthesis with continue/revise/kill recommendation and next approval-gated step.";
+}
+
+function promptForMissionAgent(agentId: MissionAgentId, questTitle: string, objective: string, sourceMessage: string) {
+  const common = [
+    `Mission objective: ${objective}`,
+    `Quest: ${questTitle}`,
+    `User command to TeamLeader1A: ${sourceMessage}`,
+    "Return a structured artifact for TeamLeader1A review. Include evidence, assumptions, risks, blockers, success metrics, failure criteria, and the next safe approval-gated step.",
+    "Do not browse, scrape, log in, submit forms, spend money, publish, send messages, launch, scale, use --deliver, broadcast, make fake reviews, spam, purchase, bypass CAPTCHA, bypass terms, or run external automation.",
+  ].join("\n");
+
+  if (agentId === "agent-researcher") return `${common}\nFocus: market demand, target audience, competitors, proof gaps, and validation questions.`;
+  if (agentId === "agent-seo") return `${common}\nFocus: SEO plan, search intent, keyword cluster ideas, ranking opportunities, and sources needed before launch.`;
+  if (agentId === "agent-writer") return `${common}\nFocus: safe copy, content outlines, claims to avoid, and drafts that do not imply guaranteed income.`;
+  if (agentId === "agent-content") return `${common}\nFocus: content calendar, asset pipeline, dependencies, review checkpoints, and repurposing plan.`;
+  if (agentId === "agent-production") return `${common}\nFocus: production proposal, local assets, landing page/product/template plan, effort, cost, and launch-readiness gaps.`;
+  if (agentId === "agent-publish") return `${common}\nFocus: publishing checklist only. Make clear that no external publishing is authorized by this mission.`;
+  if (agentId === "agent-action") return `${common}\nFocus: operations checklist, internal workflows, approvals needed, and tasks that are safe to prepare locally.`;
+  return `${common}\nFocus: review all agent outputs, summarize the strongest plan, risks, missing evidence, and whether to continue, revise, or kill.`;
+}
+
+function buildMissionDraft(state: AppDataState, message: string, questId: string): MissionDraft {
+  const now = new Date().toISOString();
+  const quest = state.quests.find((item) => item.id === questId) ?? state.quests[0];
+  const questTitle = quest?.title ?? "OpenClaw business quest";
+  const objective = message.trim() || `Create a safe multi-agent plan for ${questTitle}.`;
+  const plannedSteps: MissionDraftStepPlan[] = missionAgentOrder.map((agentId) => ({
+    agentId,
+    title: titleForMissionAgent(agentId),
+    briefKind: missionBriefKindByAgent[agentId],
+    prompt: promptForMissionAgent(agentId, questTitle, objective, message),
+    expectedArtifact: expectedArtifactForMissionAgent(agentId),
+  }));
+
+  return {
+    id: id("mission-draft"),
+    questId: quest?.id ?? questId,
+    title: `TeamLeader1A mission: ${questTitle}`,
+    objective,
+    sourceMessage: message.trim(),
+    status: "draft",
+    plannedAgentIds: missionAgentOrder,
+    plannedSteps,
+    riskFlags: ["local_agent_turns", "approval_required", "external_actions_separate"],
+    requiredApprovals: [
+      "Start mission approval covers only the listed local OpenClaw agent turns.",
+      "Browser research or scraping requires a separate approved URL research request.",
+      "Publishing, spending, launch, scale, messages, and external automation remain separately locked.",
+    ],
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function missionStepFromDraftStep(state: AppDataState, draft: MissionDraft, step: MissionDraftStepPlan, index: number, runId: string): MissionAgentStep {
+  const now = new Date().toISOString();
+  const agentName = missionAgentName(state, step.agentId);
+  return {
+    id: id("mission-step"),
+    draftId: draft.id,
+    missionRunId: runId,
+    questId: draft.questId,
+    order: index + 1,
+    agentId: step.agentId,
+    agentName,
+    agentProfileId: missionAgentProfileId(state, step.agentId),
+    title: step.title,
+    briefKind: step.briefKind,
+    prompt: step.prompt,
+    expectedArtifact: step.expectedArtifact,
+    status: "queued",
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function bridgeResult(ok: boolean, command: string[], stdout: string, stderr = ""): OpenClawBridgeResult {
+  return { ok, command, stdout, stderr, exitCode: ok ? 0 : 1, timedOut: false };
+}
+
+function contentFromAgentResult(step: MissionAgentStep, summary: string, result: OpenClawBridgeResult) {
+  return [
+    `## ${step.title}`,
+    `Agent: ${step.agentName}`,
+    `Profile: ${step.agentProfileId}`,
+    "",
+    `## Expected Artifact`,
+    step.expectedArtifact,
+    "",
+    `## Result Summary`,
+    summary,
+    "",
+    `## Raw Output`,
+    result.stdout.trim() || "No stdout captured.",
+    "",
+    `## Error Output`,
+    result.stderr.trim() || "No stderr captured.",
+    "",
+    `## Safety Boundary`,
+    "This mission artifact is local planning work only. It does not authorize browsing, scraping, publishing, spending, sending messages, launching, scaling, purchases, login automation, form submission, CAPTCHA bypass, fake reviews, spam, or external automation.",
+  ].join("\n");
 }
 
 const orchestrationAgentOrder = [
@@ -1395,7 +1578,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const createOpenClawApproval = useCallback(
     async (
       payload: OpenClawApprovalPayload,
-      options: { questId?: string; pilotRunId?: string; parentApprovalId?: string; retryOfCommandId?: string } = {},
+      options: { questId?: string; pilotRunId?: string; missionDraftId?: string; missionRunId?: string; parentApprovalId?: string; retryOfCommandId?: string } = {},
     ) => {
       const current = dataRef.current;
       const now = new Date().toISOString();
@@ -1409,7 +1592,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const command: OpenClawCommand = {
         id: commandId,
         command: commandForPayload(payload),
-        targetAgentId: payload.actionKind === "agent_turn" || payload.actionKind === "url_research" ? "teamleader1a" : "openclaw-runtime",
+        targetAgentId:
+          payload.actionKind === "agent_turn"
+            ? payload.agentProfileId
+            : payload.actionKind === "url_research"
+              ? "teamleader1a"
+              : payload.actionKind === "mission_start"
+                ? "teamleader1a"
+                : "openclaw-runtime",
         status: isBlocked ? "blocked" : "requires_approval",
         riskLevel: riskForPayload(payload),
         approvalRequired: true,
@@ -1421,6 +1611,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         executionMode: payload.actionKind === "channel_message" && payload.dryRun ? "dry_run" : "real_local",
         retryOfCommandId: options.retryOfCommandId,
         safetyEvaluation,
+        missionRunId: options.missionRunId ?? (payload.actionKind === "mission_start" ? payload.missionRunId : payload.actionKind === "agent_turn" ? payload.missionRunId : undefined),
+        missionStepId: payload.actionKind === "agent_turn" ? payload.missionStepId : undefined,
       };
       const approval: ApprovalRequest = {
         id: approvalId,
@@ -1429,12 +1621,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             ? "Start OpenClaw gateway"
             : payload.actionKind === "agent_turn"
               ? "Run OpenClaw local agent turn"
-              : payload.actionKind === "url_research"
-                ? "Run approved URL research"
-                : "Send approved channel message",
+              : payload.actionKind === "mission_start"
+                ? "Start TeamLeader mission"
+                : payload.actionKind === "url_research"
+                  ? "Run approved URL research"
+                  : "Send approved channel message",
         title: requestTitle(payload),
         questId: options.questId,
         pilotRunId: options.pilotRunId,
+        missionDraftId: options.missionDraftId ?? (payload.actionKind === "mission_start" ? payload.missionDraftId : undefined),
+        missionRunId: options.missionRunId ?? (payload.actionKind === "mission_start" ? payload.missionRunId : undefined),
         parentApprovalId: options.parentApprovalId,
         retryOfCommandId: options.retryOfCommandId,
         requestedBy: "TeamLeader1A",
@@ -1458,8 +1654,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         connector: connectorForPayload(payload),
         action: payload.actionKind,
         status: isBlocked ? "blocked" : "approval_required",
-        externalAction: payload.actionKind !== "agent_turn",
-        approvalMode: "single",
+        externalAction: payload.actionKind !== "agent_turn" && payload.actionKind !== "mission_start",
+        approvalMode: payload.actionKind === "mission_start" ? "batch" : "single",
         riskLevel: command.riskLevel,
         inputSummary: safetyEvaluation.normalizedPayloadSummary,
         outputSummary: isBlocked
@@ -1500,6 +1696,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             severity: isBlocked ? "danger" : "warning",
             createdAt: now,
             relatedQuestId: options.questId,
+            relatedMissionRunId: options.missionRunId,
           },
           ...current.activityLogs,
         ],
@@ -1508,6 +1705,276 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return { approvalId, commandId, blocked: isBlocked, safetyEvaluation };
     },
     [persistOptimistic],
+  );
+
+  const executeMissionRun = useCallback(
+    async (approval: ApprovalRequest): Promise<OpenClawBridgeResult> => {
+      if (!approval.payload || approval.payload.actionKind !== "mission_start") {
+        return bridgeResult(false, ["mission://invalid"], "", "Approval payload is not a mission start request.");
+      }
+
+      const payload = approval.payload;
+      const current = dataRef.current;
+      const run = current.missionRuns.find((item) => item.id === payload.missionRunId);
+      if (!run) {
+        return bridgeResult(false, ["mission://missing-run"], "", "Mission run was not found.");
+      }
+
+      const selectedStepIds = new Set(payload.missionStepIds);
+      const steps = current.missionAgentSteps
+        .filter((step) => step.missionRunId === run.id && selectedStepIds.has(step.id) && !["complete", "skipped", "local_draft"].includes(step.status))
+        .sort((a, b) => a.order - b.order);
+      if (steps.length === 0) {
+        return bridgeResult(false, ["mission://no-steps"], "", "No queued mission agent steps were available for this approval.");
+      }
+
+      let nextSteps = current.missionAgentSteps.map((step) =>
+        selectedStepIds.has(step.id) && step.missionRunId === run.id
+          ? { ...step, status: "queued" as const, error: undefined, updatedAt: new Date().toISOString() }
+          : step,
+      );
+      let nextRuns = current.missionRuns.map((item) =>
+        item.id === run.id
+          ? {
+              ...item,
+              status: "running" as const,
+              pausedReason: undefined,
+              approvalId: approval.id,
+              updatedAt: new Date().toISOString(),
+            }
+          : item,
+      );
+      let nextDrafts = current.missionDrafts.map((draft) =>
+        draft.id === run.draftId
+          ? { ...draft, status: "started" as const, approvalId: approval.id, runId: run.id, updatedAt: new Date().toISOString() }
+          : draft,
+      );
+      const nextCommands: OpenClawCommand[] = [...current.openClawCommands];
+      const nextLedger: CommandLedgerEntry[] = [...current.commandLedgerEntries];
+      const nextResults: AgentTurnResult[] = [...current.agentTurnResults];
+      const nextSections: MissionBriefSection[] = [...current.missionBriefSections];
+      const nextArtifacts: MissionArtifact[] = [...current.missionArtifacts];
+      const nextAgentMessages: AgentMessage[] = [...current.agentMessages];
+      const nextActivityLogs = [...current.activityLogs];
+      const outputs: string[] = [];
+      let failedStep: MissionAgentStep | null = null;
+      let failedSummary = "";
+
+      const artifactTypeForKind = (kind: MissionBriefSectionKind): MissionArtifact["type"] => {
+        if (kind === "research") return "research_report";
+        if (kind === "seo") return "keyword_map";
+        if (kind === "content") return "content_brief";
+        if (kind === "production") return "draft_page";
+        if (kind === "validation") return "validation_report";
+        if (kind === "experiment") return "experiment_plan";
+        if (kind === "approvals") return "publishing_diff";
+        if (kind === "risks") return "decision_record";
+        return "decision_record";
+      };
+
+      for (const step of steps) {
+        const startedAt = new Date().toISOString();
+        nextSteps = nextSteps.map((item) =>
+          item.id === step.id ? { ...item, status: "running" as const, startedAt, updatedAt: startedAt } : item,
+        );
+
+        const result = await openclawService.runAgentTurn({
+          agentProfileId: step.agentProfileId,
+          agentRole: step.agentName,
+          message: step.prompt,
+          missionRunId: run.id,
+          timeoutSeconds: 300,
+        });
+        const completedAt = new Date().toISOString();
+        const summary = executionSummary(result);
+        const commandId = id("cmd-mission-agent");
+        const resultId = id("agent-turn-result");
+        const sectionId = id("mission-section");
+        const artifactId = id("artifact-mission");
+        const content = contentFromAgentResult(step, summary, result);
+
+        const command: OpenClawCommand = {
+          id: commandId,
+          command: result.command.join(" "),
+          targetAgentId: step.agentProfileId,
+          status: result.ok ? "complete" : "failed",
+          riskLevel: "medium",
+          approvalRequired: true,
+          resultSummary: summary,
+          createdAt: startedAt,
+          actionKind: "agent_turn",
+          executionMode: "real_local",
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          startedAt,
+          completedAt,
+          missionRunId: run.id,
+          missionStepId: step.id,
+        };
+        const turnResult: AgentTurnResult = {
+          id: resultId,
+          missionRunId: run.id,
+          stepId: step.id,
+          agentId: step.agentId,
+          ok: result.ok,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          timedOut: result.timedOut,
+          summary,
+          commandId,
+          createdAt: completedAt,
+        };
+        const section: MissionBriefSection = {
+          id: sectionId,
+          missionRunId: run.id,
+          questId: run.questId,
+          kind: step.briefKind,
+          title: step.title,
+          summary,
+          content,
+          status: result.ok ? "ready" : "blocked",
+          agentId: step.agentId,
+          sourceStepId: step.id,
+          createdAt: completedAt,
+          updatedAt: completedAt,
+        };
+        const artifact: MissionArtifact = {
+          id: artifactId,
+          questId: run.questId,
+          taskId: step.id,
+          type: artifactTypeForKind(step.briefKind),
+          title: `${step.agentName}: ${step.title}`,
+          summary: result.ok ? `${step.agentName} completed a mission artifact for TeamLeader1A review.` : `${step.agentName} failed safely during the mission run.`,
+          content,
+          status: result.ok ? "ready_for_review" : "blocked",
+          storage: "sqlite",
+          sourceIds: [run.id, step.id, commandId, resultId],
+          createdByAgentId: step.agentId,
+          createdAt: completedAt,
+          updatedAt: completedAt,
+        };
+
+        nextCommands.unshift(command);
+        nextLedger.unshift({
+          id: id("ledger-mission-agent"),
+          questId: run.questId,
+          taskId: step.id,
+          approvalId: approval.id,
+          commandId,
+          connector: "openclaw",
+          action: "agent_turn",
+          status: result.ok ? "completed" : "failed",
+          externalAction: false,
+          approvalMode: "batch",
+          riskLevel: "medium",
+          inputSummary: `${step.agentName}: ${step.title}`,
+          outputSummary: summary,
+          stdout: result.stdout,
+          stderr: result.stderr,
+          createdAt: startedAt,
+          updatedAt: completedAt,
+        });
+        nextResults.unshift(turnResult);
+        nextSections.unshift(section);
+        nextArtifacts.unshift(artifact);
+        nextAgentMessages.unshift({
+          id: id("msg-mission-agent"),
+          fromAgentId: step.agentId,
+          toAgentId: "TeamLeader1A",
+          questId: run.questId,
+          summary: `${step.agentName} ${result.ok ? "submitted" : "failed"}: ${step.title}`,
+          details: summary,
+          createdAt: completedAt,
+          visibility: step.agentId === "teamleader1a" ? "user_summary" : "internal_report",
+        });
+        nextActivityLogs.unshift({
+          id: id("log-mission-agent"),
+          category: "agent",
+          title: result.ok ? `${step.agentName} mission turn completed` : `${step.agentName} mission turn failed safely`,
+          detail: summary,
+          severity: result.ok ? "success" : "danger",
+          createdAt: completedAt,
+          relatedQuestId: run.questId,
+          relatedMissionRunId: run.id,
+        });
+        nextSteps = nextSteps.map((item) =>
+          item.id === step.id
+            ? {
+                ...item,
+                status: result.ok ? "complete" as const : "failed" as const,
+                commandId,
+                resultId,
+                artifactId,
+                briefSectionId: sectionId,
+                error: result.ok ? undefined : summary,
+                completedAt,
+                updatedAt: completedAt,
+              }
+            : item,
+        );
+        outputs.push(`${step.agentName}: ${summary}`);
+
+        if (!result.ok) {
+          failedStep = step;
+          failedSummary = summary;
+          break;
+        }
+      }
+
+      const completedStepIds = new Set(nextSteps.filter((step) => step.missionRunId === run.id && ["complete", "skipped", "local_draft"].includes(step.status)).map((step) => step.id));
+      const runStepIds = new Set(nextSteps.filter((step) => step.missionRunId === run.id).map((step) => step.id));
+      const allDone = Array.from(runStepIds).every((stepId) => completedStepIds.has(stepId));
+      const status: MissionRun["status"] = failedStep ? "paused" : allDone ? "complete" : "paused";
+      const finalSummary =
+        failedStep
+          ? `Mission paused at ${failedStep.agentName}: ${failedSummary}`
+          : allDone
+            ? `Mission completed. TeamLeader1A has a unified brief from ${completedStepIds.size} approved local agent turns.`
+            : "Mission paused after completing the approved subset. Request another approval to resume remaining queued local turns.";
+
+      nextRuns = nextRuns.map((item) =>
+        item.id === run.id
+          ? {
+              ...item,
+              status,
+              stepIds: Array.from(runStepIds),
+              briefSectionIds: nextSections.filter((section) => section.missionRunId === run.id).map((section) => section.id),
+              artifactIds: nextArtifacts.filter((artifact) => artifact.sourceIds.includes(run.id)).map((artifact) => artifact.id),
+              finalSummary,
+              pausedReason: failedStep ? failedSummary : status === "paused" ? finalSummary : undefined,
+              updatedAt: new Date().toISOString(),
+            }
+          : item,
+      );
+
+      await persist({
+        ...dataRef.current,
+        missionDrafts: nextDrafts,
+        missionRuns: nextRuns,
+        missionAgentSteps: nextSteps,
+        missionBriefSections: nextSections,
+        missionApprovalBatches: current.missionApprovalBatches.map((batch) =>
+          batch.approvalId === approval.id
+            ? { ...batch, status: failedStep ? "rejected" : allDone ? "approved" : "pending", updatedAt: new Date().toISOString() }
+            : batch,
+        ),
+        agentTurnResults: nextResults,
+        missionArtifacts: nextArtifacts,
+        openClawCommands: nextCommands,
+        commandLedgerEntries: nextLedger,
+        agentMessages: nextAgentMessages.slice(0, 48),
+        activityLogs: nextActivityLogs,
+        dashboardSummary: {
+          ...dataRef.current.dashboardSummary,
+          latestTeamLeaderRecommendation: finalSummary,
+        },
+      });
+
+      return bridgeResult(!failedStep, ["mission://approved-agent-turns"], outputs.join("\n\n") || finalSummary, failedStep ? failedSummary : "");
+    },
+    [persist],
   );
 
   const executeApprovedOpenClawAction = useCallback(
@@ -1610,7 +2077,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (approval.payload.actionKind === "gateway_start") {
         result = await openclawService.startGateway();
       } else if (approval.payload.actionKind === "agent_turn") {
-        result = await openclawService.runTeamLeaderTurn(approval.payload.message);
+        result = await openclawService.runAgentTurn({
+          agentProfileId: approval.payload.agentProfileId,
+          agentRole: approval.payload.agentRole ?? "TeamLeader1A",
+          message: approval.payload.message,
+          missionRunId: approval.payload.missionRunId,
+          timeoutSeconds: 300,
+        });
+      } else if (approval.payload.actionKind === "mission_start") {
+        result = await executeMissionRun(approval);
       } else if (approval.payload.actionKind === "url_research") {
         result = await openclawService.runUrlResearch({
           purpose: approval.payload.purpose,
@@ -1658,6 +2133,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
               mode: "live_result",
               relatedApprovalId: approval.id,
               relatedCommandId: approval.commandId,
+              relatedMissionRunId: approval.payload.missionRunId,
             }
           : null;
       const sourceCaptureArtifacts =
@@ -1798,6 +2274,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             detail: summary,
             severity: result.ok ? "success" : "danger",
             createdAt: completedAt,
+            relatedMissionRunId: approval.missionRunId ?? (approval.payload.actionKind === "mission_start" ? approval.payload.missionRunId : approval.payload.actionKind === "agent_turn" ? approval.payload.missionRunId : undefined),
           },
           ...current.activityLogs,
         ],
@@ -1806,7 +2283,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       };
       await persist(next);
     },
-    [persist],
+    [executeMissionRun, persist],
   );
 
   useEffect(() => {
@@ -1826,6 +2303,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       await createOpenClawApproval({
         actionKind: "agent_turn",
         agentProfileId: "main",
+        agentRole: "TeamLeader1A",
         message: message.trim(),
         expectedResult: "TeamLeader1A returns a local planning or research summary.",
       });
@@ -1833,16 +2311,309 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [createOpenClawApproval],
   );
 
+  const createMissionDraftFromMessage = useCallback(
+    async (input: { message: string; questId: string }) => {
+      const current = dataRef.current;
+      const draft = buildMissionDraft(current, input.message, input.questId);
+      const now = new Date().toISOString();
+      const next: AppDataState = {
+        ...current,
+        missionDrafts: [draft, ...current.missionDrafts],
+        teamLeaderChatMessages: [
+          ...current.teamLeaderChatMessages,
+          {
+            id: id("tl-chat-user"),
+            role: "user",
+            content: input.message.trim(),
+            createdAt: now,
+            mode: "local",
+            relatedMissionDraftId: draft.id,
+          } satisfies TeamLeaderChatMessage,
+          {
+            id: id("tl-chat-mission-draft"),
+            role: "teamleader",
+            content: `I drafted a multi-agent mission for "${draft.title}". Review the Mission Brief, then start it only if the listed local agent turns look safe. Browser research, scraping, publishing, messages, spending, launch, and external automation are still separate approvals.`,
+            createdAt: new Date().toISOString(),
+            mode: "system",
+            relatedMissionDraftId: draft.id,
+          } satisfies TeamLeaderChatMessage,
+        ].slice(-120),
+        activityLogs: [
+          {
+            id: id("log-mission-draft"),
+            category: "agent",
+            title: "TeamLeader1A mission draft created",
+            detail: `${draft.plannedSteps.length} local agent turns were planned for ${draft.title}. Nothing has executed yet.`,
+            severity: "info",
+            createdAt: new Date().toISOString(),
+            relatedQuestId: draft.questId,
+          },
+          ...current.activityLogs,
+        ],
+      };
+      await persistOptimistic(next);
+      return draft.id;
+    },
+    [persistOptimistic],
+  );
+
+  const createMissionStartApproval = useCallback(
+    async (draftId: string, requestedStepIds?: string[]) => {
+      const current = dataRef.current;
+      const draft = current.missionDrafts.find((item) => item.id === draftId);
+      if (!draft) throw new Error("Mission draft not found.");
+
+      const now = new Date().toISOString();
+      let run = draft.runId ? current.missionRuns.find((item) => item.id === draft.runId) : undefined;
+      let steps = run ? current.missionAgentSteps.filter((step) => step.missionRunId === run?.id) : [];
+
+      if (!run) {
+        const runId = id("mission-run");
+        steps = draft.plannedSteps.map((step, index) => missionStepFromDraftStep(current, draft, step, index, runId));
+        run = {
+          id: runId,
+          draftId: draft.id,
+          questId: draft.questId,
+          title: draft.title,
+          objective: draft.objective,
+          status: "awaiting_approval",
+          stepIds: steps.map((step) => step.id),
+          briefSectionIds: [],
+          artifactIds: [],
+          createdAt: now,
+          updatedAt: now,
+        };
+        await persistOptimistic({
+          ...current,
+          missionRuns: [run, ...current.missionRuns],
+          missionAgentSteps: [...steps, ...current.missionAgentSteps],
+          missionDrafts: current.missionDrafts.map((item) =>
+            item.id === draft.id ? { ...item, status: "approval_requested", runId, updatedAt: now } : item,
+          ),
+        });
+      }
+
+      const latest = dataRef.current;
+      const latestRun = latest.missionRuns.find((item) => item.id === run?.id);
+      if (!latestRun) throw new Error("Mission run could not be created.");
+      const latestSteps = latest.missionAgentSteps
+        .filter((step) => step.missionRunId === latestRun.id)
+        .sort((a, b) => a.order - b.order);
+      const selectedStepIds = requestedStepIds?.length
+        ? requestedStepIds
+        : latestSteps.filter((step) => !["complete", "skipped", "local_draft"].includes(step.status)).map((step) => step.id);
+      const selectedSteps = latestSteps.filter((step) => selectedStepIds.includes(step.id));
+      if (selectedSteps.length === 0) throw new Error("No mission agent steps are waiting for approval.");
+
+      const approvalResult = await createOpenClawApproval(
+        {
+          actionKind: "mission_start",
+          missionDraftId: draft.id,
+          missionRunId: latestRun.id,
+          missionStepIds: selectedSteps.map((step) => step.id),
+          title: latestRun.title,
+          stepCount: selectedSteps.length,
+          agentProfileIds: selectedSteps.map((step) => step.agentProfileId),
+          expectedResult: "Mission Control runs the approved local OpenClaw agent turns and builds a unified Mission Brief.",
+        },
+        { questId: latestRun.questId, missionDraftId: draft.id, missionRunId: latestRun.id },
+      );
+
+      const afterApproval = dataRef.current;
+      const batch: MissionApprovalBatch = {
+        id: id("mission-batch"),
+        draftId: draft.id,
+        missionRunId: latestRun.id,
+        approvalId: approvalResult.approvalId,
+        status: approvalResult.blocked ? "rejected" : "pending",
+        stepIds: selectedSteps.map((step) => step.id),
+        summary: `${selectedSteps.length} approved-local agent turns requested for ${latestRun.title}.`,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      await persistOptimistic({
+        ...afterApproval,
+        missionApprovalBatches: [batch, ...afterApproval.missionApprovalBatches],
+        missionRuns: afterApproval.missionRuns.map((item) =>
+          item.id === latestRun.id
+            ? { ...item, status: "awaiting_approval", approvalId: approvalResult.approvalId, updatedAt: new Date().toISOString() }
+            : item,
+        ),
+        missionDrafts: afterApproval.missionDrafts.map((item) =>
+          item.id === draft.id
+            ? { ...item, status: "approval_requested", approvalId: approvalResult.approvalId, runId: latestRun.id, updatedAt: new Date().toISOString() }
+            : item,
+        ),
+        teamLeaderChatMessages: [
+          ...afterApproval.teamLeaderChatMessages,
+          {
+            id: id("tl-chat-mission-approval"),
+            role: "teamleader",
+            content: approvalResult.blocked
+              ? `I blocked the mission start request: ${approvalResult.safetyEvaluation.blockedReasons.join(" ")}`
+              : `Mission start approval is ready. It covers only ${selectedSteps.length} listed local OpenClaw agent turns. Review it in Approvals before anything runs.`,
+            createdAt: new Date().toISOString(),
+            mode: approvalResult.blocked ? "system" : "approval_requested",
+            relatedApprovalId: approvalResult.approvalId,
+            relatedCommandId: approvalResult.commandId,
+            relatedMissionDraftId: draft.id,
+            relatedMissionRunId: latestRun.id,
+          } satisfies TeamLeaderChatMessage,
+        ].slice(-120),
+      });
+      return approvalResult.approvalId;
+    },
+    [createOpenClawApproval, persistOptimistic],
+  );
+
+  const requestMissionStart = useCallback(
+    async (draftId: string) => createMissionStartApproval(draftId),
+    [createMissionStartApproval],
+  );
+
+  const retryMissionStep = useCallback(
+    async (stepId: string) => {
+      const current = dataRef.current;
+      const step = current.missionAgentSteps.find((item) => item.id === stepId);
+      if (!step) return;
+      const remaining = current.missionAgentSteps
+        .filter((item) => item.missionRunId === step.missionRunId && item.order >= step.order && !["complete", "skipped", "local_draft"].includes(item.status))
+        .sort((a, b) => a.order - b.order)
+        .map((item) => item.id);
+      await createMissionStartApproval(step.draftId, remaining);
+    },
+    [createMissionStartApproval],
+  );
+
+  const skipMissionStep = useCallback(
+    async (stepId: string) => {
+      const current = dataRef.current;
+      const step = current.missionAgentSteps.find((item) => item.id === stepId);
+      if (!step) return;
+      const now = new Date().toISOString();
+      await persistOptimistic({
+        ...current,
+        missionAgentSteps: current.missionAgentSteps.map((item) =>
+          item.id === stepId
+            ? { ...item, status: "skipped", error: "Skipped by user; no OpenClaw command executed.", completedAt: now, updatedAt: now }
+            : item,
+        ),
+        missionRuns: current.missionRuns.map((run) =>
+          run.id === step.missionRunId
+            ? { ...run, status: "paused", pausedReason: "A failed step was skipped. Resume remaining local turns with a new approval.", updatedAt: now }
+            : run,
+        ),
+        activityLogs: [
+          {
+            id: id("log-mission-step-skip"),
+            category: "agent",
+            title: "Mission step skipped locally",
+            detail: `${step.agentName}: ${step.title}. No command was executed.`,
+            severity: "warning",
+            createdAt: now,
+            relatedQuestId: step.questId,
+            relatedMissionRunId: step.missionRunId,
+          },
+          ...current.activityLogs,
+        ],
+      });
+    },
+    [persistOptimistic],
+  );
+
+  const convertMissionStepToLocalDraft = useCallback(
+    async (stepId: string) => {
+      const current = dataRef.current;
+      const step = current.missionAgentSteps.find((item) => item.id === stepId);
+      if (!step) return;
+      const now = new Date().toISOString();
+      const sectionId = id("mission-section-local");
+      const artifactId = id("artifact-mission-local");
+      const summary = `${step.agentName} was converted to a local fallback draft. No OpenClaw command executed.`;
+      const content = [
+        `## ${step.title}`,
+        `Agent: ${step.agentName}`,
+        "",
+        `## Local Fallback Draft`,
+        "This fallback keeps the mission reviewable after a failed agent turn. It should be treated as a placeholder until a real approved agent turn succeeds or TeamLeader1A accepts the limitation.",
+        "",
+        `## Expected Artifact`,
+        step.expectedArtifact,
+        "",
+        `## Safety Boundary`,
+        "No external action was executed.",
+      ].join("\n");
+      const section: MissionBriefSection = {
+        id: sectionId,
+        missionRunId: step.missionRunId,
+        questId: step.questId,
+        kind: step.briefKind,
+        title: `${step.title} fallback`,
+        summary,
+        content,
+        status: "ready",
+        agentId: step.agentId,
+        sourceStepId: step.id,
+        createdAt: now,
+        updatedAt: now,
+      };
+      const artifact: MissionArtifact = {
+        id: artifactId,
+        questId: step.questId,
+        taskId: step.id,
+        type: step.briefKind === "seo" ? "keyword_map" : step.briefKind === "research" ? "research_report" : step.briefKind === "experiment" ? "experiment_plan" : "content_brief",
+        title: `${step.agentName}: local fallback for ${step.title}`,
+        summary,
+        content,
+        status: "ready_for_review",
+        storage: "sqlite",
+        sourceIds: [step.missionRunId, step.id],
+        createdByAgentId: "teamleader1a",
+        createdAt: now,
+        updatedAt: now,
+      };
+      await persistOptimistic({
+        ...current,
+        missionBriefSections: [section, ...current.missionBriefSections],
+        missionArtifacts: [artifact, ...current.missionArtifacts],
+        missionAgentSteps: current.missionAgentSteps.map((item) =>
+          item.id === stepId
+            ? { ...item, status: "local_draft", briefSectionId: sectionId, artifactId, completedAt: now, updatedAt: now }
+            : item,
+        ),
+        missionRuns: current.missionRuns.map((run) =>
+          run.id === step.missionRunId
+            ? {
+                ...run,
+                status: "paused",
+                briefSectionIds: [sectionId, ...run.briefSectionIds],
+                artifactIds: [artifactId, ...run.artifactIds],
+                pausedReason: "A failed step was converted to a local draft. Resume remaining local turns with a new approval.",
+                updatedAt: now,
+              }
+            : run,
+        ),
+      });
+    },
+    [persistOptimistic],
+  );
+
   const sendTeamLeaderChatMessage = useCallback(
-    async (message: string, options: { requestLiveTurn?: boolean } = {}) => {
+    async (message: string, options: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string } = {}) => {
       const trimmed = message.trim();
       if (!trimmed) return;
 
       const now = new Date().toISOString();
+      if (options.createMissionDraft) {
+        await createMissionDraftFromMessage({ message: trimmed, questId: options.questId ?? dataRef.current.quests[0]?.id ?? "" });
+        return;
+      }
+
       if (options.requestLiveTurn) {
         const result = await createOpenClawApproval({
           actionKind: "agent_turn",
           agentProfileId: "main",
+          agentRole: "TeamLeader1A",
           message: trimmed,
           expectedResult: "TeamLeader1A returns a local planning or research summary.",
         });
@@ -1905,7 +2676,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ],
       });
     },
-    [createOpenClawApproval, persistOptimistic],
+    [createMissionDraftFromMessage, createOpenClawApproval, persistOptimistic],
   );
 
   const requestUrlResearch = useCallback(
@@ -3733,6 +4504,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
+      createMissionDraftFromMessage,
+      requestMissionStart,
+      retryMissionStep,
+      skipMissionStep,
+      convertMissionStepToLocalDraft,
       requestUrlResearch,
       requestChannelMessage,
       createRealPilotRun,
@@ -3786,6 +4562,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
+      createMissionDraftFromMessage,
+      requestMissionStart,
+      retryMissionStep,
+      skipMissionStep,
+      convertMissionStepToLocalDraft,
       requestUrlResearch,
       requestChannelMessage,
       createRealPilotRun,

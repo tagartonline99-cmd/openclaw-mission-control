@@ -52,11 +52,12 @@ export type ApprovalRequestType =
   | "Connect OpenClaw capability"
   | "Execute OpenClaw external command"
   | "Run OpenClaw local agent turn"
+  | "Start TeamLeader mission"
   | "Run approved URL research"
   | "Send approved channel message"
   | "Start OpenClaw gateway";
 
-export type OpenClawActionKind = "gateway_start" | "agent_turn" | "url_research" | "channel_message";
+export type OpenClawActionKind = "gateway_start" | "agent_turn" | "mission_start" | "url_research" | "channel_message";
 export type OpenClawExecutionMode = "mock" | "real_local" | "dry_run";
 export type SafetyRiskFlag =
   | "requires_approval"
@@ -159,6 +160,29 @@ export type CommandLedgerStatus = "planned" | "approval_required" | "approved" |
 export type CommandConnector = "openclaw" | "mission_control" | "obsidian" | "static_site" | "analytics" | "manual";
 export type ApprovalMode = "not_required" | "single" | "batch";
 export type ExternalActionLockMode = "locked" | "approval_only" | "batch_approval_enabled";
+export type MissionDraftStatus = "draft" | "approval_requested" | "started" | "archived";
+export type MissionRunStatus = "awaiting_approval" | "running" | "paused" | "complete" | "failed" | "cancelled";
+export type MissionAgentStepStatus = "queued" | "running" | "complete" | "failed" | "skipped" | "local_draft";
+export type MissionBriefSectionKind =
+  | "overview"
+  | "research"
+  | "seo"
+  | "content"
+  | "production"
+  | "validation"
+  | "experiment"
+  | "risks"
+  | "approvals"
+  | "logs";
+export type MissionAgentId =
+  | "teamleader1a"
+  | "agent-researcher"
+  | "agent-seo"
+  | "agent-writer"
+  | "agent-content"
+  | "agent-production"
+  | "agent-publish"
+  | "agent-action";
 
 export interface Skill {
   id: string;
@@ -844,6 +868,118 @@ export interface TeamLeaderChatMessage {
   mode: "local" | "approval_requested" | "live_result" | "system";
   relatedApprovalId?: string;
   relatedCommandId?: string;
+  relatedMissionDraftId?: string;
+  relatedMissionRunId?: string;
+}
+
+export interface MissionDraftStepPlan {
+  agentId: MissionAgentId;
+  title: string;
+  briefKind: MissionBriefSectionKind;
+  prompt: string;
+  expectedArtifact: string;
+}
+
+export interface MissionDraft {
+  id: string;
+  questId: string;
+  title: string;
+  objective: string;
+  sourceMessage: string;
+  status: MissionDraftStatus;
+  plannedAgentIds: MissionAgentId[];
+  plannedSteps: MissionDraftStepPlan[];
+  riskFlags: string[];
+  requiredApprovals: string[];
+  approvalId?: string;
+  runId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MissionRun {
+  id: string;
+  draftId: string;
+  questId: string;
+  title: string;
+  objective: string;
+  status: MissionRunStatus;
+  stepIds: string[];
+  briefSectionIds: string[];
+  artifactIds: string[];
+  approvalId?: string;
+  finalSummary?: string;
+  pausedReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MissionAgentStep {
+  id: string;
+  draftId: string;
+  missionRunId: string;
+  questId: string;
+  order: number;
+  agentId: MissionAgentId;
+  agentName: string;
+  agentProfileId: string;
+  title: string;
+  briefKind: MissionBriefSectionKind;
+  prompt: string;
+  expectedArtifact: string;
+  status: MissionAgentStepStatus;
+  commandId?: string;
+  resultId?: string;
+  artifactId?: string;
+  briefSectionId?: string;
+  retryOfStepId?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MissionBriefSection {
+  id: string;
+  missionRunId: string;
+  questId: string;
+  kind: MissionBriefSectionKind;
+  title: string;
+  summary: string;
+  content: string;
+  status: "draft" | "ready" | "blocked";
+  agentId?: MissionAgentId;
+  sourceStepId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MissionApprovalBatch {
+  id: string;
+  draftId: string;
+  missionRunId: string;
+  approvalId: string;
+  status: BatchApprovalStatus;
+  stepIds: string[];
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentTurnResult {
+  id: string;
+  missionRunId: string;
+  stepId: string;
+  agentId: MissionAgentId;
+  ok: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode?: number | null;
+  timedOut: boolean;
+  summary: string;
+  commandId: string;
+  createdAt: string;
 }
 
 export interface AgentArtifact {
@@ -938,6 +1074,8 @@ export interface ApprovalRequest {
   payload?: OpenClawApprovalPayload;
   payloadSnapshot?: OpenClawApprovalPayload;
   commandId?: string;
+  missionDraftId?: string;
+  missionRunId?: string;
   parentApprovalId?: string;
   retryOfCommandId?: string;
   blockedExplanation?: string;
@@ -957,6 +1095,7 @@ export interface ActivityLog {
   severity: "info" | "success" | "warning" | "danger";
   createdAt: string;
   relatedQuestId?: string;
+  relatedMissionRunId?: string;
 }
 
 export interface OpenClawCommand {
@@ -978,6 +1117,8 @@ export interface OpenClawCommand {
   retryOfCommandId?: string;
   cancelReason?: string;
   safetyEvaluation?: SafetyPolicyEvaluation;
+  missionRunId?: string;
+  missionStepId?: string;
 }
 
 export interface OpenClawEvent {
@@ -1100,7 +1241,20 @@ export type OpenClawApprovalPayload =
   | {
       actionKind: "agent_turn";
       message: string;
-      agentProfileId: "main";
+      agentProfileId: string;
+      agentRole?: string;
+      missionRunId?: string;
+      missionStepId?: string;
+      expectedResult: string;
+    }
+  | {
+      actionKind: "mission_start";
+      missionDraftId: string;
+      missionRunId: string;
+      missionStepIds: string[];
+      title: string;
+      stepCount: number;
+      agentProfileIds: string[];
       expectedResult: string;
     }
   | {

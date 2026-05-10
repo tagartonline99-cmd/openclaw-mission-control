@@ -18,6 +18,7 @@ import {
   ScrollText,
   Settings,
   ShieldCheck,
+  Sparkles,
   Swords,
   Workflow,
 } from "lucide-react";
@@ -32,6 +33,7 @@ const navItems = [
   { label: "Dashboard", path: "/", icon: Home },
   { label: "Agents", path: "/agents", icon: Bot },
   { label: "TeamLeader Chat", path: "/teamleader-chat", icon: MessageSquare },
+  { label: "Mission Briefs", path: "/mission-briefs", icon: Sparkles },
   { label: "Orchestration", path: "/orchestration", icon: Workflow },
   { label: "Quests", path: "/quests", icon: Swords },
   { label: "Ideas", path: "/ideas", icon: Lightbulb },

@@ -129,7 +129,7 @@ async function main() {
     const { client } = app;
     await client.evaluate("location.hash = '/settings'");
     await waitFor(client, "document.body.innerText.includes('Auto Updates')", "Auto Updates panel");
-    if (await client.evaluate(`document.body.innerText.includes(${JSON.stringify(`Business OS release ${expectedVersion}`)})`)) {
+    if (await client.evaluate(`document.body.innerText.includes(${JSON.stringify(`Mission delegation release ${expectedVersion}`)})`)) {
       console.log(JSON.stringify({ alreadyCurrent: true, version: expectedVersion }, null, 2));
       return;
     }

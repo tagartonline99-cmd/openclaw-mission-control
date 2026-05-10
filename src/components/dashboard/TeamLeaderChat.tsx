@@ -1,16 +1,18 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Crown, Radio, Send, ShieldAlert, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
+import { Select } from "../ui/select";
 import { formatDateTime } from "../../utils/formatting";
 import { cn } from "../../utils/cn";
 import { useAppData } from "../../app/AppDataContext";
 
 export function TeamLeaderChat({ full = false }: { full?: boolean }) {
   const { data, sendTeamLeaderChatMessage } = useAppData();
-  const { approvalRequests, dashboardSummary, openClawCommands, teamLeaderChatMessages } = data;
+  const { approvalRequests, dashboardSummary, openClawCommands, quests, teamLeaderChatMessages } = data;
   const [message, setMessage] = useState("");
+  const [questId, setQuestId] = useState(quests[0]?.id ?? "");
   const [isSending, setIsSending] = useState(false);
   const pending = approvalRequests.filter((request) => request.status === "pending").length;
   const queued = openClawCommands.filter((command) => command.status === "queued" || command.status === "requires_approval").length;
@@ -19,12 +21,16 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
     [full, teamLeaderChatMessages],
   );
 
-  async function submit(requestLiveTurn: boolean) {
+  useEffect(() => {
+    if (!questId && quests[0]) setQuestId(quests[0].id);
+  }, [questId, quests]);
+
+  async function submit(mode: "local" | "live" | "mission") {
     const trimmed = message.trim();
     if (!trimmed || isSending) return;
     setIsSending(true);
     try {
-      await sendTeamLeaderChatMessage(trimmed, { requestLiveTurn });
+      await sendTeamLeaderChatMessage(trimmed, { requestLiveTurn: mode === "live", createMissionDraft: mode === "mission", questId });
       setMessage("");
     } finally {
       setIsSending(false);
@@ -82,6 +88,14 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
               {item.relatedApprovalId ? (
                 <p className="mt-3 text-xs text-amber-100">Approval: {item.relatedApprovalId}</p>
               ) : null}
+              {item.relatedMissionDraftId || item.relatedMissionRunId ? (
+                <a
+                  className="mt-3 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50"
+                  href={`#/mission-briefs?${item.relatedMissionRunId ? `run=${item.relatedMissionRunId}` : `draft=${item.relatedMissionDraftId}`}`}
+                >
+                  View Mission Brief
+                </a>
+              ) : null}
             </div>
           ))}
         </div>
@@ -101,6 +115,11 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
         </div>
 
         <div className="space-y-3">
+          <Select value={questId} onChange={(event) => setQuestId(event.target.value)}>
+            {quests.map((quest) => (
+              <option key={quest.id} value={quest.id}>{quest.title}</option>
+            ))}
+          </Select>
           <textarea
             value={message}
             onChange={(event) => setMessage(event.target.value)}
@@ -108,18 +127,22 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
             className="min-h-28 w-full resize-none rounded-md border border-white/10 bg-black/30 p-3 text-sm leading-6 text-stone-100 outline-none transition placeholder:text-slate-600 focus:border-amber-300/50 focus:ring-2 focus:ring-amber-300/20"
           />
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" disabled={!message.trim() || isSending} onClick={() => void submit(false)}>
+            <Button type="button" variant="secondary" disabled={!message.trim() || isSending} onClick={() => void submit("mission")}>
+              <Sparkles className="h-4 w-4" />
+              Draft agent mission
+            </Button>
+            <Button type="button" variant="outline" disabled={!message.trim() || isSending} onClick={() => void submit("local")}>
               <Send className="h-4 w-4" />
               Send local chat
             </Button>
-            <Button type="button" variant="outline" disabled={!message.trim() || isSending} onClick={() => void submit(true)}>
+            <Button type="button" variant="outline" disabled={!message.trim() || isSending} onClick={() => void submit("live")}>
               <Radio className="h-4 w-4" />
               Request live turn approval
             </Button>
           </div>
         </div>
         <p className="text-xs leading-5 text-slate-500">
-          Local chat replies are generated inside Mission Control. Live TeamLeader1A turns require approval and never use external delivery.
+          Mission drafts do not run agents until you approve the mission start. Live OpenClaw turns never use external delivery.
         </p>
       </CardContent>
     </Card>

@@ -73,6 +73,24 @@ function PayloadCard({ request }: { request: ApprovalRequest }) {
     );
   }
 
+  if (request.payload.actionKind === "mission_start") {
+    return (
+      <div className="grid gap-3">
+        <div className="rounded-md border border-white/10 bg-black/25 p-3">
+          <p className="text-xs font-semibold uppercase text-slate-500">Mission</p>
+          <p className="mt-1 text-sm text-slate-300">{request.payload.title}</p>
+        </div>
+        <div className="rounded-md border border-white/10 bg-black/25 p-3">
+          <p className="text-xs font-semibold uppercase text-slate-500">Approved local turns</p>
+          <p className="mt-1 text-sm text-slate-300">{request.payload.stepCount} exact agent turns / {request.payload.agentProfileIds.join(", ")}</p>
+        </div>
+        <a className="text-sm font-semibold text-teal-100 hover:text-teal-50" href={`#/mission-briefs?run=${request.payload.missionRunId}`}>
+          View Mission Brief
+        </a>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-md border border-white/10 bg-black/25 p-3">
       <p className="text-sm text-slate-300">Start local OpenClaw gateway.</p>
@@ -120,6 +138,7 @@ export function ApprovalCenter() {
               <option value="all">all actions</option>
               <option value="gateway_start">gateway start</option>
               <option value="agent_turn">agent turn</option>
+              <option value="mission_start">mission start</option>
               <option value="url_research">url research</option>
               <option value="channel_message">channel message</option>
               <option value="local">local approvals</option>
@@ -177,6 +196,11 @@ export function ApprovalCenter() {
                     <GitBranch className="h-3.5 w-3.5" />
                     Retry lineage: parent approval {request.parentApprovalId ?? "n/a"} / retry of command {command?.retryOfCommandId ?? request.retryOfCommandId}
                   </div>
+                ) : null}
+                {request.payload?.actionKind === "mission_start" ? (
+                  <a className="mt-3 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href={`#/mission-briefs?run=${request.payload.missionRunId}`}>
+                    View Mission Brief
+                  </a>
                 ) : null}
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button variant="secondary" size="sm" onClick={() => setSelected(request)}>

@@ -91,7 +91,13 @@ import type {
   JobSchedule,
   LearningCard,
   MarketIntelligenceReport,
+  AgentTurnResult,
   MissionArtifact,
+  MissionAgentStep,
+  MissionApprovalBatch,
+  MissionBriefSection,
+  MissionDraft,
+  MissionRun,
   MissionTask,
   ObsidianNote,
   OpenClawCapability,
@@ -157,6 +163,12 @@ export interface AppDataState {
   learningCards: LearningCard[];
   jobSchedules: JobSchedule[];
   jobRuns: JobRun[];
+  missionDrafts: MissionDraft[];
+  missionRuns: MissionRun[];
+  missionAgentSteps: MissionAgentStep[];
+  missionBriefSections: MissionBriefSection[];
+  missionApprovalBatches: MissionApprovalBatch[];
+  agentTurnResults: AgentTurnResult[];
   missionTasks: MissionTask[];
   missionArtifacts: MissionArtifact[];
   commandLedgerEntries: CommandLedgerEntry[];
@@ -229,6 +241,12 @@ type EntityKey =
   | "learningCards"
   | "jobSchedules"
   | "jobRuns"
+  | "missionDrafts"
+  | "missionRuns"
+  | "missionAgentSteps"
+  | "missionBriefSections"
+  | "missionApprovalBatches"
+  | "agentTurnResults"
   | "missionTasks"
   | "missionArtifacts"
   | "commandLedgerEntries"
@@ -311,6 +329,12 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "learningCards", tableName: "learning_cards" },
   { stateKey: "jobSchedules", tableName: "job_schedules" },
   { stateKey: "jobRuns", tableName: "job_runs" },
+  { stateKey: "missionDrafts", tableName: "mission_drafts" },
+  { stateKey: "missionRuns", tableName: "mission_runs" },
+  { stateKey: "missionAgentSteps", tableName: "mission_agent_steps" },
+  { stateKey: "missionBriefSections", tableName: "mission_brief_sections" },
+  { stateKey: "missionApprovalBatches", tableName: "mission_approval_batches" },
+  { stateKey: "agentTurnResults", tableName: "agent_turn_results" },
   { stateKey: "missionTasks", tableName: "mission_tasks" },
   { stateKey: "missionArtifacts", tableName: "mission_artifacts" },
   { stateKey: "commandLedgerEntries", tableName: "command_ledger_entries" },
@@ -377,6 +401,12 @@ export const initialAppDataState: AppDataState = {
   learningCards,
   jobSchedules,
   jobRuns,
+  missionDrafts: [],
+  missionRuns: [],
+  missionAgentSteps: [],
+  missionBriefSections: [],
+  missionApprovalBatches: [],
+  agentTurnResults: [],
   missionTasks,
   missionArtifacts,
   commandLedgerEntries,
@@ -660,6 +690,12 @@ function markInterruptedCommands(state: AppDataState) {
 }
 
 function normalizePhase6BState(state: AppDataState) {
+  state.missionDrafts ??= [];
+  state.missionRuns ??= [];
+  state.missionAgentSteps ??= [];
+  state.missionBriefSections ??= [];
+  state.missionApprovalBatches ??= [];
+  state.agentTurnResults ??= [];
   state.missionTasks ??= cloneState(initialAppDataState).missionTasks;
   state.missionArtifacts ??= cloneState(initialAppDataState).missionArtifacts;
   state.commandLedgerEntries ??= cloneState(initialAppDataState).commandLedgerEntries;

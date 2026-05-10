@@ -331,6 +331,11 @@ export function OpenClawPanel() {
                       Approval record: {approval.id} / {approval.title}
                     </div>
                   ) : null}
+                  {command.missionRunId ? (
+                    <a className="mt-2 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50" href={`#/mission-briefs?run=${command.missionRunId}`}>
+                      View Mission Brief
+                    </a>
+                  ) : null}
                   {command.stdout ? <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-md border border-teal-300/20 bg-teal-400/8 p-2 text-xs text-teal-100">{command.stdout}</pre> : null}
                   {command.stderr ? <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-md border border-red-300/20 bg-red-500/8 p-2 text-xs text-red-100">{command.stderr}</pre> : null}
                   {canClose || canRetry ? (

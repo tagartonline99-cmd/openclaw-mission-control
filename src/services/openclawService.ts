@@ -44,6 +44,14 @@ export type ChannelMessageInput = {
   dryRun: boolean;
 };
 
+export type AgentTurnInput = {
+  agentProfileId: string;
+  agentRole: string;
+  message: string;
+  missionRunId?: string;
+  timeoutSeconds?: number;
+};
+
 async function state() {
   return (await persistenceService.loadState()).state;
 }
@@ -196,17 +204,20 @@ export const openclawService = {
       },
     );
   },
-  async runTeamLeaderTurn(message: string) {
-    return bridge("openclaw_agent_turn", { request: { message, timeoutSeconds: 300 } }).then((result) =>
+  async runAgentTurn(input: AgentTurnInput) {
+    return bridge("openclaw_agent_turn", { request: { ...input, timeoutSeconds: input.timeoutSeconds ?? 300 } }).then((result) =>
       result ?? {
         ok: false,
         command: ["mock://openclaw_agent_turn"],
         stdout: "",
-        stderr: "Tauri desktop runtime is required for a live TeamLeader1A turn.",
+        stderr: "Tauri desktop runtime is required for a live OpenClaw agent turn.",
         exitCode: null,
         timedOut: false,
       },
     );
+  },
+  async runTeamLeaderTurn(message: string) {
+    return this.runAgentTurn({ agentProfileId: "main", agentRole: "TeamLeader1A", message, timeoutSeconds: 300 });
   },
   async runUrlResearch(input: UrlResearchInput) {
     return bridge("openclaw_url_research", { request: { ...input, timeoutSeconds: 300 } }).then((result) =>

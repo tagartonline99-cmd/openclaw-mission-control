@@ -26,12 +26,14 @@ import {
   Sparkles,
   TrendingUp,
   WalletCards,
+  Workflow,
 } from "lucide-react";
 import { AgentRosterGrid } from "../components/agents/AgentRosterGrid";
 import { ApprovalCenter } from "../components/approvals/ApprovalCenter";
 import { DungeonPipeline } from "../components/dashboard/DungeonPipeline";
 import { MetricCard } from "../components/dashboard/MetricCard";
 import { TeamLeaderChat } from "../components/dashboard/TeamLeaderChat";
+import { MissionBriefWorkbench } from "../components/missions/MissionBriefWorkbench";
 import { OpenClawPanel } from "../components/openclaw/OpenClawPanel";
 import { AllowlistManager } from "../components/openclaw/AllowlistManager";
 import { ExperimentAnalyticsWorkbench } from "../components/intelligence/ExperimentAnalyticsWorkbench";
@@ -194,6 +196,20 @@ export function TeamLeaderChatPage() {
         action={<Badge tone="amber"><MessageSquare className="h-3.5 w-3.5" /> TeamLeader1A only</Badge>}
       />
       <TeamLeaderChat full />
+    </div>
+  );
+}
+
+export function MissionBriefPage() {
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="Mission Brief"
+        title="TeamLeader1A delegated agent work"
+        description="Review mission drafts, approve exact local OpenClaw agent turns, and inspect the unified brief with research, SEO, content, production, validation, risks, logs, and next approval-gated actions."
+        action={<Badge tone="teal"><Workflow className="h-3.5 w-3.5" /> Batch local turns</Badge>}
+      />
+      <MissionBriefWorkbench />
     </div>
   );
 }
@@ -787,6 +803,11 @@ export function ActivityLogPage() {
                 <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${statusTone(log.severity)}`}>{log.severity}</span>
               </div>
               <p className="mt-3 text-sm leading-6 text-slate-300">{log.detail}</p>
+              {log.relatedMissionRunId ? (
+                <a className="mt-3 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href={`#/mission-briefs?run=${log.relatedMissionRunId}`}>
+                  View Mission Brief
+                </a>
+              ) : null}
             </div>
           ))}
         </CardContent>

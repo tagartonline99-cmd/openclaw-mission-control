@@ -16,6 +16,7 @@ type EvaluationContext = {
 const capabilityLabels: Record<OpenClawActionKind, string> = {
   gateway_start: "gateway_start",
   agent_turn: "agent_turn",
+  mission_start: "mission_start",
   url_research: "url_research",
   channel_message: "channel_message",
 };
@@ -190,14 +191,32 @@ function evaluateChannel(payload: Extract<OpenClawApprovalPayload, { actionKind:
 
 function evaluateAgentTurn(payload: Extract<OpenClawApprovalPayload, { actionKind: "agent_turn" }>, context: EvaluationContext) {
   const evaluation = baseEvaluation(payload.message.trim().slice(0, 300));
-  evaluation.safetyChecklist.push("TeamLeader1A only.", "No --deliver flag.", "No external delivery from this action.");
+  evaluation.safetyChecklist.push("Local OpenClaw agent turn only.", "No --deliver flag.", "No external delivery from this action.");
   if (!capabilityAllowed(payload.actionKind, context.allowlistEntries)) {
     evaluation.riskFlags.push("capability_not_allowed");
-    evaluation.blockedReasons.push("TeamLeader1A local turn capability is not active in the allowlist.");
+    evaluation.blockedReasons.push("Local OpenClaw agent turn capability is not active in the allowlist.");
   }
   if (!payload.message.trim()) {
     evaluation.riskFlags.push("blocked_intent");
-    evaluation.blockedReasons.push("TeamLeader1A prompt cannot be empty.");
+    evaluation.blockedReasons.push("OpenClaw agent prompt cannot be empty.");
+  }
+  return finish(evaluation);
+}
+
+function evaluateMissionStart(payload: Extract<OpenClawApprovalPayload, { actionKind: "mission_start" }>, context: EvaluationContext) {
+  const evaluation = baseEvaluation(`${payload.title.trim()} / ${payload.stepCount} local agent turns`);
+  evaluation.safetyChecklist.push(
+    "One approval covers only the listed local agent turns.",
+    "No browser research, scraping, channel send, publishing, spending, launch, scaling, or external automation is included.",
+    "Each agent result is logged locally and attached to the Mission Brief.",
+  );
+  if (!capabilityAllowed(payload.actionKind, context.allowlistEntries)) {
+    evaluation.riskFlags.push("capability_not_allowed");
+    evaluation.blockedReasons.push("TeamLeader mission start capability is not active in the allowlist.");
+  }
+  if (!payload.missionDraftId || !payload.missionRunId || payload.stepCount <= 0) {
+    evaluation.riskFlags.push("blocked_intent");
+    evaluation.blockedReasons.push("Mission start requires a saved draft, run, and at least one agent step.");
   }
   return finish(evaluation);
 }
@@ -252,8 +271,16 @@ export const safetyPolicyService = {
   },
 
   migrateSettingsAllowlists(settings: UserSettings, existing: AllowlistEntry[]) {
-    if (existing.length > 0) return existing;
-    const capabilities: OpenClawActionKind[] = ["gateway_start", "agent_turn", "url_research", "channel_message"];
+    const capabilities: OpenClawActionKind[] = ["gateway_start", "agent_turn", "mission_start", "url_research", "channel_message"];
+    if (existing.length > 0) {
+      const present = new Set(existing.filter((entry) => entry.kind === "openclaw_capability").map((entry) => entry.value));
+      return [
+        ...existing,
+        ...capabilities
+          .filter((capability) => !present.has(capability))
+          .map((capability) => this.makeAllowlistEntry("openclaw_capability", capability, "system", capability.replace("_", " "))),
+      ];
+    }
     return [
       ...settings.approvedResearchDomains.map((domain) => this.makeAllowlistEntry("research_domain", domain, "settings_migration")),
       ...settings.approvedChannelTargets.map((target) => this.makeAllowlistEntry("channel_target", target, "settings_migration")),
@@ -265,6 +292,7 @@ export const safetyPolicyService = {
     if (payload.actionKind === "url_research") return evaluateUrls(payload, context);
     if (payload.actionKind === "channel_message") return evaluateChannel(payload, context);
     if (payload.actionKind === "agent_turn") return evaluateAgentTurn(payload, context);
+    if (payload.actionKind === "mission_start") return evaluateMissionStart(payload, context);
     return evaluateGateway(payload, context);
   },
 

@@ -11,6 +11,7 @@ import {
   IdeasPage,
   LaunchControlPage,
   MarketIntelligencePage,
+  MissionBriefPage,
   OpenClawSystemPage,
   ProductionPipelinePage,
   QuestsPage,
@@ -30,6 +31,7 @@ export function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/teamleader-chat" element={<TeamLeaderChatPage />} />
+            <Route path="/mission-briefs" element={<MissionBriefPage />} />
             <Route path="/orchestration" element={<AgentOrchestrationPage />} />
             <Route path="/quests" element={<QuestsPage />} />
             <Route path="/ideas" element={<IdeasPage />} />
