@@ -8,10 +8,16 @@ import {
   analyticsConnectors,
   analyticsSnapshots,
   approvalRequests,
+  approvedBusinesses,
+  agentWorkSessions,
+  autonomousImprovementRuns,
   batchApprovalItems,
   batchApprovalPackages,
   budgets,
+  businessProposals,
   businessIdeas,
+  businessTasks,
+  contentInventoryItems,
   contentItems,
   dashboardSummary,
   decisionLogs,
@@ -24,6 +30,7 @@ import {
   externalActionLock,
   improvementProposals,
   improvementQueue,
+  guildOfficeStations,
   jobRuns,
   jobSchedules,
   marketIntelligenceReports,
@@ -41,13 +48,16 @@ import {
   openClawPermissions,
   openClawRuntimeStatus,
   offerClaimReviews,
+  opportunityHunts,
   productionAssets,
   productionPacks,
+  productionDestinations,
   publishingDiffs,
   publishingConnectors,
   portfolioScores,
   quests,
   researchQueue,
+  researchEvidence,
   revenueRecords,
   searchConsoleMetrics,
   searchConsoleProperties,
@@ -67,17 +77,22 @@ import type {
   AgentArtifact,
   AgentMessage,
   AgentPerformanceMemory,
+  AgentWorkSession,
   AnalyticsConnector,
   AnalyticsSnapshot,
   AgentOrchestrationRun,
   AgentRunReview,
+  ApprovedBusiness,
   AllowlistEntry,
   ApprovalRequest,
   ApprovalDecisionRecord,
+  AutonomousImprovementRun,
   BatchApprovalItem,
   BatchApprovalPackage,
   Budget,
+  BusinessProposal,
   BusinessIdea,
+  BusinessTask,
   DashboardSummary,
   DecisionLog,
   DemandProofReport,
@@ -86,7 +101,9 @@ import type {
   ExperimentAnalysis,
   CommandLedgerEntry,
   ContentItem,
+  ContentInventoryItem,
   ExternalActionLock,
+  GuildOfficeStation,
   ImprovementProposal,
   JobRun,
   JobSchedule,
@@ -108,12 +125,15 @@ import type {
   OpenClawPermission,
   OpenClawRuntimeStatus,
   OfferClaimReview,
+  OpportunityHunt,
   ProductionAsset,
   ProductionPack,
+  ProductionDestination,
   PublishingDiff,
   PublishingConnector,
   PortfolioScore,
   Quest,
+  ResearchEvidence,
   ResearchSourceCapture,
   RealPilotRun,
   SearchConsoleMetric,
@@ -165,6 +185,16 @@ export interface AppDataState {
   learningCards: LearningCard[];
   jobSchedules: JobSchedule[];
   jobRuns: JobRun[];
+  opportunityHunts: OpportunityHunt[];
+  businessProposals: BusinessProposal[];
+  approvedBusinesses: ApprovedBusiness[];
+  businessTasks: BusinessTask[];
+  agentWorkSessions: AgentWorkSession[];
+  guildOfficeStations: GuildOfficeStation[];
+  researchEvidence: ResearchEvidence[];
+  productionDestinations: ProductionDestination[];
+  contentInventoryItems: ContentInventoryItem[];
+  autonomousImprovementRuns: AutonomousImprovementRun[];
   missionDrafts: MissionDraft[];
   missionRuns: MissionRun[];
   missionAgentSteps: MissionAgentStep[];
@@ -244,6 +274,16 @@ type EntityKey =
   | "learningCards"
   | "jobSchedules"
   | "jobRuns"
+  | "opportunityHunts"
+  | "businessProposals"
+  | "approvedBusinesses"
+  | "businessTasks"
+  | "agentWorkSessions"
+  | "guildOfficeStations"
+  | "researchEvidence"
+  | "productionDestinations"
+  | "contentInventoryItems"
+  | "autonomousImprovementRuns"
   | "missionDrafts"
   | "missionRuns"
   | "missionAgentSteps"
@@ -333,6 +373,16 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "learningCards", tableName: "learning_cards" },
   { stateKey: "jobSchedules", tableName: "job_schedules" },
   { stateKey: "jobRuns", tableName: "job_runs" },
+  { stateKey: "opportunityHunts", tableName: "opportunity_hunts" },
+  { stateKey: "businessProposals", tableName: "business_proposals" },
+  { stateKey: "approvedBusinesses", tableName: "approved_businesses" },
+  { stateKey: "businessTasks", tableName: "business_tasks" },
+  { stateKey: "agentWorkSessions", tableName: "agent_work_sessions" },
+  { stateKey: "guildOfficeStations", tableName: "guild_office_stations" },
+  { stateKey: "researchEvidence", tableName: "research_evidence" },
+  { stateKey: "productionDestinations", tableName: "production_destinations" },
+  { stateKey: "contentInventoryItems", tableName: "content_inventory_items" },
+  { stateKey: "autonomousImprovementRuns", tableName: "autonomous_improvement_runs" },
   { stateKey: "missionDrafts", tableName: "mission_drafts" },
   { stateKey: "missionRuns", tableName: "mission_runs" },
   { stateKey: "missionAgentSteps", tableName: "mission_agent_steps" },
@@ -406,6 +456,16 @@ export const initialAppDataState: AppDataState = {
   learningCards,
   jobSchedules,
   jobRuns,
+  opportunityHunts,
+  businessProposals,
+  approvedBusinesses,
+  businessTasks,
+  agentWorkSessions,
+  guildOfficeStations,
+  researchEvidence,
+  productionDestinations,
+  contentInventoryItems,
+  autonomousImprovementRuns,
   missionDrafts: [],
   missionRuns: [],
   missionAgentSteps: [],
@@ -723,6 +783,16 @@ function normalizePhase6BState(state: AppDataState) {
   state.batchApprovalItems ??= cloneState(initialAppDataState).batchApprovalItems;
   state.jobSchedules ??= cloneState(initialAppDataState).jobSchedules;
   state.jobRuns ??= cloneState(initialAppDataState).jobRuns;
+  state.opportunityHunts ??= [];
+  state.businessProposals ??= [];
+  state.approvedBusinesses ??= [];
+  state.businessTasks ??= [];
+  state.agentWorkSessions ??= [];
+  state.guildOfficeStations ??= cloneState(initialAppDataState).guildOfficeStations;
+  state.researchEvidence ??= [];
+  state.productionDestinations ??= [];
+  state.contentInventoryItems ??= [];
+  state.autonomousImprovementRuns ??= [];
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;
   state.publishingConnectors ??= cloneState(initialAppDataState).publishingConnectors;

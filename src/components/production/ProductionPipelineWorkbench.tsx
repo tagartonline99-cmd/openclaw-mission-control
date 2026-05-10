@@ -30,6 +30,11 @@ export function ProductionPipelineWorkbench() {
   const siteContentItems = siteProject ? data.contentItems.filter((item) => item.siteProjectId === siteProject.id) : [];
   const siteDiffs = siteProject ? data.publishingDiffs.filter((diff) => diff.siteProjectId === siteProject.id) : [];
   const affiliateOffers = data.affiliateOffers.filter((offer) => offer.questId === questId);
+  const businessProduction = data.approvedBusinesses.flatMap((business) => {
+    const destinations = data.productionDestinations.filter((destination) => business.publishingDestinationIds.includes(destination.id));
+    const content = data.contentInventoryItems.filter((item) => business.contentInventoryIds.includes(item.id));
+    return destinations.map((destination) => ({ business, destination, content: content.filter((item) => !item.destinationId || item.destinationId === destination.id) }));
+  });
 
   async function createPack() {
     if (!questId) return;
@@ -59,6 +64,57 @@ export function ProductionPipelineWorkbench() {
 
   return (
     <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <PackageCheck className="h-4 w-4 text-teal-100" />
+            Business Production And Publishing Map
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+            <p className="font-semibold text-stone-100">You should always know what exists and where it is intended to go.</p>
+            <p className="mt-1 text-sm leading-6 text-slate-300">
+              These are local drafts tied to approved businesses. Publishing destinations are visible, but publishing and connector execution remain approval-gated.
+            </p>
+          </div>
+          {businessProduction.length === 0 ? (
+            <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
+              No approved business production map yet. Approve a business proposal from Mission Briefs first.
+            </p>
+          ) : (
+            <div className="grid gap-4 xl:grid-cols-2">
+              {businessProduction.map(({ business, destination, content }) => (
+                <div key={`${business.id}-${destination.id}`} className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <Badge tone="teal">{business.name}</Badge>
+                      <h3 className="mt-3 font-display text-xl font-semibold text-stone-100">{destination.name}</h3>
+                    </div>
+                    <Badge tone={destination.approvalRequired ? "red" : "emerald"}>{destination.approvalRequired ? "approval required" : "local only"}</Badge>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-slate-300">{destination.description}</p>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Content created</p>
+                      <div className="mt-2 space-y-2">
+                        {content.map((item) => <p key={item.id} className="text-sm text-slate-300">{item.title} / {label(item.status)}</p>)}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
+                      <p className="text-xs font-semibold uppercase text-red-100">Before publishing</p>
+                      <div className="mt-2 space-y-1">
+                        {destination.publishingRules.map((rule) => <p key={rule} className="text-sm text-red-100">{rule}</p>)}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="p-4">

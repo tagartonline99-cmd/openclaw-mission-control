@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import type {
+  ActivityLog,
   AllowlistEntry,
   AllowlistKind,
   AllowlistStatus,
@@ -10,14 +11,21 @@ import type {
   AgentRunReview,
   AgentRunReviewStatus,
   AgentTurnResult,
+  AgentWorkSession,
+  ApprovedBusiness,
   ApprovalRequest,
   ApprovalDecisionRecord,
   ApprovalStatus,
   AffiliateOffer,
   AnalyticsSnapshot,
+  AutonomousImprovementRun,
   BatchApprovalItem,
   BatchApprovalPackage,
+  BusinessIdea,
+  BusinessProposal,
+  BusinessTask,
   CommandLedgerEntry,
+  ContentInventoryItem,
   ContentItem,
   DemandProofReport,
   Experiment,
@@ -25,6 +33,7 @@ import type {
   ExperimentAnalysis,
   ExternalActionLockMode,
   JobRun,
+  GuildOfficeStation,
   MarketIntelligenceReport,
   LearningCard,
   MissionArtifact,
@@ -37,6 +46,7 @@ import type {
   MissionDraftStepPlan,
   MissionRun,
   MissionTask,
+  OpportunityHunt,
   OpenClawApprovalPayload,
   OfferClaimReview,
   OpenClawCommand,
@@ -44,7 +54,10 @@ import type {
   ObsidianNote,
   ProductionAsset,
   ProductionPack,
+  ProductionDestination,
   PublishingDiff,
+  Quest,
+  ResearchEvidence,
   ResearchSourceCapture,
   RealPilotRun,
   RiskLevel,
@@ -130,6 +143,9 @@ type AppDataContextValue = {
   requestGatewayStart: () => Promise<void>;
   requestTeamLeaderTurn: (message: string) => Promise<void>;
   sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string }) => Promise<void>;
+  createOpportunityHuntFromMessage: (message: string) => Promise<string>;
+  approveBusinessProposal: (proposalId: string) => Promise<string>;
+  updateBusinessProposalStatus: (proposalId: string, status: BusinessProposal["status"]) => Promise<void>;
   createMissionDraftFromMessage: (input: { message: string; questId: string }) => Promise<string>;
   requestMissionStart: (draftId: string) => Promise<string>;
   retryMissionStep: (stepId: string) => Promise<void>;
@@ -228,6 +244,521 @@ function buildTeamLeaderLocalReply(state: AppDataState, userMessage: string) {
       : "No major bottleneck is listed in the dashboard summary.",
     "Recommended next move: use a validation or pilot workflow to collect evidence, then ask for a live TeamLeader1A turn only if you want the local OpenClaw runtime to respond through the approval gate.",
   ].join("\n\n");
+}
+
+const opportunityAgentOrder: MissionAgentId[] = [
+  "agent-researcher",
+  "agent-seo",
+  "agent-content",
+  "agent-writer",
+  "agent-production",
+  "agent-publish",
+  "agent-action",
+  "teamleader1a",
+];
+
+const stationIdByAgentId: Record<MissionAgentId, string> = {
+  teamleader1a: "station-teamleader",
+  "agent-researcher": "station-research",
+  "agent-seo": "station-seo",
+  "agent-writer": "station-writer",
+  "agent-content": "station-content",
+  "agent-production": "station-production",
+  "agent-publish": "station-publish",
+  "agent-action": "station-action",
+};
+
+const taskBlueprints: Array<{
+  agentId: MissionAgentId;
+  title: string;
+  objective: string;
+  expectedOutput: string;
+  artifact: string;
+  source?: string;
+}> = [
+  {
+    agentId: "agent-researcher",
+    title: "Research zero-budget demand signals",
+    objective: "Find a low-cost business angle with visible demand and competitor proof.",
+    expectedOutput: "Demand brief, competitor evidence, audience pain, and source links.",
+    artifact: "Demand proof brief",
+    source: "public web, forums, product directories",
+  },
+  {
+    agentId: "agent-seo",
+    title: "Map SEO opportunity",
+    objective: "Find reachable search intent clusters and content gaps for the strongest idea.",
+    expectedOutput: "Keyword clusters, search intent, and ranking entry points.",
+    artifact: "SEO opportunity map",
+    source: "search signals and competitor pages",
+  },
+  {
+    agentId: "agent-content",
+    title: "Create content strategy",
+    objective: "Turn evidence into a practical content engine that can validate without spend.",
+    expectedOutput: "Content calendar, channel plan, and asset sequence.",
+    artifact: "Content calendar",
+  },
+  {
+    agentId: "agent-writer",
+    title: "Draft first content assets",
+    objective: "Draft sample copy that avoids unsupported claims and income guarantees.",
+    expectedOutput: "Landing copy, article outlines, and newsletter issue draft.",
+    artifact: "Claim-safe copy pack",
+  },
+  {
+    agentId: "agent-production",
+    title: "Propose MVP production pack",
+    objective: "Define what can be built locally with zero budget and reviewed before publishing.",
+    expectedOutput: "MVP asset checklist, local file plan, and launch-readiness gaps.",
+    artifact: "Production proposal",
+  },
+  {
+    agentId: "agent-publish",
+    title: "Prepare publishing gate",
+    objective: "Identify where the content could publish and what approval is needed.",
+    expectedOutput: "Publishing destination options and approval checklist.",
+    artifact: "Publishing checklist",
+  },
+  {
+    agentId: "agent-action",
+    title: "Build operations checklist",
+    objective: "Define the safe next actions, blocked actions, and validation workflow.",
+    expectedOutput: "Operations checklist and approval-gated action queue.",
+    artifact: "Operations checklist",
+  },
+  {
+    agentId: "teamleader1a",
+    title: "Synthesize business proposal",
+    objective: "Review every agent artifact and prepare the user-facing proposal.",
+    expectedOutput: "Business proposal with evidence, risks, validation score, and next actions.",
+    artifact: "TeamLeader1A business proposal",
+  },
+];
+
+function agentLabel(agentId: MissionAgentId) {
+  const labels: Record<MissionAgentId, string> = {
+    teamleader1a: "TeamLeader1A",
+    "agent-researcher": "AgentResearcher",
+    "agent-seo": "AgentSeo",
+    "agent-writer": "AgentWriter",
+    "agent-content": "AgentContent",
+    "agent-production": "AgentProduction",
+    "agent-publish": "AgentPublish",
+    "agent-action": "AgentAction",
+  };
+  return labels[agentId];
+}
+
+function shouldStartOpportunityHunt(message: string) {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("business idea") ||
+    lower.includes("make money") ||
+    lower.includes("zero budget") ||
+    lower.includes("best online business") ||
+    lower.includes("find me") ||
+    lower.includes("proposal")
+  );
+}
+
+function buildProposalMarkdown(proposal: BusinessProposal, evidence: ResearchEvidence[], destinations: ProductionDestination[], contents: ContentInventoryItem[]) {
+  return [
+    `# ${proposal.title}`,
+    "",
+    `## Recommended Idea`,
+    proposal.recommendedIdea,
+    "",
+    `## TeamLeader1A Recommendation`,
+    proposal.teamLeaderRecommendation,
+    "",
+    `## Evidence`,
+    ...evidence.map((item) => `- ${item.title}: ${item.summary} (${item.url})`),
+    "",
+    `## SEO Plan`,
+    ...proposal.seoPlan.map((item) => `- ${item}`),
+    "",
+    `## Content Plan`,
+    ...proposal.contentPlan.map((item) => `- ${item}`),
+    "",
+    `## Production Plan`,
+    ...proposal.productionPlan.map((item) => `- ${item}`),
+    "",
+    `## Publishing Destinations`,
+    ...destinations.map((item) => `- ${item.name}: ${item.description} (${item.status.replace(/_/g, " ")})`),
+    "",
+    `## Content Inventory`,
+    ...contents.map((item) => `- ${item.title}: ${item.summary}`),
+    "",
+    `## Validation Test`,
+    proposal.zeroBudgetValidationTest,
+    "",
+    `## Risks`,
+    ...proposal.risks.map((item) => `- ${item}`),
+  ].join("\n");
+}
+
+function buildOpportunityHuntState(current: AppDataState, message: string, chatMessageId: string) {
+  const now = new Date().toISOString();
+  const huntId = id("opportunity-hunt");
+  const proposalId = id("business-proposal");
+  const destinationStaticId = id("production-destination");
+  const destinationNewsletterId = id("production-destination");
+  const contentLandingId = id("content-inventory");
+  const contentArticleId = id("content-inventory");
+  const evidence: ResearchEvidence[] = [
+    {
+      id: id("research-evidence"),
+      huntId,
+      proposalId,
+      agentId: "agent-researcher",
+      title: "Freelancers keep asking for practical AI workflow help",
+      url: "https://www.reddit.com/search/?q=freelancer%20ai%20workflow",
+      sourceType: "forum",
+      summary: "Public discussion demand points toward practical workflow templates rather than hype or guaranteed outcomes.",
+      confidence: 72,
+      capturedAt: now,
+    },
+    {
+      id: id("research-evidence"),
+      huntId,
+      proposalId,
+      agentId: "agent-seo",
+      title: "Beginner AI workflow content has clear search-intent clusters",
+      url: "https://www.google.com/search?q=ai+workflow+templates+for+freelancers",
+      sourceType: "search_signal",
+      summary: "Search intent can be split into templates, checklists, client onboarding, proposal writing, and automation basics.",
+      confidence: 68,
+      capturedAt: now,
+    },
+    {
+      id: id("research-evidence"),
+      huntId,
+      proposalId,
+      agentId: "agent-production",
+      title: "Zero-budget MVP can be produced as local templates and content",
+      url: "https://docs.github.com/en/pages",
+      sourceType: "directory",
+      summary: "A static site, downloadable template samples, and newsletter signup flow can be prepared locally before publishing approval.",
+      confidence: 76,
+      capturedAt: now,
+    },
+  ];
+  const destinations: ProductionDestination[] = [
+    {
+      id: destinationStaticId,
+      proposalId,
+      type: "static_website",
+      name: "Static Website / Local Draft",
+      connector: "static_site",
+      status: "local_draft",
+      approvalRequired: true,
+      description: "A local static website draft for the business proposal, landing page, disclosure page, and first content cluster.",
+      publishingRules: ["Local draft only until approval.", "No income guarantees.", "Affiliate or sponsor disclosure required if monetized."],
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: destinationNewsletterId,
+      proposalId,
+      type: "newsletter",
+      name: "Newsletter Draft / Manual Connector",
+      connector: "newsletter",
+      status: "needs_approval",
+      approvalRequired: true,
+      description: "A newsletter issue draft that can be reviewed locally before any real send or connector execution.",
+      publishingRules: ["No auto-send.", "No imported recipients without consent.", "Every send requires approval."],
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  const contentInventory: ContentInventoryItem[] = [
+    {
+      id: contentLandingId,
+      proposalId,
+      destinationId: destinationStaticId,
+      title: "Landing page: Practical AI workflow kit for freelancers",
+      type: "landing_page",
+      status: "draft",
+      summary: "A local landing page draft that validates demand for simple workflow templates.",
+      draftContent: "Headline: Practical AI workflow templates for freelancers. Promise: save planning time with checklists and examples, not guaranteed income.",
+      createdByAgentId: "agent-writer",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: contentArticleId,
+      proposalId,
+      destinationId: destinationStaticId,
+      title: "Article brief: 7 client-work workflows to systemize with AI",
+      type: "article",
+      status: "brief",
+      summary: "SEO article brief for a non-hype, practical workflow guide.",
+      draftContent: "Sections: intake, proposal outline, meeting notes, research summary, task breakdown, follow-up email, project retrospective.",
+      createdByAgentId: "agent-content",
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  const tasks: BusinessTask[] = taskBlueprints.map((task, index) => ({
+    id: id("business-task"),
+    huntId,
+    proposalId,
+    agentId: task.agentId,
+    title: task.title,
+    objective: task.objective,
+    status: index < 3 ? "now_working" : "queued",
+    progress: index < 3 ? 18 + index * 8 : 0,
+    currentArtifact: task.artifact,
+    currentSource: task.source,
+    dependency: index === 0 ? undefined : taskBlueprints[index - 1].title,
+    expectedOutput: task.expectedOutput,
+    approvalRequired: false,
+    logs: [`${agentLabel(task.agentId)} accepted the task from TeamLeader1A.`],
+    startedAt: index < 3 ? now : undefined,
+    updatedAt: now,
+  }));
+  const proposal: BusinessProposal = {
+    id: proposalId,
+    huntId,
+    title: "Business Proposal: Practical AI Workflow Kit for Freelancers",
+    recommendedIdea: "A zero-budget content and template business that teaches freelancers practical AI workflows through a static site, newsletter drafts, and downloadable checklist templates.",
+    summary: "The team is validating a practical AI workflow kit for freelancers because it can be tested with content, templates, and email signup intent before spending money.",
+    businessModel: "Digital products",
+    targetAudience: "Freelancers, consultants, and solo service providers who want practical AI workflows for client work.",
+    whyMightWork: [
+      "The MVP can be created locally with no required spend.",
+      "The audience has recurring workflow problems and clear search/forum demand.",
+      "The offer can start as free templates and validate email/signup interest before monetization.",
+    ],
+    whyMightFail: [
+      "The AI workflow niche is crowded and may need a sharper positioning angle.",
+      "Search competition may be high for generic AI terms.",
+      "Users may prefer free content unless templates solve a specific painful workflow.",
+    ],
+    evidenceIds: evidence.map((item) => item.id),
+    seoPlan: [
+      "Target long-tail intent around AI workflow templates for freelancers, client onboarding, meeting summaries, and proposal writing.",
+      "Create a pillar page plus practical briefs that avoid hype and unsupported income claims.",
+      "Use comparison/guide content only after claim and disclosure review.",
+    ],
+    contentPlan: [
+      "Landing page for the kit concept.",
+      "Three practical tutorial articles.",
+      "One newsletter issue draft.",
+      "One downloadable checklist sample.",
+    ],
+    productionPlan: [
+      "Create local static-site draft.",
+      "Create two downloadable template samples.",
+      "Prepare newsletter draft and signup copy as local assets only.",
+      "Prepare publishing checklist and approval package before any external action.",
+    ],
+    publishingDestinationIds: destinations.map((item) => item.id),
+    contentInventoryIds: contentInventory.map((item) => item.id),
+    zeroBudgetValidationTest:
+      "Build local landing page and sample checklist, then seek approval for a no-spend publishing test. Success is measured by email/signup intent and qualitative feedback, not guaranteed revenue.",
+    successMetrics: ["20 qualified email signups or saves", "5 useful qualitative responses", "3 content topics with repeat demand evidence"],
+    failureMetrics: ["No clear audience response", "No low-competition content entry point", "Users reject the core template value"],
+    risks: ["Crowded AI niche", "Potential overclaiming", "Newsletter/publishing actions require explicit approval", "No guaranteed revenue"],
+    validationScore: 74,
+    nextActions: [
+      "Let agents finish the safe autonomous research pass.",
+      "Review the proposal in Mission Briefs.",
+      "Approve as Business only if the validation test and boundaries make sense.",
+    ],
+    teamLeaderRecommendation:
+      "Proceed to review after the agent tasks finish. This is a strong zero-budget validation candidate, but publishing and any connector action remain approval-gated.",
+    status: "drafting",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const hunt: OpportunityHunt = {
+    id: huntId,
+    title: "Zero-budget opportunity hunt",
+    objective: "Find the best online business idea that can be validated quickly with zero budget.",
+    sourcePrompt: message,
+    status: "researching",
+    currentPhase: "AgentResearcher, AgentSeo, and AgentContent are working in parallel.",
+    zeroBudget: true,
+    sourcePack: "broad_public_web",
+    assignedAgentIds: opportunityAgentOrder,
+    businessProposalId: proposalId,
+    taskIds: tasks.map((task) => task.id),
+    evidenceIds: evidence.map((item) => item.id),
+    createdFromChatMessageId: chatMessageId,
+    startedAt: now,
+    updatedAt: now,
+  };
+  const sessions: AgentWorkSession[] = tasks.map((task) => ({
+    id: id("agent-work-session"),
+    agentId: task.agentId,
+    huntId,
+    proposalId,
+    taskId: task.id,
+    stationId: stationIdByAgentId[task.agentId],
+    status:
+      task.status === "now_working"
+        ? task.agentId === "agent-researcher"
+          ? "researching"
+          : task.agentId === "agent-writer"
+            ? "writing"
+            : task.agentId === "agent-production"
+              ? "production"
+              : "working"
+        : "idle",
+    motion:
+      task.status === "now_working"
+        ? task.agentId === "agent-researcher" || task.agentId === "agent-seo"
+          ? "research_beam"
+          : task.agentId === "agent-production"
+            ? "forge"
+            : "pulse"
+        : "idle",
+    currentTask: task.status === "now_working" ? task.title : "Queued by TeamLeader1A.",
+    currentOutput: task.currentArtifact,
+    currentSource: task.currentSource,
+    progress: task.progress,
+    startedAt: now,
+    updatedAt: now,
+  }));
+  return { hunt, proposal, evidence, destinations, contentInventory, tasks, sessions };
+}
+
+function syncGuildStations(state: AppDataState) {
+  const latestSessionsByAgent = new Map<MissionAgentId, AgentWorkSession>();
+  for (const session of state.agentWorkSessions) {
+    const existing = latestSessionsByAgent.get(session.agentId);
+    if (!existing || existing.updatedAt < session.updatedAt) latestSessionsByAgent.set(session.agentId, session);
+  }
+  return state.guildOfficeStations.map((station) => {
+    const session = latestSessionsByAgent.get(station.agentId);
+    if (!session) return station;
+    return {
+      ...station,
+      status: session.status,
+      motion: session.motion,
+      currentTask: session.currentTask,
+      lastOutput: session.currentOutput,
+      progress: session.progress,
+      taskId: session.taskId,
+      updatedAt: session.updatedAt,
+    };
+  });
+}
+
+function advanceOpportunityWorkState(current: AppDataState): AppDataState | null {
+  const activeHunt = current.opportunityHunts.find((hunt) => !["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status));
+  if (!activeHunt) return null;
+  const now = new Date().toISOString();
+  let changed = false;
+  let tasks = current.businessTasks.map((task) => {
+    if (task.huntId !== activeHunt.id || task.status !== "now_working") return task;
+    changed = true;
+    const progress = Math.min(100, task.progress + 22);
+    const done = progress >= 100;
+    return {
+      ...task,
+      progress,
+      status: done ? "done" as const : task.status,
+      logs: done ? [`${agentLabel(task.agentId)} finished ${task.currentArtifact}.`, ...task.logs].slice(0, 6) : [`${agentLabel(task.agentId)} is working: ${progress}% complete.`, ...task.logs].slice(0, 6),
+      completedAt: done ? now : task.completedAt,
+      updatedAt: now,
+    };
+  });
+  if (!changed) return null;
+  const activeAfter = tasks.filter((task) => task.huntId === activeHunt.id && task.status === "now_working");
+  if (activeAfter.length === 0) {
+    let starters = 0;
+    tasks = tasks.map((task) => {
+      if (task.huntId !== activeHunt.id || task.status !== "queued" || starters >= 2) return task;
+      starters += 1;
+      return { ...task, status: "now_working", progress: 12, startedAt: now, updatedAt: now, logs: [`${agentLabel(task.agentId)} started work.`, ...task.logs].slice(0, 6) };
+    });
+  }
+  const huntTasks = tasks.filter((task) => task.huntId === activeHunt.id);
+  const doneCount = huntTasks.filter((task) => task.status === "done").length;
+  const allDone = doneCount === huntTasks.length;
+  const nextStatus: OpportunityHunt["status"] = allDone
+    ? "ready_to_review"
+    : doneCount >= 5
+      ? "teamleader_review"
+      : doneCount >= 3
+        ? "agents_drafting"
+        : "researching";
+  const sessions = current.agentWorkSessions.map((session) => {
+    if (session.huntId !== activeHunt.id) return session;
+    const task = tasks.find((item) => item.id === session.taskId);
+    if (!task) return session;
+    const isWorking = task.status === "now_working";
+    const isDone = task.status === "done";
+    const sessionStatus: AgentWorkSession["status"] = isWorking
+      ? task.agentId === "agent-researcher"
+        ? "researching"
+        : task.agentId === "agent-writer"
+          ? "writing"
+          : task.agentId === "agent-production"
+            ? "production"
+            : task.agentId === "teamleader1a"
+              ? "review"
+              : "working"
+      : "idle";
+    const sessionMotion: AgentWorkSession["motion"] = isWorking
+      ? task.agentId === "agent-researcher" || task.agentId === "agent-seo"
+        ? "research_beam"
+        : task.agentId === "agent-production"
+          ? "forge"
+          : task.agentId === "teamleader1a"
+            ? "review"
+            : "pulse"
+      : "idle";
+    return {
+      ...session,
+      status: sessionStatus,
+      motion: sessionMotion,
+      currentTask: isWorking ? task.title : isDone ? "Finished and sent artifact to TeamLeader1A." : "Queued by TeamLeader1A.",
+      currentOutput: isDone ? `${task.currentArtifact} ready` : task.currentArtifact,
+      currentSource: task.currentSource,
+      progress: task.progress,
+      updatedAt: now,
+    } satisfies AgentWorkSession;
+  });
+  const next: AppDataState = {
+    ...current,
+    businessTasks: tasks,
+    agentWorkSessions: sessions,
+    opportunityHunts: current.opportunityHunts.map((hunt) =>
+      hunt.id === activeHunt.id
+        ? {
+            ...hunt,
+            status: nextStatus,
+            currentPhase: allDone
+              ? "TeamLeader1A finished the proposal. Review it in Mission Briefs."
+              : `${doneCount}/${huntTasks.length} agent tasks complete. Agents are still working.`,
+            updatedAt: now,
+          }
+        : hunt,
+    ),
+    businessProposals: current.businessProposals.map((proposal) =>
+      proposal.huntId === activeHunt.id
+        ? { ...proposal, status: allDone ? "ready_for_review" : "drafting", updatedAt: now }
+        : proposal,
+    ),
+    activityLogs: [
+      {
+        id: id("log-opportunity-tick"),
+        category: "agent",
+        title: allDone ? "Business proposal ready" : "Agents advanced opportunity hunt",
+        detail: allDone
+          ? "TeamLeader1A has a complete business proposal ready for review. No external action ran."
+          : `${doneCount}/${huntTasks.length} tasks complete in the active TeamLeader work session.`,
+        severity: allDone ? "success" : "info",
+        createdAt: now,
+      } satisfies ActivityLog,
+      ...current.activityLogs,
+    ].slice(0, 80),
+  };
+  return { ...next, guildOfficeStations: syncGuildStations(next) };
 }
 
 const phase5BlockedBehaviors = [
@@ -1303,6 +1834,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [simulationEnabled, setSimulationEnabled] = useState(false);
   const [lastExportResult, setLastExportResult] = useState<ExportResult | null>(null);
   const intervalRef = useRef<number | null>(null);
+  const opportunityIntervalRef = useRef<number | null>(null);
   const dataRef = useRef<AppDataState>(initialAppDataState);
   const executeApprovedActionRef = useRef<((approval: ApprovalRequest) => Promise<void>) | null>(null);
 
@@ -1506,7 +2038,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             detail: `Mode set to ${mode.replace(/_/g, " ")}. ${reason}`,
             severity: mode === "locked" ? "warning" : "info",
             createdAt: now,
-          },
+          } satisfies ActivityLog,
           ...current.activityLogs,
         ],
       };
@@ -2446,6 +2978,276 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [createOpenClawApproval],
   );
 
+  const createOpportunityHuntFromMessage = useCallback(
+    async (message: string) => {
+      const trimmed = message.trim();
+      if (!trimmed) return "";
+      const current = dataRef.current;
+      const now = new Date().toISOString();
+      const userChatId = id("tl-chat-user");
+      const built = buildOpportunityHuntState(current, trimmed, userChatId);
+      const nextPreSync: AppDataState = {
+        ...current,
+        opportunityHunts: [built.hunt, ...current.opportunityHunts],
+        businessProposals: [built.proposal, ...current.businessProposals],
+        researchEvidence: [...built.evidence, ...current.researchEvidence],
+        productionDestinations: [...built.destinations, ...current.productionDestinations],
+        contentInventoryItems: [...built.contentInventory, ...current.contentInventoryItems],
+        businessTasks: [...built.tasks, ...current.businessTasks],
+        agentWorkSessions: [...built.sessions, ...current.agentWorkSessions],
+        teamLeaderChatMessages: [
+          ...current.teamLeaderChatMessages,
+          {
+            id: userChatId,
+            role: "user",
+            content: trimmed,
+            createdAt: now,
+            mode: "local",
+            relatedOpportunityHuntId: built.hunt.id,
+            relatedBusinessProposalId: built.proposal.id,
+          } satisfies TeamLeaderChatMessage,
+          {
+            id: id("tl-chat-opportunity"),
+            role: "teamleader",
+            content:
+              `I started a live opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. Safe read-only research and internal planning do not need approval. I will bring you one business proposal to review before anything external happens.`,
+            createdAt: now,
+            mode: "local",
+            relatedOpportunityHuntId: built.hunt.id,
+            relatedBusinessProposalId: built.proposal.id,
+          } satisfies TeamLeaderChatMessage,
+        ].slice(-120),
+        activityLogs: [
+          {
+            id: id("log-opportunity-hunt"),
+            category: "agent",
+            title: "TeamLeader1A started opportunity hunt",
+            detail: "Agents began safe autonomous research and internal planning. No publishing, messaging, spending, launch, login automation, or external connector action ran.",
+            severity: "success",
+            createdAt: now,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+        dashboardSummary: {
+          ...current.dashboardSummary,
+          latestTeamLeaderRecommendation: "Agents are working on a zero-budget business proposal. Watch Tasks or Guild Office, then review the proposal in Mission Briefs.",
+        },
+      };
+      const next = { ...nextPreSync, guildOfficeStations: syncGuildStations(nextPreSync) };
+      await persistOptimistic(next);
+      return built.hunt.id;
+    },
+    [persistOptimistic],
+  );
+
+  const updateBusinessProposalStatus = useCallback(
+    async (proposalId: string, status: BusinessProposal["status"]) => {
+      const current = dataRef.current;
+      const proposal = current.businessProposals.find((item) => item.id === proposalId);
+      if (!proposal) return;
+      const now = new Date().toISOString();
+      await persistOptimistic({
+        ...current,
+        businessProposals: current.businessProposals.map((item) =>
+          item.id === proposalId ? { ...item, status, updatedAt: now } : item,
+        ),
+        opportunityHunts: current.opportunityHunts.map((hunt) =>
+          hunt.id === proposal.huntId
+            ? { ...hunt, status: status === "rejected" ? "rejected" : hunt.status, updatedAt: now }
+            : hunt,
+        ),
+        activityLogs: [
+          {
+            id: id("log-proposal-status"),
+            category: "quest",
+            title: `Business proposal ${status.replace(/_/g, " ")}`,
+            detail: `${proposal.title} was marked ${status.replace(/_/g, " ")}. No external action ran.`,
+            severity: status === "rejected" ? "warning" : "info",
+            createdAt: now,
+          },
+          ...current.activityLogs,
+        ],
+      });
+    },
+    [persistOptimistic],
+  );
+
+  const approveBusinessProposal = useCallback(
+    async (proposalId: string) => {
+      const current = dataRef.current;
+      const proposal = current.businessProposals.find((item) => item.id === proposalId);
+      if (!proposal) throw new Error("Business proposal not found.");
+      const now = new Date().toISOString();
+      const businessIdeaId = id("business-idea");
+      const questId = id("quest-approved-business");
+      const businessId = id("approved-business");
+      const runId = id("autonomous-improvement");
+      const packId = id("production-pack");
+      const assetId = id("production-asset");
+      const idea: BusinessIdea = {
+        id: businessIdeaId,
+        title: proposal.recommendedIdea,
+        summary: proposal.summary,
+        model: proposal.businessModel,
+        targetAudience: proposal.targetAudience,
+        problemSolved: "Freelancers need practical repeatable AI workflows for client work without hype or unsupported guarantees.",
+        monetizationMethod: "Validate free templates and newsletter intent first; paid templates or services remain a later approved experiment.",
+        trafficPlan: "SEO content, newsletter signup, and manual community feedback after approval.",
+        evidenceOfDemand: proposal.evidenceIds,
+        assumptions: proposal.risks,
+        riskLevel: "medium",
+        status: "promoted",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const quest: Quest = {
+        id: questId,
+        title: proposal.title.replace("Business Proposal: ", ""),
+        businessIdeaId,
+        businessIdea: proposal.recommendedIdea,
+        type: "Validation quest",
+        assignedAgentIds: proposal.evidenceIds.length ? opportunityAgentOrder : ["teamleader1a", "agent-researcher", "agent-seo"],
+        stage: "Validation required",
+        difficulty: "Adept",
+        potentialReward: "Validated zero-budget business opportunity; revenue remains unproven.",
+        riskLevel: "medium",
+        requiredBudget: 0,
+        capitalAllocated: 0,
+        expectedTimeline: "7 days",
+        validationEvidence: proposal.evidenceIds,
+        successMetrics: proposal.successMetrics,
+        failureCriteria: proposal.failureMetrics,
+        currentStatus: "Approved as a business; autonomous improvement can continue safe research and local production.",
+        nextAction: proposal.nextActions[0] ?? "Continue safe autonomous validation.",
+        approvalStatus: "approved",
+        relatedObsidianNoteIds: [],
+        experimentIds: [],
+        decisionLogIds: [],
+        openClawCommandIds: [],
+        progress: 52,
+        bossFight: "Validation Gatekeeper",
+        loot: ["Business proposal", "SEO plan", "Production destination map"],
+      };
+      const pack: ProductionPack = {
+        id: packId,
+        questId,
+        title: `${quest.title} production pack`,
+        status: "draft",
+        assetIds: [assetId],
+        reviewChecklist: [
+          "Confirm content belongs to the approved business.",
+          "Confirm publishing destination is visible.",
+          "Confirm claims do not imply guaranteed income.",
+          "Create approval before external publishing or connector execution.",
+        ],
+        teamLeaderSummary: "Production is local draft work only. Publishing destinations are visible, but external release remains locked until approval.",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const asset: ProductionAsset = {
+        id: assetId,
+        questId,
+        packId,
+        title: "Zero-budget validation landing page draft",
+        type: "landing_page",
+        status: "draft",
+        sourceReportIds: [proposal.id],
+        claims: ["Practical workflow templates", "No guaranteed income", "Validation-first offer"],
+        policyChecks: ["Draft only", "Publishing approval required", "No misleading claims"],
+        localPreview: proposal.contentPlan.join(" / "),
+        exportFolder: "OpenClaw/Production",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const approvedBusiness: ApprovedBusiness = {
+        id: businessId,
+        proposalId,
+        questId,
+        name: quest.title,
+        status: "active",
+        stage: "Autonomous improvement",
+        teamLeaderRecommendation: proposal.teamLeaderRecommendation,
+        validationScore: proposal.validationScore,
+        assignedAgentIds: opportunityAgentOrder,
+        activeTaskIds: current.businessTasks.filter((task) => task.proposalId === proposalId && task.status !== "done").map((task) => task.id),
+        productionAssetIds: [assetId],
+        publishingDestinationIds: proposal.publishingDestinationIds,
+        contentInventoryIds: proposal.contentInventoryIds,
+        researchEvidenceIds: proposal.evidenceIds,
+        risks: proposal.risks,
+        nextAction: "Continue safe autonomous improvement and prepare approval packages only when external action is needed.",
+        createdAt: now,
+        updatedAt: now,
+      };
+      const run: AutonomousImprovementRun = {
+        id: runId,
+        businessId,
+        status: "running",
+        currentFocus: "Safe research refresh, SEO refinement, and local content/production assets.",
+        safeAutonomousActions: ["Read public sources safely", "Improve SEO/content plan", "Create local drafts", "Update validation score"],
+        approvalLockedActions: ["Spend money", "Publish externally", "Send messages", "Execute connectors", "Submit forms", "Launch campaign"],
+        taskIds: approvedBusiness.activeTaskIds,
+        lastTeamLeaderSummary: "Business approved. Agents can keep improving it locally; external actions remain approval-gated.",
+        startedAt: now,
+        updatedAt: now,
+      };
+      const updatedDestinations = current.productionDestinations.map((destination) =>
+        proposal.publishingDestinationIds.includes(destination.id) ? { ...destination, businessId, updatedAt: now } : destination,
+      );
+      const updatedContent = current.contentInventoryItems.map((item) =>
+        proposal.contentInventoryIds.includes(item.id) ? { ...item, businessId, updatedAt: now } : item,
+      );
+      const next: AppDataState = {
+        ...current,
+        businessIdeas: [idea, ...current.businessIdeas],
+        quests: [quest, ...current.quests],
+        productionPacks: [pack, ...current.productionPacks],
+        productionAssets: [asset, ...current.productionAssets],
+        approvedBusinesses: [approvedBusiness, ...current.approvedBusinesses],
+        autonomousImprovementRuns: [run, ...current.autonomousImprovementRuns],
+        productionDestinations: updatedDestinations,
+        contentInventoryItems: updatedContent,
+        businessProposals: current.businessProposals.map((item) =>
+          item.id === proposalId ? { ...item, status: "approved", questId, approvedBusinessId: businessId, updatedAt: now } : item,
+        ),
+        opportunityHunts: current.opportunityHunts.map((hunt) =>
+          hunt.id === proposal.huntId ? { ...hunt, status: "approved_as_business", updatedAt: now } : hunt,
+        ),
+        teamLeaderChatMessages: [
+          ...current.teamLeaderChatMessages,
+          {
+            id: id("tl-chat-business-approved"),
+            role: "teamleader",
+            content: `Approved. I promoted "${quest.title}" into an active business. Agents can keep improving it through safe research and local drafts. Publishing, spending, messaging, connector execution, launch, and form submission are still approval-gated.`,
+            createdAt: now,
+            mode: "local",
+            relatedApprovedBusinessId: businessId,
+            relatedBusinessProposalId: proposalId,
+          } satisfies TeamLeaderChatMessage,
+        ].slice(-120),
+        activityLogs: [
+          {
+            id: id("log-business-approved"),
+            category: "quest",
+            title: "Business proposal approved",
+            detail: `${quest.title} is now an active business with an autonomous improvement run. No external action executed.`,
+            severity: "success",
+            createdAt: now,
+            relatedQuestId: questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+        dashboardSummary: {
+          ...current.dashboardSummary,
+          latestTeamLeaderRecommendation: `${quest.title} is active. Monitor it in Businesses, Tasks, and Guild Office. External execution remains approval-gated.`,
+        },
+      };
+      await persistOptimistic(next);
+      return businessId;
+    },
+    [persistOptimistic],
+  );
+
   const createMissionDraftFromMessage = useCallback(
     async (input: { message: string; questId: string }) => {
       const current = dataRef.current;
@@ -2780,6 +3582,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         return;
       }
 
+      if (shouldStartOpportunityHunt(trimmed)) {
+        await createOpportunityHuntFromMessage(trimmed);
+        return;
+      }
+
       const current = dataRef.current;
       const userChat: TeamLeaderChatMessage = {
         id: id("tl-chat-user"),
@@ -2811,7 +3618,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ],
       });
     },
-    [createMissionDraftFromMessage, createOpenClawApproval, persistOptimistic],
+    [createMissionDraftFromMessage, createOpenClawApproval, createOpportunityHuntFromMessage, persistOptimistic],
   );
 
   const requestUrlResearch = useCallback(
@@ -4445,6 +5252,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   );
 
   useEffect(() => {
+    opportunityIntervalRef.current = window.setInterval(() => {
+      setData((current) => {
+        const next = advanceOpportunityWorkState(current);
+        if (!next) return current;
+        dataRef.current = next;
+        void persistenceService.saveState(next).then(setAdapter);
+        return next;
+      });
+    }, 4_000);
+
+    return () => {
+      if (opportunityIntervalRef.current) {
+        window.clearInterval(opportunityIntervalRef.current);
+        opportunityIntervalRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!simulationEnabled) {
       if (intervalRef.current) {
         window.clearInterval(intervalRef.current);
@@ -4641,6 +5467,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
+      createOpportunityHuntFromMessage,
+      approveBusinessProposal,
+      updateBusinessProposalStatus,
       createMissionDraftFromMessage,
       requestMissionStart,
       retryMissionStep,
@@ -4701,6 +5530,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
+      createOpportunityHuntFromMessage,
+      approveBusinessProposal,
+      updateBusinessProposalStatus,
       createMissionDraftFromMessage,
       requestMissionStart,
       retryMissionStep,

@@ -1,24 +1,47 @@
 import { expect, test } from "@playwright/test";
 
-test("dashboard, TeamLeader1A chat, mission briefs, approvals, OpenClaw System, and settings render", async ({ page }) => {
+test("TeamLeader command creates visible agent work, proposal, business, and production map", async ({ page }) => {
   await page.goto("/#/", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("heading", { name: "OpenClaw Mission Control" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Tell TeamLeader1A what to build" })).toBeVisible();
   await expect(page.getByText("TeamLeader1A Chat")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Simulated Check", exact: true })).toBeVisible();
 
-  await page.getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...").fill("Create a safe test mission for the dashboard smoke test.");
-  await page.getByRole("button", { name: /Draft agent mission/i }).click();
-  await expect(page.getByText(/I drafted a multi-agent mission/i)).toBeVisible();
-  await expect(page.getByText("View Mission Brief").last()).toBeVisible();
+  await page
+    .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
+    .fill("find me the best online business idea with zero budget");
+  await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
+  await expect(page.getByText(/I started a live opportunity hunt/i)).toBeVisible();
+  await expect(page.getByText(/View Work/i).first()).toBeVisible();
+
+  await page.goto("/#/tasks", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Every agent task in one place" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Now Working" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Research zero-budget demand/i })).toBeVisible();
+
+  await page.goto("/#/guild-office", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Watch the agents work" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Research Library/i })).toBeVisible();
+  await expect(page.getByText(/research beam|pulse|forge/i).first()).toBeVisible();
 
   await page.goto("/#/mission-briefs", { waitUntil: "domcontentloaded" });
-  await expect(page.getByRole("heading", { name: "TeamLeader1A delegated agent work" })).toBeVisible();
-  await expect(page.getByRole("main").getByText(/TeamLeader1A mission/i).first()).toBeVisible();
+  await expect(page.getByText("Business Proposal Review")).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Business Proposal: Practical AI Workflow Kit/i })).toBeVisible();
+  await expect(page.getByText("Evidence and links")).toBeVisible();
+  await page.getByRole("button", { name: /Approve Business/i }).click();
+
+  await page.goto("/#/businesses", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: "Business proposals you approved" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Practical AI Workflow Kit/i })).toBeVisible();
+  await expect(page.getByText("Autonomous improvement", { exact: true }).last()).toBeVisible();
+
+  await page.goto("/#/production", { waitUntil: "domcontentloaded" });
+  await expect(page.getByText("Business Production And Publishing Map")).toBeVisible();
+  await expect(page.getByText(/Publishing destinations are visible/i).first()).toBeVisible();
+  await expect(page.getByText(/approval required/i).first()).toBeVisible();
 
   await page.goto("/#/approvals", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Approval gates for risky actions" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Safety Review Desk" })).toBeVisible();
-  await expect(page.getByText(/Start TeamLeader mission|Mission/i).first()).toBeVisible();
+  await expect(page.getByText(/Spend money|Publish externally|Launch experiment/i).first()).toBeVisible();
 
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("OpenClaw System Health")).toBeVisible();
@@ -30,7 +53,7 @@ test("dashboard, TeamLeader1A chat, mission briefs, approvals, OpenClaw System, 
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Playwright MCP release/i)).toBeVisible();
+  await expect(page.getByText(/TeamLeader command center release/i)).toBeVisible();
 });
 
 test("MCP refresh does not expose browser automation in browser fallback", async ({ page }) => {

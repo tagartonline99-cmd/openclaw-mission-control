@@ -8,7 +8,8 @@ The app does not claim guaranteed income. Business ideas are treated as hypothes
 
 This build covers the local end-to-end MVP:
 
-- Polished desktop-first UI with routes for Dashboard, Agents, TeamLeader1A Chat, Orchestration, Quests, Ideas, Validation, Real Pilot, Market Intel, Experiments, Production, Launch Control, Second Brain, Approvals, Activity Log, OpenClaw System, and Settings.
+- TeamLeader-first command center with primary tabs for Command, Tasks, Guild Office, Mission Briefs, Businesses, Production, Approvals, and System.
+- Polished desktop-first UI with advanced/archive routes for Dashboard, Agents, Orchestration, Quests, Ideas, Validation, Real Pilot, Market Intel, Experiments, Second Brain, Activity Log, and Settings.
 - App-wide data provider that loads local state once and exposes durable mutations.
 - SQLite-ready Tauri SQL adapter using `sqlite:openclaw-mission-control.db` in the desktop shell.
 - Browser development fallback using `localStorage` so Vite can be verified without native APIs.
@@ -27,6 +28,7 @@ This build covers the local end-to-end MVP:
 - Phases 11-16 Launch Control workspace for approved publishing/outreach posture, budget ledger visibility, controlled runner controls, portfolio optimization, diagnostics, signed updates, and local-first sync posture.
 - Phases 17-28 Business OS expansion: durable mission tasks, artifacts, command ledger, SEO source captures, keyword clusters, demand proof, static-site content drafts, affiliate offer review, read-only analytics snapshots, learning decisions, batch approvals, controlled job schedules, agent memory, publishing connector posture, spend/revenue ledger, and portfolio scoring.
 - Phase 11A mission delegation release: TeamLeader1A chat can draft a multi-agent mission, request one batch approval for exact local OpenClaw agent turns, and collect research, SEO, content, production, publishing-checklist, operations, and TeamLeader review outputs into a unified Mission Brief.
+- Phase 11B TeamLeader Command Center release: TeamLeader prompts create live opportunity hunts, visible agent tasks, animated Guild Office stations, Business Proposal Mission Briefs, approved business dashboards, production destination clarity, and simpler approval lanes.
 - Playwright QA smoke coverage for Dashboard, TeamLeader1A Chat, Mission Briefs, Approvals, OpenClaw System, Settings, and updater marker checks.
 - Free local OpenClaw MCP Manager for scoped filesystem memory, durable local memory, and disabled approval-gated fetch configuration; browser/Puppeteer MCP remains deferred.
 - Native Tauri plugin wiring for SQL, filesystem, dialog, and opener.
@@ -132,7 +134,7 @@ npm.cmd run tauri build
 npm.cmd run release:prepare-updater
 ```
 
-Create GitHub release `v0.1.7` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
+Create GitHub release `v0.1.8` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
 
 For a controlled local dev launch that reuses an already-running Vite server, use:
 

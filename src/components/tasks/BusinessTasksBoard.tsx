@@ -1,0 +1,162 @@
+import { CheckCircle2, Clock, ExternalLink, Lock, Search, ShieldAlert, Sparkles } from "lucide-react";
+import type React from "react";
+import { useMemo, useState } from "react";
+import { useAppData } from "../../app/AppDataContext";
+import type { BusinessTaskStatus } from "../../types";
+import { formatDateTime } from "../../utils/formatting";
+import { Badge } from "../ui/badge";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Progress } from "../ui/progress";
+
+const groups: Array<{ status: BusinessTaskStatus; title: string; icon: React.ReactNode; tone: "teal" | "amber" | "red" | "emerald" | "slate" }> = [
+  { status: "now_working", title: "Now Working", icon: <Sparkles className="h-4 w-4 text-teal-100" />, tone: "teal" },
+  { status: "queued", title: "Queued", icon: <Clock className="h-4 w-4 text-amber-100" />, tone: "amber" },
+  { status: "blocked", title: "Blocked", icon: <Lock className="h-4 w-4 text-red-100" />, tone: "red" },
+  { status: "needs_approval", title: "Needs User Approval", icon: <ShieldAlert className="h-4 w-4 text-red-100" />, tone: "red" },
+  { status: "done", title: "Done", icon: <CheckCircle2 className="h-4 w-4 text-emerald-100" />, tone: "emerald" },
+];
+
+function taskAgentName(agentId: string) {
+  return agentId.replace("agent-", "Agent").replace("teamleader1a", "TeamLeader1A");
+}
+
+export function BusinessTasksBoard() {
+  const { data } = useAppData();
+  const [selectedTaskId, setSelectedTaskId] = useState(data.businessTasks[0]?.id ?? "");
+  const selectedTask = data.businessTasks.find((task) => task.id === selectedTaskId) ?? data.businessTasks[0];
+  const taskCounts = useMemo(
+    () => Object.fromEntries(groups.map((group) => [group.status, data.businessTasks.filter((task) => task.status === group.status).length])),
+    [data.businessTasks],
+  );
+
+  if (data.businessTasks.length === 0) {
+    return (
+      <Card>
+        <CardContent className="p-6">
+          <Badge tone="amber">Waiting for TeamLeader1A</Badge>
+          <h3 className="mt-3 font-display text-2xl font-semibold text-stone-50">No live agent tasks yet</h3>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
+            Send TeamLeader1A a command like “find me the best online business idea with zero budget.” Tasks will appear here automatically as agents start working.
+          </p>
+          <a className="mt-4 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href="#/">
+            Go to Command
+          </a>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+      <div className="space-y-5">
+        <div className="grid gap-3 md:grid-cols-5">
+          {groups.map((group) => (
+            <Card key={group.status}>
+              <CardContent className="p-4">
+                <div className="flex items-center gap-2">
+                  {group.icon}
+                  <p className="text-xs font-semibold uppercase text-slate-500">{group.title}</p>
+                </div>
+                <p className="mt-2 text-2xl font-semibold text-stone-50">{taskCounts[group.status] ?? 0}</p>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
+
+        {groups.map((group) => {
+          const tasks = data.businessTasks.filter((task) => task.status === group.status);
+          if (tasks.length === 0) return null;
+          return (
+            <Card key={group.status}>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  {group.icon}
+                  {group.title}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 lg:grid-cols-2">
+                {tasks.map((task) => {
+                  const proposal = data.businessProposals.find((item) => item.id === task.proposalId);
+                  const business = data.approvedBusinesses.find((item) => item.id === task.businessId);
+                  return (
+                    <button
+                      key={task.id}
+                      type="button"
+                      onClick={() => setSelectedTaskId(task.id)}
+                      className="rounded-lg border border-white/10 bg-black/25 p-4 text-left transition hover:border-teal-300/35 hover:bg-teal-400/8"
+                    >
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="font-semibold text-stone-100">{task.title}</p>
+                          <p className="mt-1 text-xs uppercase text-slate-500">
+                            {taskAgentName(task.agentId)} / {business?.name ?? proposal?.title ?? "TeamLeader work"}
+                          </p>
+                        </div>
+                        <Badge tone={group.tone}>{task.status.replace(/_/g, " ")}</Badge>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-slate-300">{task.objective}</p>
+                      <div className="mt-3">
+                        <div className="mb-1 flex justify-between text-xs uppercase text-slate-500">
+                          <span>{task.currentArtifact}</span>
+                          <span>{task.progress}%</span>
+                        </div>
+                        <Progress value={task.progress} tone={task.status === "done" ? "emerald" : "teal"} />
+                      </div>
+                      {task.currentSource ? (
+                        <p className="mt-2 flex items-center gap-2 text-xs text-teal-100">
+                          <Search className="h-3.5 w-3.5" />
+                          {task.currentSource}
+                        </p>
+                      ) : null}
+                    </button>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      <Card className="xl:sticky xl:top-28 xl:self-start">
+        <CardHeader>
+          <CardTitle>Task Inspector</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {selectedTask ? (
+            <>
+              <div>
+                <Badge tone={selectedTask.approvalRequired ? "red" : "teal"}>
+                  {selectedTask.approvalRequired ? "requires approval" : "safe autonomous"}
+                </Badge>
+                <h3 className="mt-3 font-display text-xl font-semibold text-stone-50">{selectedTask.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{selectedTask.expectedOutput}</p>
+              </div>
+              <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Dependency</p>
+                <p className="mt-1 text-sm text-slate-300">{selectedTask.dependency ?? "None"}</p>
+              </div>
+              <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                <p className="text-xs font-semibold uppercase text-slate-500">Updated</p>
+                <p className="mt-1 text-sm text-slate-300">{formatDateTime(selectedTask.updatedAt)}</p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-xs font-semibold uppercase text-slate-500">Live log</p>
+                {selectedTask.logs.map((log) => (
+                  <div key={log} className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
+                    {log}
+                  </div>
+                ))}
+              </div>
+              {selectedTask.proposalId ? (
+                <a className="inline-flex items-center gap-2 text-sm font-semibold text-teal-100 hover:text-teal-50" href={`#/mission-briefs?proposal=${selectedTask.proposalId}`}>
+                  <ExternalLink className="h-4 w-4" />
+                  View proposal
+                </a>
+              ) : null}
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

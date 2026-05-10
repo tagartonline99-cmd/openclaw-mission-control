@@ -5,10 +5,12 @@ import {
   BookOpen,
   Brain,
   Bell,
+  BriefcaseBusiness,
   CheckCircle2,
   CloudOff,
   Coins,
   Database,
+  FileText,
   FlaskConical,
   FolderOpen,
   Gauge,
@@ -30,9 +32,11 @@ import {
 } from "lucide-react";
 import { AgentRosterGrid } from "../components/agents/AgentRosterGrid";
 import { ApprovalCenter } from "../components/approvals/ApprovalCenter";
+import { BusinessesWorkbench } from "../components/businesses/BusinessesWorkbench";
 import { DungeonPipeline } from "../components/dashboard/DungeonPipeline";
 import { MetricCard } from "../components/dashboard/MetricCard";
 import { TeamLeaderChat } from "../components/dashboard/TeamLeaderChat";
+import { GuildOffice } from "../components/guild/GuildOffice";
 import { MissionBriefWorkbench } from "../components/missions/MissionBriefWorkbench";
 import { OpenClawPanel } from "../components/openclaw/OpenClawPanel";
 import { AllowlistManager } from "../components/openclaw/AllowlistManager";
@@ -43,6 +47,7 @@ import { RealPilotWorkbench } from "../components/pilot/RealPilotWorkbench";
 import { ProductionPipelineWorkbench } from "../components/production/ProductionPipelineWorkbench";
 import { QuestBoard } from "../components/quests/QuestBoard";
 import { SecondBrainPanel } from "../components/second-brain/SecondBrainPanel";
+import { BusinessTasksBoard } from "../components/tasks/BusinessTasksBoard";
 import { UpdateManager } from "../components/updater/UpdateManager";
 import { ValidationGate } from "../components/validation/ValidationGate";
 import { Badge } from "../components/ui/badge";
@@ -182,6 +187,97 @@ export function DashboardPage() {
           </CardContent>
         </Card>
       </div>
+    </div>
+  );
+}
+
+export function CommandPage() {
+  const { data } = useAppData();
+  const activeHunt = data.opportunityHunts.find((hunt) => !["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status)) ?? data.opportunityHunts[0];
+  const activeTasks = data.businessTasks.filter((task) => task.status === "now_working").length;
+  const readyProposals = data.businessProposals.filter((proposal) => proposal.status === "ready_for_review").length;
+  const activeBusinesses = data.approvedBusinesses.filter((business) => business.status === "active").length;
+
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="TeamLeader Command"
+        title="Tell TeamLeader1A what to build"
+        description="This is the main control surface. When you command TeamLeader1A, the work appears in Tasks, Guild Office, Mission Briefs, and Businesses so you can see the agents moving."
+        action={<Badge tone="teal"><MessageSquare className="h-3.5 w-3.5" /> TeamLeader1A only</Badge>}
+      />
+      <div className="grid gap-4 md:grid-cols-4">
+        <MetricCard label="Active work" value={activeHunt ? activeHunt.status.replace(/_/g, " ") : "none"} detail={activeHunt?.currentPhase ?? "Send a TeamLeader command to start."} icon={<Sparkles className="h-4 w-4" />} tone="teal" />
+        <MetricCard label="Agents working" value={activeTasks} detail="Visible in the Tasks tab and Guild Office." icon={<Activity className="h-4 w-4" />} tone="amber" />
+        <MetricCard label="Proposals ready" value={readyProposals} detail="Review and approve from Mission Briefs." icon={<FileText className="h-4 w-4" />} tone="emerald" />
+        <MetricCard label="Businesses" value={activeBusinesses} detail="Approved proposals become active businesses." icon={<BriefcaseBusiness className="h-4 w-4" />} tone="red" />
+      </div>
+      <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
+        <TeamLeaderChat full />
+        <Card>
+          <CardHeader>
+            <CardTitle>Live Monitoring Shortcuts</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {[
+              ["Tasks", "See exactly what each agent is doing now.", "#/tasks"],
+              ["Guild Office", "Watch the animated dungeon office stations.", "#/guild-office"],
+              ["Mission Briefs", "Review the business proposal and approve or reject it.", "#/mission-briefs"],
+              ["Businesses", "Manage approved business proposals.", "#/businesses"],
+            ].map(([title, detail, href]) => (
+              <a key={title} href={href} className="block rounded-md border border-white/10 bg-black/25 p-3 transition hover:border-teal-300/35 hover:bg-teal-400/8">
+                <p className="font-semibold text-stone-100">{title}</p>
+                <p className="mt-1 text-sm text-slate-300">{detail}</p>
+              </a>
+            ))}
+            <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3 text-sm leading-6 text-red-100">
+              Approvals appear only for risky external actions: spend, publish, message, launch, connector execution, login automation, form submission, purchases, or external automation.
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+export function TasksPage() {
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="Task Command Queue"
+        title="Every agent task in one place"
+        description="Tasks are created from TeamLeader1A commands and grouped by what is happening now, queued, blocked, approval-needed, and done."
+        action={<Badge tone="teal"><ListChecks className="h-3.5 w-3.5" /> Live task tab</Badge>}
+      />
+      <BusinessTasksBoard />
+    </div>
+  );
+}
+
+export function GuildOfficePage() {
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="Live Guild Office"
+        title="Watch the agents work"
+        description="A visual dungeon guild hall for monitoring the multi-agent team. Stations animate when tasks are active and link back to tasks, evidence, and proposals."
+        action={<Badge tone="amber"><Gem className="h-3.5 w-3.5" /> Moving agents</Badge>}
+      />
+      <GuildOffice />
+    </div>
+  );
+}
+
+export function BusinessesPage() {
+  return (
+    <div className="space-y-5">
+      <PageIntro
+        eyebrow="Approved Businesses"
+        title="Business proposals you approved"
+        description="Only approved TeamLeader1A proposals appear here. Each business shows its production, content, publishing destination, risks, validation score, and next action."
+        action={<Badge tone="teal"><BriefcaseBusiness className="h-3.5 w-3.5" /> Business OS</Badge>}
+      />
+      <BusinessesWorkbench />
     </div>
   );
 }

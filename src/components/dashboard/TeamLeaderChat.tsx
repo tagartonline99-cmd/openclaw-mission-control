@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Crown, Radio, Send, ShieldAlert, Sparkles } from "lucide-react";
+import { BriefcaseBusiness, Crown, Eye, Send, ShieldAlert, Sparkles } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
@@ -10,12 +10,15 @@ import { useAppData } from "../../app/AppDataContext";
 
 export function TeamLeaderChat({ full = false }: { full?: boolean }) {
   const { data, sendTeamLeaderChatMessage } = useAppData();
-  const { approvalRequests, dashboardSummary, openClawCommands, quests, teamLeaderChatMessages } = data;
+  const { approvalRequests, businessProposals, businessTasks, dashboardSummary, opportunityHunts, quests, teamLeaderChatMessages } = data;
   const [message, setMessage] = useState("");
   const [questId, setQuestId] = useState(quests[0]?.id ?? "");
   const [isSending, setIsSending] = useState(false);
-  const pending = approvalRequests.filter((request) => request.status === "pending").length;
-  const queued = openClawCommands.filter((command) => command.status === "queued" || command.status === "requires_approval").length;
+  const riskyPending = approvalRequests.filter((request) => request.status === "pending").length;
+  const latestHunt = opportunityHunts[0];
+  const latestProposal = latestHunt ? businessProposals.find((proposal) => proposal.id === latestHunt.businessProposalId) : businessProposals[0];
+  const activeTasks = latestHunt ? businessTasks.filter((task) => task.huntId === latestHunt.id && task.status !== "done") : [];
+  const doneTasks = latestHunt ? businessTasks.filter((task) => task.huntId === latestHunt.id && task.status === "done") : [];
   const messages = useMemo(
     () => (full ? teamLeaderChatMessages : teamLeaderChatMessages.slice(-8)),
     [full, teamLeaderChatMessages],
@@ -25,12 +28,12 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
     if (!questId && quests[0]) setQuestId(quests[0].id);
   }, [questId, quests]);
 
-  async function submit(mode: "local" | "live" | "mission") {
+  async function submit() {
     const trimmed = message.trim();
     if (!trimmed || isSending) return;
     setIsSending(true);
     try {
-      await sendTeamLeaderChatMessage(trimmed, { requestLiveTurn: mode === "live", createMissionDraft: mode === "mission", questId });
+      await sendTeamLeaderChatMessage(trimmed, { questId });
       setMessage("");
     } finally {
       setIsSending(false);
@@ -60,6 +63,38 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
           <p className="text-sm leading-6 text-stone-200">{dashboardSummary.latestTeamLeaderRecommendation}</p>
         </div>
 
+        {latestHunt ? (
+          <div className="rounded-lg border border-teal-300/25 bg-teal-400/10 p-4 shadow-[0_0_28px_rgba(45,212,191,0.08)]">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={latestHunt.status === "ready_to_review" ? "emerald" : "teal"}>{latestHunt.status.replace(/_/g, " ")}</Badge>
+                  <Badge tone="amber">{doneTasks.length}/{businessTasks.filter((task) => task.huntId === latestHunt.id).length} tasks done</Badge>
+                </div>
+                <h3 className="mt-3 font-display text-xl font-semibold text-stone-50">{latestProposal?.title ?? latestHunt.title}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-300">{latestHunt.currentPhase}</p>
+              </div>
+              <a href={`#/mission-briefs?proposal=${latestProposal?.id ?? ""}`}>
+                <Button variant="secondary" type="button">
+                  <Eye className="h-4 w-4" />
+                  View Work
+                </Button>
+              </a>
+            </div>
+            <div className="mt-4 grid gap-2 md:grid-cols-3">
+              {activeTasks.slice(0, 3).map((task) => (
+                <div key={task.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                  <p className="text-xs font-semibold uppercase text-teal-100">{task.status.replace(/_/g, " ")}</p>
+                  <p className="mt-1 text-sm font-semibold text-stone-100">{task.title}</p>
+                  <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10">
+                    <div className="h-full rounded-full bg-teal-300" style={{ width: `${task.progress}%` }} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         <div className={cn("space-y-3 overflow-y-auto pr-1", full ? "max-h-[58vh]" : "max-h-[480px]")}>
           {messages.map((item) => (
             <div
@@ -88,7 +123,14 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
               {item.relatedApprovalId ? (
                 <p className="mt-3 text-xs text-amber-100">Approval: {item.relatedApprovalId}</p>
               ) : null}
-              {item.relatedMissionDraftId || item.relatedMissionRunId ? (
+                  {item.relatedOpportunityHuntId || item.relatedBusinessProposalId ? (
+                <a
+                  className="mt-3 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50"
+                  href={`#/mission-briefs?proposal=${item.relatedBusinessProposalId ?? latestProposal?.id ?? ""}`}
+                >
+                  View Work
+                </a>
+              ) : item.relatedMissionDraftId || item.relatedMissionRunId ? (
                 <a
                   className="mt-3 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50"
                   href={`#/mission-briefs?${item.relatedMissionRunId ? `run=${item.relatedMissionRunId}` : `draft=${item.relatedMissionDraftId}`}`}
@@ -101,16 +143,19 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
         </div>
 
         <div className="grid gap-3 sm:grid-cols-2">
+          <div className="rounded-lg border border-teal-300/20 bg-teal-500/8 p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-teal-100">
+              <BriefcaseBusiness className="h-4 w-4" />
+              Safe work sessions
+            </div>
+            <p className="mt-1 text-2xl font-semibold text-stone-50">{opportunityHunts.length}</p>
+          </div>
           <div className="rounded-lg border border-red-300/20 bg-red-500/8 p-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-red-100">
               <ShieldAlert className="h-4 w-4" />
-              Pending approvals
+              Risky approvals
             </div>
-            <p className="mt-1 text-2xl font-semibold text-stone-50">{pending}</p>
-          </div>
-          <div className="rounded-lg border border-teal-300/20 bg-teal-500/8 p-3">
-            <p className="text-sm font-semibold text-teal-100">Queued commands</p>
-            <p className="mt-1 text-2xl font-semibold text-stone-50">{queued}</p>
+            <p className="mt-1 text-2xl font-semibold text-stone-50">{riskyPending}</p>
           </div>
         </div>
 
@@ -127,22 +172,20 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
             className="min-h-28 w-full resize-none rounded-md border border-white/10 bg-black/30 p-3 text-sm leading-6 text-stone-100 outline-none transition placeholder:text-slate-600 focus:border-amber-300/50 focus:ring-2 focus:ring-amber-300/20"
           />
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="secondary" disabled={!message.trim() || isSending} onClick={() => void submit("mission")}>
-              <Sparkles className="h-4 w-4" />
-              Draft agent mission
-            </Button>
-            <Button type="button" variant="outline" disabled={!message.trim() || isSending} onClick={() => void submit("local")}>
+            <Button type="button" variant="secondary" disabled={!message.trim() || isSending} onClick={() => void submit()}>
               <Send className="h-4 w-4" />
-              Send local chat
+              Send to TeamLeader1A
             </Button>
-            <Button type="button" variant="outline" disabled={!message.trim() || isSending} onClick={() => void submit("live")}>
-              <Radio className="h-4 w-4" />
-              Request live turn approval
-            </Button>
+            <a href="#/tasks">
+              <Button type="button" variant="outline">
+                <Sparkles className="h-4 w-4" />
+                Task tab
+              </Button>
+            </a>
           </div>
         </div>
         <p className="text-xs leading-5 text-slate-500">
-          Mission drafts do not run agents until you approve the mission start. Live OpenClaw turns never use external delivery.
+          Safe autonomous research and internal agent planning start from TeamLeader1A without approval. Spending, publishing, messaging, connector execution, launch, login automation, form submission, and purchases still require approval.
         </p>
       </CardContent>
     </Card>

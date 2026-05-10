@@ -6,8 +6,11 @@ import {
   AgentOrchestrationPage,
   AgentsPage,
   ApprovalsPage,
+  BusinessesPage,
+  CommandPage,
   DashboardPage,
   ExperimentsPage,
+  GuildOfficePage,
   IdeasPage,
   LaunchControlPage,
   MarketIntelligencePage,
@@ -19,6 +22,7 @@ import {
   SecondBrainPage,
   SettingsPage,
   TeamLeaderChatPage,
+  TasksPage,
   ValidationPage,
 } from "./pages";
 
@@ -28,7 +32,11 @@ export function App() {
       <HashRouter>
         <Routes>
           <Route element={<AppLayout />}>
-            <Route path="/" element={<DashboardPage />} />
+            <Route path="/" element={<CommandPage />} />
+            <Route path="/tasks" element={<TasksPage />} />
+            <Route path="/guild-office" element={<GuildOfficePage />} />
+            <Route path="/businesses" element={<BusinessesPage />} />
+            <Route path="/legacy-dashboard" element={<DashboardPage />} />
             <Route path="/agents" element={<AgentsPage />} />
             <Route path="/teamleader-chat" element={<TeamLeaderChatPage />} />
             <Route path="/mission-briefs" element={<MissionBriefPage />} />

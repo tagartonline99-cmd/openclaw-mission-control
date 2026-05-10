@@ -166,6 +166,23 @@ export type ExternalActionLockMode = "locked" | "approval_only" | "batch_approva
 export type MissionDraftStatus = "draft" | "approval_requested" | "started" | "archived";
 export type MissionRunStatus = "awaiting_approval" | "running" | "paused" | "complete" | "failed" | "cancelled";
 export type MissionAgentStepStatus = "queued" | "running" | "complete" | "failed" | "skipped" | "local_draft";
+export type OpportunityHuntStatus =
+  | "planning"
+  | "researching"
+  | "agents_drafting"
+  | "teamleader_review"
+  | "ready_to_review"
+  | "approved_as_business"
+  | "rejected";
+export type BusinessProposalStatus = "drafting" | "ready_for_review" | "approved" | "revision_requested" | "rejected";
+export type ApprovedBusinessStatus = "active" | "paused" | "revising" | "archived";
+export type BusinessTaskStatus = "now_working" | "queued" | "blocked" | "needs_approval" | "done";
+export type AgentWorkSessionStatus = "idle" | "working" | "researching" | "writing" | "production" | "blocked" | "review";
+export type AgentWorkMotion = "idle" | "pulse" | "research_beam" | "forge" | "blocked" | "review";
+export type ProductionDestinationType = "static_website" | "newsletter" | "blog_cms" | "social_post" | "marketplace_product_page" | "manual_no_connector";
+export type ProductionDestinationStatus = "local_draft" | "ready_for_review" | "needs_approval" | "blocked";
+export type ContentInventoryStatus = "brief" | "draft" | "ready_for_review" | "approved_local" | "blocked";
+export type AutonomousImprovementRunStatus = "running" | "paused" | "blocked" | "complete";
 export type MissionBriefSectionKind =
   | "overview"
   | "research"
@@ -217,6 +234,185 @@ export interface Agent {
   openClawModel?: string;
   openClawBindings?: number;
   lastRuntimeSyncAt?: string;
+}
+
+export interface OpportunityHunt {
+  id: string;
+  title: string;
+  objective: string;
+  sourcePrompt: string;
+  status: OpportunityHuntStatus;
+  currentPhase: string;
+  zeroBudget: boolean;
+  sourcePack: "broad_public_web";
+  assignedAgentIds: MissionAgentId[];
+  businessProposalId?: string;
+  taskIds: string[];
+  evidenceIds: string[];
+  createdFromChatMessageId?: string;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface ResearchEvidence {
+  id: string;
+  huntId?: string;
+  proposalId?: string;
+  businessId?: string;
+  agentId: MissionAgentId;
+  title: string;
+  url: string;
+  sourceType: "public_web" | "forum" | "marketplace" | "competitor" | "search_signal" | "directory";
+  summary: string;
+  confidence: number;
+  capturedAt: string;
+}
+
+export interface ProductionDestination {
+  id: string;
+  proposalId?: string;
+  businessId?: string;
+  type: ProductionDestinationType;
+  name: string;
+  connector: "none" | "static_site" | "wordpress" | "newsletter" | "social" | "marketplace";
+  status: ProductionDestinationStatus;
+  approvalRequired: boolean;
+  description: string;
+  publishingRules: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ContentInventoryItem {
+  id: string;
+  proposalId?: string;
+  businessId?: string;
+  destinationId?: string;
+  title: string;
+  type: ContentItemType | "email" | "social_post" | "product_page";
+  status: ContentInventoryStatus;
+  summary: string;
+  draftContent: string;
+  createdByAgentId: MissionAgentId;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BusinessProposal {
+  id: string;
+  huntId: string;
+  title: string;
+  recommendedIdea: string;
+  summary: string;
+  businessModel: BusinessModel;
+  targetAudience: string;
+  whyMightWork: string[];
+  whyMightFail: string[];
+  evidenceIds: string[];
+  seoPlan: string[];
+  contentPlan: string[];
+  productionPlan: string[];
+  publishingDestinationIds: string[];
+  contentInventoryIds: string[];
+  zeroBudgetValidationTest: string;
+  successMetrics: string[];
+  failureMetrics: string[];
+  risks: string[];
+  validationScore: number;
+  nextActions: string[];
+  teamLeaderRecommendation: string;
+  status: BusinessProposalStatus;
+  questId?: string;
+  approvedBusinessId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApprovedBusiness {
+  id: string;
+  proposalId: string;
+  questId?: string;
+  name: string;
+  status: ApprovedBusinessStatus;
+  stage: QuestStage | "Autonomous improvement";
+  teamLeaderRecommendation: string;
+  validationScore: number;
+  assignedAgentIds: MissionAgentId[];
+  activeTaskIds: string[];
+  productionAssetIds: string[];
+  publishingDestinationIds: string[];
+  contentInventoryIds: string[];
+  researchEvidenceIds: string[];
+  risks: string[];
+  nextAction: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BusinessTask {
+  id: string;
+  huntId?: string;
+  proposalId?: string;
+  businessId?: string;
+  agentId: MissionAgentId;
+  title: string;
+  objective: string;
+  status: BusinessTaskStatus;
+  progress: number;
+  currentArtifact: string;
+  currentSource?: string;
+  dependency?: string;
+  expectedOutput: string;
+  approvalRequired: boolean;
+  logs: string[];
+  startedAt?: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface AgentWorkSession {
+  id: string;
+  agentId: MissionAgentId;
+  huntId?: string;
+  proposalId?: string;
+  businessId?: string;
+  taskId?: string;
+  stationId: string;
+  status: AgentWorkSessionStatus;
+  motion: AgentWorkMotion;
+  currentTask: string;
+  currentOutput: string;
+  currentSource?: string;
+  progress: number;
+  startedAt: string;
+  updatedAt: string;
+}
+
+export interface GuildOfficeStation {
+  id: string;
+  name: string;
+  room: string;
+  agentId: MissionAgentId;
+  status: AgentWorkSessionStatus;
+  motion: AgentWorkMotion;
+  currentTask: string;
+  lastOutput: string;
+  progress: number;
+  taskId?: string;
+  updatedAt: string;
+}
+
+export interface AutonomousImprovementRun {
+  id: string;
+  businessId: string;
+  status: AutonomousImprovementRunStatus;
+  currentFocus: string;
+  safeAutonomousActions: string[];
+  approvalLockedActions: string[];
+  taskIds: string[];
+  lastTeamLeaderSummary: string;
+  startedAt: string;
+  updatedAt: string;
 }
 
 export interface Budget {
@@ -873,6 +1069,9 @@ export interface TeamLeaderChatMessage {
   relatedCommandId?: string;
   relatedMissionDraftId?: string;
   relatedMissionRunId?: string;
+  relatedOpportunityHuntId?: string;
+  relatedBusinessProposalId?: string;
+  relatedApprovedBusinessId?: string;
 }
 
 export interface MissionDraftStepPlan {

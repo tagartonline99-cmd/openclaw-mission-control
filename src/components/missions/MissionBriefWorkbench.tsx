@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, CheckCircle2, FileText, Play, RotateCcw, ShieldCheck, SkipForward, Sparkles, Workflow } from "lucide-react";
+import { AlertTriangle, BriefcaseBusiness, CheckCircle2, FileText, Play, RotateCcw, ShieldCheck, SkipForward, Sparkles, Workflow, XCircle } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
 import type { MissionAgentStep, MissionDraftStepPlan } from "../../types";
 import { formatDateTime, statusTone } from "../../utils/formatting";
@@ -30,10 +30,18 @@ export function MissionBriefWorkbench() {
     retryMissionStep,
     skipMissionStep,
     convertMissionStepToLocalDraft,
+    approveBusinessProposal,
+    updateBusinessProposalStatus,
+    exportObsidianNote,
   } = useAppData();
   const [params, setParams] = useSearchParams();
   const requestedRunId = params.get("run");
   const requestedDraftId = params.get("draft");
+  const requestedProposalId = params.get("proposal");
+  const selectedProposal = data.businessProposals.find((proposal) => proposal.id === requestedProposalId) ?? data.businessProposals[0];
+  const selectedProposalEvidence = selectedProposal ? data.researchEvidence.filter((item) => selectedProposal.evidenceIds.includes(item.id)) : [];
+  const selectedProposalDestinations = selectedProposal ? data.productionDestinations.filter((item) => selectedProposal.publishingDestinationIds.includes(item.id)) : [];
+  const selectedProposalContent = selectedProposal ? data.contentInventoryItems.filter((item) => selectedProposal.contentInventoryIds.includes(item.id)) : [];
   const firstRun = data.missionRuns[0];
   const firstDraft = data.missionDrafts[0];
   const initialId = requestedRunId ?? requestedDraftId ?? firstRun?.id ?? firstDraft?.id ?? "";
@@ -78,8 +86,182 @@ export function MissionBriefWorkbench() {
     setParams({ draft: id });
   }
 
+  function exportSelectedProposal() {
+    if (!selectedProposal) return;
+    void exportObsidianNote({
+      id: `obsidian-proposal-${selectedProposal.id}`,
+      title: selectedProposal.title,
+      type: "business_idea",
+      folder: "OpenClaw/Business Proposals",
+      frontmatter: {
+        type: "business_proposal",
+        system: "openclaw",
+        status: selectedProposal.status,
+        validation_score: selectedProposal.validationScore,
+        created_at: selectedProposal.createdAt,
+        updated_at: selectedProposal.updatedAt,
+      },
+      body: [
+        `# ${selectedProposal.title}`,
+        "",
+        selectedProposal.summary,
+        "",
+        "## Recommendation",
+        selectedProposal.teamLeaderRecommendation,
+        "",
+        "## Evidence",
+        ...selectedProposalEvidence.map((item) => `- [${item.title}](${item.url}) - ${item.summary}`),
+        "",
+        "## SEO Plan",
+        ...selectedProposal.seoPlan.map((item) => `- ${item}`),
+        "",
+        "## Content Plan",
+        ...selectedProposal.contentPlan.map((item) => `- ${item}`),
+        "",
+        "## Production Plan",
+        ...selectedProposal.productionPlan.map((item) => `- ${item}`),
+        "",
+        "## Approval Boundary",
+        "Approving this proposal starts local autonomous improvement only. Publishing, messaging, spending, connector execution, launch, forms, and purchases still require approval.",
+      ].join("\n"),
+      linkedQuestId: selectedProposal.questId,
+    });
+  }
+
   return (
     <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <BriefcaseBusiness className="h-4 w-4 text-amber-100" />
+            Business Proposal Review
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {selectedProposal ? (
+            <>
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                <div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge tone={selectedProposal.status === "ready_for_review" ? "emerald" : selectedProposal.status === "approved" ? "teal" : "amber"}>
+                      {selectedProposal.status.replace(/_/g, " ")}
+                    </Badge>
+                    <Badge tone="teal">{selectedProposal.validationScore}% validation</Badge>
+                    <Badge tone="amber">zero budget test</Badge>
+                  </div>
+                  <h3 className="mt-3 font-display text-2xl font-semibold text-stone-50">{selectedProposal.title}</h3>
+                  <p className="mt-2 max-w-4xl text-sm leading-6 text-slate-300">{selectedProposal.summary}</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    disabled={selectedProposal.status !== "ready_for_review" && selectedProposal.status !== "drafting"}
+                    onClick={() => void approveBusinessProposal(selectedProposal.id)}
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    Approve Business
+                  </Button>
+                  <Button variant="outline" disabled={selectedProposal.status === "approved"} onClick={() => void updateBusinessProposalStatus(selectedProposal.id, "revision_requested")}>
+                    <RotateCcw className="h-4 w-4" />
+                    Request Revision
+                  </Button>
+                  <Button variant="danger" disabled={selectedProposal.status === "approved"} onClick={() => void updateBusinessProposalStatus(selectedProposal.id, "rejected")}>
+                    <XCircle className="h-4 w-4" />
+                    Reject / Kill Idea
+                  </Button>
+                  <Button variant="outline" onClick={exportSelectedProposal}>
+                    <FileText className="h-4 w-4" />
+                    Export Proposal
+                  </Button>
+                </div>
+              </div>
+              <div className="rounded-lg border border-amber-300/20 bg-amber-400/8 p-4">
+                <p className="text-xs font-semibold uppercase text-slate-500">TeamLeader1A recommendation</p>
+                <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.teamLeaderRecommendation}</p>
+              </div>
+              <div className="grid gap-4 xl:grid-cols-3">
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Why it might work</p>
+                  <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+                    {selectedProposal.whyMightWork.map((item) => <li key={item}>- {item}</li>)}
+                  </ul>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Why it might fail</p>
+                  <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-300">
+                    {selectedProposal.whyMightFail.map((item) => <li key={item}>- {item}</li>)}
+                  </ul>
+                </div>
+                <div className="rounded-lg border border-red-300/20 bg-red-500/8 p-4">
+                  <p className="text-xs font-semibold uppercase text-red-100">Approval boundary</p>
+                  <p className="mt-3 text-sm leading-6 text-red-100">Approving this business starts local autonomous improvement only. Publishing, messaging, connector execution, launch, forms, and spending still require approval.</p>
+                </div>
+              </div>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Evidence and links</p>
+                  <div className="mt-3 space-y-3">
+                    {selectedProposalEvidence.map((item) => (
+                      <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <p className="font-semibold text-stone-100">{item.title}</p>
+                        <p className="mt-1 text-sm leading-6 text-slate-300">{item.summary}</p>
+                        <a className="mt-2 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50" href={item.url}>{item.url}</a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">SEO / Content / Production</p>
+                  <div className="mt-3 grid gap-3">
+                    {[["SEO plan", selectedProposal.seoPlan], ["Content plan", selectedProposal.contentPlan], ["Production plan", selectedProposal.productionPlan]].map(([title, list]) => (
+                      <div key={title as string} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <p className="font-semibold text-stone-100">{title as string}</p>
+                        <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-300">
+                          {(list as string[]).map((item) => <li key={item}>- {item}</li>)}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Publishing destination/options</p>
+                  <div className="mt-3 space-y-2">
+                    {selectedProposalDestinations.map((destination) => (
+                      <div key={destination.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-semibold text-stone-100">{destination.name}</p>
+                          <Badge tone={destination.approvalRequired ? "red" : "teal"}>{destination.status.replace(/_/g, " ")}</Badge>
+                        </div>
+                        <p className="mt-1 text-sm leading-6 text-slate-300">{destination.description}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Exact content drafts/assets</p>
+                  <div className="mt-3 space-y-2">
+                    {selectedProposalContent.map((item) => (
+                      <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <p className="font-semibold text-stone-100">{item.title}</p>
+                        <p className="mt-1 text-sm leading-6 text-slate-300">{item.draftContent}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/8 p-4">
+                <p className="text-xs font-semibold uppercase text-slate-500">Zero-budget validation test</p>
+                <p className="mt-2 text-sm leading-6 text-slate-200">{selectedProposal.zeroBudgetValidationTest}</p>
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-slate-300">No business proposal yet. Send TeamLeader1A a command from the Command tab.</p>
+          )}
+        </CardContent>
+      </Card>
+
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="p-4">

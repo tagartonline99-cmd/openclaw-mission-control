@@ -1,26 +1,18 @@
 import { NavLink, Outlet } from "react-router-dom";
 import {
   Activity,
-  Bot,
+  BriefcaseBusiness,
   Brain,
   CheckCircle2,
-  Compass,
-  FlaskConical,
-  Gauge,
+  ClipboardList,
   Gem,
-  Hammer,
   Home,
-  Lightbulb,
+  Landmark,
   MessageSquare,
   Network,
-  Rocket,
-  Search,
-  ScrollText,
   Settings,
-  ShieldCheck,
   Sparkles,
-  Swords,
-  Workflow,
+  Hammer,
 } from "lucide-react";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -30,24 +22,21 @@ import { useAppData } from "../../app/AppDataContext";
 import { UpdateManager } from "../updater/UpdateManager";
 
 const navItems = [
-  { label: "Dashboard", path: "/", icon: Home },
-  { label: "Agents", path: "/agents", icon: Bot },
-  { label: "TeamLeader Chat", path: "/teamleader-chat", icon: MessageSquare },
+  { label: "Command", path: "/", icon: MessageSquare },
+  { label: "Tasks", path: "/tasks", icon: ClipboardList },
+  { label: "Guild Office", path: "/guild-office", icon: Landmark },
   { label: "Mission Briefs", path: "/mission-briefs", icon: Sparkles },
-  { label: "Orchestration", path: "/orchestration", icon: Workflow },
-  { label: "Quests", path: "/quests", icon: Swords },
-  { label: "Ideas", path: "/ideas", icon: Lightbulb },
-  { label: "Validation", path: "/validation", icon: ShieldCheck },
-  { label: "Real Pilot", path: "/real-pilot", icon: Compass },
-  { label: "Market Intel", path: "/market-intelligence", icon: Search },
-  { label: "Experiments", path: "/experiments", icon: FlaskConical },
+  { label: "Businesses", path: "/businesses", icon: BriefcaseBusiness },
   { label: "Production", path: "/production", icon: Hammer },
-  { label: "Launch Control", path: "/launch-control", icon: Rocket },
-  { label: "Second Brain", path: "/second-brain", icon: Brain },
   { label: "Approvals", path: "/approvals", icon: CheckCircle2 },
-  { label: "Activity Log", path: "/activity-log", icon: ScrollText },
-  { label: "OpenClaw System", path: "/openclaw-system", icon: Network },
-  { label: "Settings", path: "/settings", icon: Settings },
+  { label: "System", path: "/openclaw-system", icon: Network },
+  { label: "Advanced", path: "/settings", icon: Settings },
+];
+
+const advancedItems = [
+  { label: "Agents", path: "/agents", icon: Activity },
+  { label: "Second Brain", path: "/second-brain", icon: Brain },
+  { label: "Legacy Dashboard", path: "/legacy-dashboard", icon: Home },
 ];
 
 export function AppLayout() {
@@ -91,6 +80,26 @@ export function AppLayout() {
                 <span>{item.label}</span>
               </NavLink>
             ))}
+            <div className="pt-4">
+              <p className="px-3 pb-2 text-xs font-semibold uppercase text-slate-500">Archive / Advanced</p>
+              {advancedItems.map((item) => (
+                <NavLink
+                  key={item.path}
+                  to={item.path}
+                  className={({ isActive }) =>
+                    cn(
+                      "flex items-center gap-3 rounded-md border px-3 py-2.5 text-sm font-medium transition",
+                      isActive
+                        ? "border-teal-300/35 bg-teal-300/10 text-teal-100"
+                        : "border-transparent text-slate-400 hover:border-white/10 hover:bg-white/6 hover:text-stone-100",
+                    )
+                  }
+                >
+                  <item.icon className="h-4 w-4" />
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
           </nav>
           <div className="border-t border-white/10 p-4">
               <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-3">
