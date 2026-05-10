@@ -125,11 +125,13 @@ async function launch() {
 
 async function main() {
   const app = await launch();
+  let updateStarted = false;
   try {
     const { client } = app;
     await client.evaluate("location.hash = '/settings'");
     await waitFor(client, "document.body.innerText.includes('Auto Updates')", "Auto Updates panel");
-    if (await client.evaluate(`document.body.innerText.includes(${JSON.stringify(`Playwright MCP release ${expectedVersion}`)})`)) {
+    const marker = `Playwright MCP release ${expectedVersion}`.toLowerCase();
+    if (await client.evaluate(`document.body.innerText.toLowerCase().includes(${JSON.stringify(marker)})`)) {
       console.log(JSON.stringify({ alreadyCurrent: true, version: expectedVersion }, null, 2));
       return;
     }
@@ -137,9 +139,13 @@ async function main() {
     await waitFor(client, `document.body.innerText.includes(${JSON.stringify(`Version ${expectedVersion}`)})`, `update ${expectedVersion}`, 60_000);
     await click(client, "Install update");
     await waitFor(client, "document.body.innerText.includes('Installing') || document.body.innerText.includes('Downloading') || document.body.innerText.includes('relaunching')", "updater install start", 60_000);
+    updateStarted = true;
     console.log(JSON.stringify({ updateStarted: true, version: expectedVersion }, null, 2));
   } finally {
     app.client?.close();
+    if (!updateStarted && !app.child.killed) {
+      app.child.kill();
+    }
   }
 }
 
