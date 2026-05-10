@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Agent,
+  OpenClawMcpServer,
   OpenClawRuntimeStatus,
   UserSettings,
 } from "../types";
@@ -51,6 +52,17 @@ export type AgentTurnInput = {
   missionRunId?: string;
   timeoutSeconds?: number;
 };
+
+export type OpenClawMcpConfig = Record<
+  string,
+  {
+    command?: string;
+    args?: string[];
+    env?: Record<string, string>;
+    disabled?: boolean;
+    note?: string;
+  }
+>;
 
 async function state() {
   return (await persistenceService.loadState()).state;
@@ -128,6 +140,51 @@ export function applyProfilesToAgents(agents: Agent[], profiles: OpenClawAgentPr
   });
 }
 
+function packageInstalled(config?: OpenClawMcpConfig[string]) {
+  const entrypoint = config?.args?.[0] ?? "";
+  return Boolean(entrypoint && entrypoint.includes("\\mcp-servers\\node_modules\\"));
+}
+
+export function mcpServersFromResult(result: OpenClawBridgeResult, existing: OpenClawMcpServer[]): OpenClawMcpServer[] {
+  const parsed = parseJson<OpenClawMcpConfig>(result.stdout) ?? {};
+  const now = new Date().toISOString();
+  return existing.map((server) => {
+    const config =
+      server.id === "mcp-filesystem"
+        ? parsed.filesystem
+        : server.id === "mcp-memory"
+          ? parsed.memory
+          : server.id === "mcp-fetch-approved-url-research"
+            ? parsed.fetch_approved_url_research
+            : undefined;
+    if (!config) {
+      return {
+        ...server,
+        status: server.kind === "browser" ? "needs_install" as const : "needs_install" as const,
+        configured: false,
+        installed: false,
+        lastCheckedAt: now,
+        updatedAt: now,
+      };
+    }
+    const disabled = config.disabled === true;
+    const installed = packageInstalled(config);
+    return {
+      ...server,
+      command: config.command,
+      args: config.args ?? [],
+      env: config.env,
+      status: disabled ? "disabled" : installed ? "configured" : "installed",
+      enabled: !disabled,
+      configured: true,
+      installed,
+      lastCheckedAt: now,
+      updatedAt: now,
+      notes: config.note ?? server.notes,
+    };
+  });
+}
+
 async function bridge<T extends OpenClawBridgeResult>(command: string, args?: Record<string, unknown>): Promise<T | null> {
   if (!isTauriRuntime()) return null;
   try {
@@ -191,6 +248,32 @@ export const openclawService = {
   },
   async listTasks() {
     return bridge("openclaw_tasks_list");
+  },
+  async listMcpServers(existing: OpenClawMcpServer[]) {
+    const result =
+      (await bridge("openclaw_mcp_list")) ??
+      ({
+        ok: false,
+        command: ["mock://openclaw_mcp_list"],
+        stdout: "{}",
+        stderr: "Tauri desktop runtime is required for real OpenClaw MCP status.",
+        exitCode: null,
+        timedOut: false,
+      } satisfies OpenClawBridgeResult);
+
+    return { result, servers: mcpServersFromResult(result, existing) };
+  },
+  async installMcpLocalKit(obsidianVaultPath: string) {
+    return bridge("openclaw_mcp_install_local_kit", { request: { obsidianVaultPath } }).then((result) =>
+      result ?? {
+        ok: false,
+        command: ["mock://openclaw_mcp_install_local_kit"],
+        stdout: "",
+        stderr: "Tauri desktop runtime is required to install or repair OpenClaw MCP servers.",
+        exitCode: null,
+        timedOut: false,
+      },
+    );
   },
   async startGateway() {
     return bridge("openclaw_gateway_start").then((result) =>

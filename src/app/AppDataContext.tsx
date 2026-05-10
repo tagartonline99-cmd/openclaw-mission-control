@@ -40,6 +40,7 @@ import type {
   OpenClawApprovalPayload,
   OfferClaimReview,
   OpenClawCommand,
+  OpenClawMcpServer,
   ObsidianNote,
   ProductionAsset,
   ProductionPack,
@@ -124,6 +125,8 @@ type AppDataContextValue = {
   revealExportedPath: (path: string) => Promise<void>;
   refreshOpenClawStatus: () => Promise<void>;
   syncOpenClawAgents: () => Promise<void>;
+  refreshOpenClawMcpStatus: () => Promise<void>;
+  installOpenClawMcpLocalKit: () => Promise<void>;
   requestGatewayStart: () => Promise<void>;
   requestTeamLeaderTurn: (message: string) => Promise<void>;
   sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string }) => Promise<void>;
@@ -1211,6 +1214,43 @@ function approvalDecisionDetail(status: ApprovalStatus, request?: ApprovalReques
   return `TeamLeader1A recorded a local ${status} decision for ${request.title}.`;
 }
 
+function updateMcpCapabilities(current: AppDataState, servers: OpenClawMcpServer[]) {
+  const byId = new Map(servers.map((server) => [server.id, server]));
+  return current.openClawCapabilities.map((capability) => {
+    if (capability.id === "cap-mcp-filesystem") {
+      const server = byId.get("mcp-filesystem");
+      return {
+        ...capability,
+        status: server?.configured ? "available" as const : "needs_install" as const,
+        description: server?.configured
+          ? "Scoped filesystem MCP is configured for approved workspace and vault folders only."
+          : capability.description,
+      };
+    }
+    if (capability.id === "cap-mcp-memory") {
+      const server = byId.get("mcp-memory");
+      return {
+        ...capability,
+        status: server?.configured ? "available" as const : "needs_install" as const,
+        description: server?.configured
+          ? "Local knowledge graph memory MCP is configured for agent notes and lessons."
+          : capability.description,
+      };
+    }
+    if (capability.id === "cap-mcp-fetch") {
+      const server = byId.get("mcp-fetch-approved-url-research");
+      return {
+        ...capability,
+        status: server?.configured ? "blocked" as const : "needs_install" as const,
+        description: server?.configured
+          ? "Fetch MCP is installed but disabled for general agent use; approved URL research remains per-action gated."
+          : capability.description,
+      };
+    }
+    return capability;
+  });
+}
+
 async function saveBrowserDownload(note: ObsidianNote, markdown: string): Promise<ExportResult> {
   const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -1567,6 +1607,101 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             ? `${mappedCount} roles linked from ${profiles.length} local profiles.`
             : executionSummary(result),
           severity: result.ok ? "success" : "warning",
+          createdAt: now,
+        },
+        ...current.activityLogs,
+      ],
+    };
+    await persist(next);
+  }, [persist]);
+
+  const refreshOpenClawMcpStatus = useCallback(async () => {
+    const current = dataRef.current;
+    const { result, servers } = await openclawService.listMcpServers(current.openClawMcpServers);
+    const configuredCount = servers.filter((server) => server.configured).length;
+    const now = new Date().toISOString();
+    const next: AppDataState = {
+      ...current,
+      openClawMcpServers: servers,
+      openClawCapabilities: updateMcpCapabilities(current, servers),
+      openClawEvents: [
+        {
+          id: id("event-mcp-status"),
+          type: "command",
+          title: result.ok ? "MCP status refreshed" : "MCP status check failed",
+          detail: result.ok ? `${configuredCount} OpenClaw MCP servers are configured.` : executionSummary(result),
+          createdAt: now,
+          severity: result.ok ? "success" : "warning",
+        },
+        ...current.openClawEvents,
+      ],
+      activityLogs: [
+        {
+          id: id("log-mcp-status"),
+          category: "openclaw",
+          title: "OpenClaw MCP status refreshed",
+          detail: result.ok ? `${configuredCount} configured MCP servers found.` : executionSummary(result),
+          severity: result.ok ? "success" : "warning",
+          createdAt: now,
+        },
+        ...current.activityLogs,
+      ],
+    };
+    await persist(next);
+  }, [persist]);
+
+  const installOpenClawMcpLocalKit = useCallback(async () => {
+    const current = dataRef.current;
+    const result = await openclawService.installMcpLocalKit(current.userSettings.obsidianVaultPath);
+    const listed = await openclawService.listMcpServers(current.openClawMcpServers);
+    const now = new Date().toISOString();
+    const configuredCount = listed.servers.filter((server) => server.configured).length;
+    const next: AppDataState = {
+      ...current,
+      openClawMcpServers: listed.servers,
+      openClawCapabilities: updateMcpCapabilities(current, listed.servers),
+      openClawCommands: [
+        {
+          id: id("cmd-mcp-install"),
+          command: result.command.join(" "),
+          targetAgentId: "system",
+          status: result.ok ? "complete" : "failed",
+          riskLevel: "medium",
+          approvalRequired: false,
+          resultSummary: result.ok ? "Free local MCP kit installed and OpenClaw MCP config repaired." : executionSummary(result),
+          createdAt: now,
+          actionKind: undefined,
+          executionMode: "real_local",
+          stdout: result.stdout,
+          stderr: result.stderr,
+          exitCode: result.exitCode,
+          startedAt: now,
+          completedAt: now,
+        },
+        ...current.openClawCommands,
+      ],
+      openClawEvents: [
+        {
+          id: id("event-mcp-install"),
+          type: "command",
+          title: result.ok ? "Free MCP kit installed" : "MCP kit install failed",
+          detail: result.ok
+            ? `${configuredCount} OpenClaw MCP servers are configured. Fetch remains disabled for general agent access.`
+            : executionSummary(result),
+          createdAt: now,
+          severity: result.ok ? "success" : "danger",
+        },
+        ...current.openClawEvents,
+      ],
+      activityLogs: [
+        {
+          id: id("log-mcp-install"),
+          category: "openclaw",
+          title: result.ok ? "OpenClaw MCP local kit repaired" : "OpenClaw MCP local kit failed",
+          detail: result.ok
+            ? "Filesystem and memory MCPs are scoped locally. Fetch MCP is staged for approved URL research only."
+            : executionSummary(result),
+          severity: result.ok ? "success" : "danger",
           createdAt: now,
         },
         ...current.activityLogs,
@@ -4501,6 +4636,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       revealExportedPath,
       refreshOpenClawStatus,
       syncOpenClawAgents,
+      refreshOpenClawMcpStatus,
+      installOpenClawMcpLocalKit,
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
@@ -4559,6 +4696,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       revealExportedPath,
       refreshOpenClawStatus,
       syncOpenClawAgents,
+      refreshOpenClawMcpStatus,
+      installOpenClawMcpLocalKit,
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,

@@ -11,6 +11,7 @@ import { Select } from "../ui/select";
 import { Dialog } from "../ui/dialog";
 import { safetyPolicyService } from "../../services/safetyPolicyService";
 import { AllowlistManager } from "./AllowlistManager";
+import { McpManager } from "./McpManager";
 
 type ActionNotice = {
   tone: "success" | "warning";
@@ -187,6 +188,7 @@ export function OpenClawPanel() {
           </div>
         </CardContent>
       </Card>
+      <McpManager />
       <AllowlistManager />
       <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
         <Card>

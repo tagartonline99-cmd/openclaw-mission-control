@@ -1,4 +1,8 @@
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::env;
+use std::fs;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -48,11 +52,25 @@ struct ChannelMessageRequest {
     timeout_seconds: Option<u64>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct McpInstallRequest {
+    obsidian_vault_path: Option<String>,
+}
+
 fn openclaw_program() -> &'static str {
     if cfg!(windows) {
         "openclaw.cmd"
     } else {
         "openclaw"
+    }
+}
+
+fn npm_program() -> &'static str {
+    if cfg!(windows) {
+        "npm.cmd"
+    } else {
+        "npm"
     }
 }
 
@@ -254,9 +272,9 @@ fn validate_channel_target(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run_openclaw(args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridgeResult, String> {
+fn run_program(program: &str, args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridgeResult, String> {
     let timeout = Duration::from_secs(timeout_seconds);
-    let mut command = Command::new(openclaw_program());
+    let mut command = Command::new(program);
     command.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
 
     #[cfg(windows)]
@@ -278,7 +296,7 @@ fn run_openclaw(args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridg
                 .map_err(|error| format!("Failed to collect timed out OpenClaw output: {error}"))?;
             return Ok(OpenClawBridgeResult {
                 ok: false,
-                command: std::iter::once(openclaw_program().to_string()).chain(args).collect(),
+                command: std::iter::once(program.to_string()).chain(args).collect(),
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
                 stderr: String::from_utf8_lossy(&output.stderr).to_string(),
                 exit_code: output.status.code(),
@@ -296,7 +314,7 @@ fn run_openclaw(args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridg
                 .map_err(|error| format!("Failed to collect OpenClaw output: {error}"))?;
             return Ok(OpenClawBridgeResult {
                 ok: output.status.success(),
-                command: std::iter::once(openclaw_program().to_string()).chain(args).collect(),
+                command: std::iter::once(program.to_string()).chain(args).collect(),
                 stdout: String::from_utf8_lossy(&output.stdout).to_string(),
                 stderr: String::from_utf8_lossy(&output.stderr).to_string(),
                 exit_code: output.status.code(),
@@ -306,6 +324,52 @@ fn run_openclaw(args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridg
 
         sleep(Duration::from_millis(150));
     }
+}
+
+fn run_openclaw(args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridgeResult, String> {
+    run_program(openclaw_program(), args, timeout_seconds)
+}
+
+fn append_result(label: &str, result: &OpenClawBridgeResult, stdout: &mut String, stderr: &mut String) {
+    stdout.push_str(&format!(
+        "\n## {label}\ncommand: {}\nok: {}\nexitCode: {:?}\n",
+        result.command.join(" "),
+        result.ok,
+        result.exit_code
+    ));
+    if !result.stdout.trim().is_empty() {
+        stdout.push_str(result.stdout.trim());
+        stdout.push('\n');
+    }
+    if !result.stderr.trim().is_empty() {
+        stderr.push_str(&format!("\n## {label}\n{}\n", result.stderr.trim()));
+    }
+}
+
+fn user_home_dir() -> Result<PathBuf, String> {
+    env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
+        .ok_or_else(|| "Could not resolve user home directory".to_string())
+}
+
+fn safe_existing_directory(path: &str) -> Option<String> {
+    reject_control_chars(path, "MCP path").ok()?;
+    let path_buf = PathBuf::from(path);
+    if !path_buf.is_dir() {
+        return None;
+    }
+    let canonical = fs::canonicalize(path_buf).ok()?;
+    let text = canonical.to_string_lossy().to_string();
+    let lower = text.to_lowercase();
+    if lower.ends_with(":\\") || lower.ends_with("\\windows") || lower.ends_with("\\users") {
+        return None;
+    }
+    Some(text)
+}
+
+fn json_arg(value: serde_json::Value) -> String {
+    value.to_string()
 }
 
 #[tauri::command]
@@ -321,6 +385,124 @@ fn openclaw_agents_list() -> Result<OpenClawBridgeResult, String> {
 #[tauri::command]
 fn openclaw_tasks_list() -> Result<OpenClawBridgeResult, String> {
     run_openclaw(vec!["tasks".into(), "list".into(), "--json".into()], 45)
+}
+
+#[tauri::command]
+fn openclaw_mcp_list() -> Result<OpenClawBridgeResult, String> {
+    run_openclaw(vec!["mcp".into(), "list".into(), "--json".into()], 45)
+}
+
+#[tauri::command]
+fn openclaw_mcp_install_local_kit(request: McpInstallRequest) -> Result<OpenClawBridgeResult, String> {
+    let home = user_home_dir()?;
+    let openclaw_dir = home.join(".openclaw");
+    let mcp_dir = openclaw_dir.join("mcp-servers");
+    let memory_dir = openclaw_dir.join("memory");
+    let workspace_dir = openclaw_dir.join("workspace");
+    let test_vault_dir = openclaw_dir.join("mission-control-test-vault");
+
+    fs::create_dir_all(&mcp_dir).map_err(|error| format!("Could not create MCP package directory: {error}"))?;
+    fs::create_dir_all(&memory_dir).map_err(|error| format!("Could not create MCP memory directory: {error}"))?;
+    fs::create_dir_all(&workspace_dir).map_err(|error| format!("Could not create OpenClaw workspace directory: {error}"))?;
+
+    let mut stdout = String::from("OpenClaw Mission Control MCP local kit install/repair\n");
+    let mut stderr = String::new();
+    let mut ok = true;
+
+    let install = run_program(
+        npm_program(),
+        vec![
+            "install".into(),
+            "--prefix".into(),
+            mcp_dir.to_string_lossy().to_string(),
+            "@modelcontextprotocol/server-filesystem@2026.1.14".into(),
+            "@modelcontextprotocol/server-memory@2026.1.26".into(),
+            "mcp-fetch-server@1.1.2".into(),
+        ],
+        300,
+    )?;
+    append_result("npm install", &install, &mut stdout, &mut stderr);
+    ok &= install.ok;
+
+    let filesystem_entry = mcp_dir
+        .join("node_modules")
+        .join("@modelcontextprotocol")
+        .join("server-filesystem")
+        .join("dist")
+        .join("index.js");
+    let memory_entry = mcp_dir
+        .join("node_modules")
+        .join("@modelcontextprotocol")
+        .join("server-memory")
+        .join("dist")
+        .join("index.js");
+    let fetch_entry = mcp_dir
+        .join("node_modules")
+        .join("mcp-fetch-server")
+        .join("dist")
+        .join("index.js");
+
+    let mut allowed_paths = vec![workspace_dir.to_string_lossy().to_string()];
+    if test_vault_dir.is_dir() {
+        allowed_paths.push(test_vault_dir.to_string_lossy().to_string());
+    }
+    if let Some(vault) = request
+        .obsidian_vault_path
+        .as_deref()
+        .and_then(safe_existing_directory)
+    {
+        if !allowed_paths.iter().any(|path| path.eq_ignore_ascii_case(&vault)) {
+            allowed_paths.push(vault);
+        }
+    }
+
+    let filesystem_config = json!({
+        "command": "node",
+        "args": std::iter::once(filesystem_entry.to_string_lossy().to_string()).chain(allowed_paths.clone()).collect::<Vec<_>>()
+    });
+    let memory_config = json!({
+        "command": "node",
+        "args": [memory_entry.to_string_lossy().to_string()],
+        "env": {
+            "MEMORY_FILE_PATH": memory_dir.join("openclaw-mcp-memory.jsonl").to_string_lossy().to_string()
+        }
+    });
+    let fetch_config = json!({
+        "command": "node",
+        "args": [fetch_entry.to_string_lossy().to_string()],
+        "env": {
+            "DEFAULT_LIMIT": "12000",
+            "OPENCLAW_MISSION_CONTROL_APPROVAL_REQUIRED": "true"
+        },
+        "disabled": true,
+        "note": "approved-url-research-only"
+    });
+
+    for (name, config) in [
+        ("filesystem", filesystem_config),
+        ("memory", memory_config),
+        ("fetch_approved_url_research", fetch_config),
+    ] {
+        let result = run_openclaw(vec!["mcp".into(), "set".into(), name.into(), json_arg(config)], 60)?;
+        append_result(&format!("openclaw mcp set {name}"), &result, &mut stdout, &mut stderr);
+        ok &= result.ok;
+    }
+
+    let list = run_openclaw(vec!["mcp".into(), "list".into(), "--json".into()], 45)?;
+    append_result("openclaw mcp list", &list, &mut stdout, &mut stderr);
+    ok &= list.ok;
+
+    Ok(OpenClawBridgeResult {
+        ok,
+        command: vec![
+            "openclaw-mission-control".into(),
+            "install-free-local-mcp-kit".into(),
+        ],
+        stdout,
+        stderr,
+        exit_code: list.exit_code,
+        timed_out: install.timed_out || list.timed_out,
+    })
 }
 
 #[tauri::command]
@@ -459,6 +641,8 @@ pub fn run() {
             openclaw_gateway_status,
             openclaw_agents_list,
             openclaw_tasks_list,
+            openclaw_mcp_list,
+            openclaw_mcp_install_local_kit,
             openclaw_gateway_start,
             openclaw_agent_turn,
             openclaw_url_research,

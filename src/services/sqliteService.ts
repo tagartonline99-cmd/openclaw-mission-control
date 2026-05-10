@@ -62,6 +62,7 @@ export const sqliteTables = [
   "teamleader_chat_messages",
   "openclaw_commands",
   "openclaw_events",
+  "openclaw_mcp_servers",
   "openclaw_capabilities",
   "openclaw_permissions",
   "openclaw_runtime_status",

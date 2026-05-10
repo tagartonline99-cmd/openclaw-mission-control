@@ -59,6 +59,9 @@ export type ApprovalRequestType =
 
 export type OpenClawActionKind = "gateway_start" | "agent_turn" | "mission_start" | "url_research" | "channel_message";
 export type OpenClawExecutionMode = "mock" | "real_local" | "dry_run";
+export type OpenClawMcpServerKind = "filesystem" | "memory" | "fetch" | "browser";
+export type OpenClawMcpServerStatus = "configured" | "installed" | "needs_install" | "disabled" | "error";
+export type OpenClawMcpSafetyMode = "direct_local" | "approval_gated" | "deferred";
 export type SafetyRiskFlag =
   | "requires_approval"
   | "external_action"
@@ -1156,6 +1159,28 @@ export interface OpenClawRuntimeStatus {
   nextCheckAt: string;
   healthScore: number;
   notes: string;
+}
+
+export interface OpenClawMcpServer {
+  id: string;
+  name: string;
+  kind: OpenClawMcpServerKind;
+  packageName: string;
+  packageVersion: string;
+  command?: string;
+  args: string[];
+  env?: Record<string, string>;
+  allowedAgentIds: string[];
+  allowedPaths?: string[];
+  status: OpenClawMcpServerStatus;
+  safetyMode: OpenClawMcpSafetyMode;
+  enabled: boolean;
+  configured: boolean;
+  installed: boolean;
+  lastCheckedAt?: string;
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface Quest {

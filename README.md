@@ -27,6 +27,8 @@ This build covers the local end-to-end MVP:
 - Phases 11-16 Launch Control workspace for approved publishing/outreach posture, budget ledger visibility, controlled runner controls, portfolio optimization, diagnostics, signed updates, and local-first sync posture.
 - Phases 17-28 Business OS expansion: durable mission tasks, artifacts, command ledger, SEO source captures, keyword clusters, demand proof, static-site content drafts, affiliate offer review, read-only analytics snapshots, learning decisions, batch approvals, controlled job schedules, agent memory, publishing connector posture, spend/revenue ledger, and portfolio scoring.
 - Phase 11A mission delegation release: TeamLeader1A chat can draft a multi-agent mission, request one batch approval for exact local OpenClaw agent turns, and collect research, SEO, content, production, publishing-checklist, operations, and TeamLeader review outputs into a unified Mission Brief.
+- Playwright QA smoke coverage for Dashboard, TeamLeader1A Chat, Mission Briefs, Approvals, OpenClaw System, Settings, and updater marker checks.
+- Free local OpenClaw MCP Manager for scoped filesystem memory, durable local memory, and disabled approval-gated fetch configuration; browser/Puppeteer MCP remains deferred.
 - Native Tauri plugin wiring for SQL, filesystem, dialog, and opener.
 
 ## Safety Position
@@ -80,6 +82,13 @@ Build the frontend:
 npm.cmd run build
 ```
 
+Install Playwright's Chromium test browser and run the smoke tests:
+
+```powershell
+npm.cmd exec playwright install chromium
+npm.cmd run test:playwright
+```
+
 Preview the production frontend build:
 
 ```powershell
@@ -123,7 +132,7 @@ npm.cmd run tauri build
 npm.cmd run release:prepare-updater
 ```
 
-Create GitHub release `v0.1.6` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
+Create GitHub release `v0.1.7` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
 
 For a controlled local dev launch that reuses an already-running Vite server, use:
 
@@ -156,6 +165,14 @@ Important service boundaries:
 - `openclawService`: hybrid adapter for runtime status, profile sync, approved real local actions in Tauri, and safe browser fallback.
 - `sqliteService`: schema plan and persistence status metadata.
 
+## Playwright QA
+
+Playwright is used for web-shell smoke testing before desktop packaging. The smoke suite starts Vite on `http://127.0.0.1:4174` and checks the main command-center routes, TeamLeader1A chat mission draft flow, Mission Briefs, Approvals, OpenClaw System MCP Manager, Settings, and updater marker.
+
+```powershell
+npm.cmd run test:playwright
+```
+
 ## SQLite Persistence
 
 The app reserves and migrates these local tables:
@@ -186,6 +203,7 @@ The app reserves and migrates these local tables:
 - `openclaw_commands`
 - `openclaw_events`
 - `openclaw_capabilities`
+- `openclaw_mcp_servers`
 - `openclaw_permissions`
 - `openclaw_runtime_status`
 - `app_metadata`
@@ -269,8 +287,19 @@ Local approval/rejection decisions are saved and logged. Phase 5B OpenClaw paylo
 - Enforcing approval rules.
 - Syncing logs to SQLite.
 - Exporting OpenClaw memory to Obsidian.
+- Listing, installing, and repairing the free local MCP kit through the MCP Manager.
 
 The native bridge lives in `src-tauri/src/lib.rs`. It calls `openclaw.cmd` directly with a strict command allowlist and rejects blocked intent such as `--deliver`, broadcast, purchases, fake reviews, spam, login automation, CAPTCHA bypass, form submission, publishing, and unrestricted scraping.
+
+## Free Local MCP Kit
+
+The OpenClaw System page includes an MCP Manager for safe local agent tools:
+
+- `@modelcontextprotocol/server-filesystem`, scoped only to approved OpenClaw workspace and vault folders.
+- `@modelcontextprotocol/server-memory`, storing local memory at `C:\Users\User\.openclaw\memory\openclaw-mcp-memory.jsonl`.
+- `mcp-fetch-server`, installed but disabled for general agent access and reserved for Mission Control approval-gated URL research.
+
+The Puppeteer/browser MCP is intentionally deferred until Mission Control has a dedicated approval wrapper for browser automation. MCP installation does not enable spending, publishing, messaging, login automation, form submission, purchases, or uncontrolled scraping.
 
 ## Future Integration Notes
 

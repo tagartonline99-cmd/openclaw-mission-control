@@ -37,6 +37,7 @@ import {
   openClawCapabilities,
   openClawCommands,
   openClawEvents,
+  openClawMcpServers,
   openClawPermissions,
   openClawRuntimeStatus,
   offerClaimReviews,
@@ -103,6 +104,7 @@ import type {
   OpenClawCapability,
   OpenClawCommand,
   OpenClawEvent,
+  OpenClawMcpServer,
   OpenClawPermission,
   OpenClawRuntimeStatus,
   OfferClaimReview,
@@ -191,6 +193,7 @@ export interface AppDataState {
   activityLogs: ActivityLog[];
   openClawCommands: OpenClawCommand[];
   openClawEvents: OpenClawEvent[];
+  openClawMcpServers: OpenClawMcpServer[];
   openClawCapabilities: OpenClawCapability[];
   openClawPermissions: OpenClawPermission[];
   openClawRuntimeStatus: OpenClawRuntimeStatus;
@@ -269,6 +272,7 @@ type EntityKey =
   | "activityLogs"
   | "openClawCommands"
   | "openClawEvents"
+  | "openClawMcpServers"
   | "openClawCapabilities"
   | "openClawPermissions"
   | "realPilotRuns";
@@ -357,6 +361,7 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "teamLeaderChatMessages", tableName: "teamleader_chat_messages" },
   { stateKey: "openClawCommands", tableName: "openclaw_commands" },
   { stateKey: "openClawEvents", tableName: "openclaw_events" },
+  { stateKey: "openClawMcpServers", tableName: "openclaw_mcp_servers" },
   { stateKey: "openClawCapabilities", tableName: "openclaw_capabilities" },
   { stateKey: "openClawPermissions", tableName: "openclaw_permissions" },
   { stateKey: "realPilotRuns", tableName: "real_pilot_runs" },
@@ -429,6 +434,7 @@ export const initialAppDataState: AppDataState = {
   activityLogs,
   openClawCommands,
   openClawEvents,
+  openClawMcpServers,
   openClawCapabilities,
   openClawPermissions,
   openClawRuntimeStatus,
@@ -724,6 +730,7 @@ function normalizePhase6BState(state: AppDataState) {
   state.revenueRecords ??= cloneState(initialAppDataState).revenueRecords;
   state.portfolioScores ??= cloneState(initialAppDataState).portfolioScores;
   state.externalActionLock ??= cloneState(initialAppDataState).externalActionLock;
+  state.openClawMcpServers ??= cloneState(initialAppDataState).openClawMcpServers;
   state.approvalDecisionRecords ??= [];
   state.allowlistEntries = safetyPolicyService.migrateSettingsAllowlists(state.userSettings, state.allowlistEntries ?? []);
   for (const request of state.approvalRequests) {
