@@ -29,6 +29,7 @@ This build covers the local end-to-end MVP:
 - Phases 17-28 Business OS expansion: durable mission tasks, artifacts, command ledger, SEO source captures, keyword clusters, demand proof, static-site content drafts, affiliate offer review, read-only analytics snapshots, learning decisions, batch approvals, controlled job schedules, agent memory, publishing connector posture, spend/revenue ledger, and portfolio scoring.
 - Phase 11A mission delegation release: TeamLeader1A chat can draft a multi-agent mission, request one batch approval for exact local OpenClaw agent turns, and collect research, SEO, content, production, publishing-checklist, operations, and TeamLeader review outputs into a unified Mission Brief.
 - Phase 11B TeamLeader Command Center release: TeamLeader prompts create live opportunity hunts, visible agent tasks, animated Guild Office stations, Business Proposal Mission Briefs, approved business dashboards, production destination clarity, and simpler approval lanes.
+- Phase 11B command delegation fix: normal TeamLeader work commands now create visible agent tasks, while status/help questions stay as local replies.
 - Playwright QA smoke coverage for Dashboard, TeamLeader1A Chat, Mission Briefs, Approvals, OpenClaw System, Settings, and updater marker checks.
 - Free local OpenClaw MCP Manager for scoped filesystem memory, durable local memory, and disabled approval-gated fetch configuration; browser/Puppeteer MCP remains deferred.
 - Native Tauri plugin wiring for SQL, filesystem, dialog, and opener.
@@ -134,7 +135,7 @@ npm.cmd run tauri build
 npm.cmd run release:prepare-updater
 ```
 
-Create GitHub release `v0.1.8` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
+Create GitHub release `v0.1.9` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
 
 For a controlled local dev launch that reuses an already-running Vite server, use:
 

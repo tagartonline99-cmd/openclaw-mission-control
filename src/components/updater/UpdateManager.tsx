@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "TeamLeader command center release 0.1.8";
+const UPDATER_VERIFICATION_MARKER = "TeamLeader command center release 0.1.9";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;

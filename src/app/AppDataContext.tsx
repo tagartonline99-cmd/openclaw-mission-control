@@ -352,13 +352,64 @@ function agentLabel(agentId: MissionAgentId) {
 
 function shouldStartOpportunityHunt(message: string) {
   const lower = message.toLowerCase();
+  const statusOrNavigationOnly = [
+    "what are the agents doing",
+    "what is happening",
+    "where is",
+    "where can i",
+    "where do i",
+    "show me",
+    "how can i use",
+    "how do i use",
+    "status",
+    "help",
+  ].some((phrase) => lower.startsWith(phrase));
+  if (statusOrNavigationOnly) return false;
+
+  const delegationSignals = [
+    "find",
+    "research",
+    "search",
+    "browse",
+    "scrape",
+    "validate",
+    "plan",
+    "create",
+    "build",
+    "make",
+    "propose",
+    "analyze",
+    "investigate",
+    "compare",
+    "improve",
+    "write",
+    "draft",
+    "produce",
+    "prepare",
+    "start",
+    "run",
+    "generate",
+    "choose",
+    "recommend",
+    "seo",
+    "content",
+    "production",
+    "newsletter",
+    "affiliate",
+    "website",
+    "product",
+    "template",
+  ];
+
   return (
     lower.includes("business idea") ||
     lower.includes("make money") ||
     lower.includes("zero budget") ||
     lower.includes("best online business") ||
     lower.includes("find me") ||
-    lower.includes("proposal")
+    lower.includes("proposal") ||
+    delegationSignals.some((signal) => lower.includes(signal)) ||
+    lower.split(/\s+/).filter(Boolean).length >= 4
   );
 }
 

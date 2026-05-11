@@ -185,7 +185,7 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
           </div>
         </div>
         <p className="text-xs leading-5 text-slate-500">
-          Safe autonomous research and internal agent planning start from TeamLeader1A without approval. Spending, publishing, messaging, connector execution, launch, login automation, form submission, and purchases still require approval.
+          Work commands to TeamLeader1A create visible agent tasks without approval. Status/help questions stay as local replies. Spending, publishing, messaging, connector execution, launch, login automation, form submission, and purchases still require approval.
         </p>
       </CardContent>
     </Card>

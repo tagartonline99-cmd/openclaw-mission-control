@@ -7,7 +7,7 @@ test("TeamLeader command creates visible agent work, proposal, business, and pro
 
   await page
     .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
-    .fill("find me the best online business idea with zero budget");
+    .fill("research newsletter angles for freelancers");
   await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
   await expect(page.getByText(/I started a live opportunity hunt/i)).toBeVisible();
   await expect(page.getByText(/View Work/i).first()).toBeVisible();
