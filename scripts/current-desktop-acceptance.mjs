@@ -390,7 +390,7 @@ async function main() {
     await route(client, "/production", "Product Studio");
     await waitFor(
       client,
-      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('product build status') && text.includes('real openclaw build complete') && text.includes('exact product preview') && text.includes('real local files written') && text.includes('mission-control-products'); })()",
+      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('product build status') && text.includes('real openclaw build complete') && text.includes('exact product preview') && text.includes('real local files written') && text.includes('product qa gate') && text.includes('product files passed qa checks') && text.includes('mission-control-products'); })()",
       "real Product Studio output",
       120_000,
     );
@@ -459,7 +459,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('no-fallback product factory release')", `${expectedVersion} updater marker`);
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('product qa gate release')", `${expectedVersion} updater marker`);
     evidence.appVersion = await waitFor(
       client,
       `(async () => {

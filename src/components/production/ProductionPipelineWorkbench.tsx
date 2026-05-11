@@ -115,6 +115,11 @@ export function ProductionPipelineWorkbench() {
     primaryProductFile?.content?.trim() ||
     productFullText.trim()
   ).slice(0, 14_000);
+  const productQualityIssues = productFiles.flatMap((file) => (file.qualityIssues ?? []).map((issue) => `${file.fileName}: ${issue}`));
+  const productQualityBlocked = productFiles.filter((file) => file.qualityStatus === "blocked").length;
+  const productQualityAverage = productFiles.length
+    ? Math.round(productFiles.reduce((total, file) => total + (file.qualityScore ?? 0), 0) / productFiles.length)
+    : 0;
   const runtimeLabel = buildComplete ? "real openclaw + local files" : productionRun?.runtimeMode ? label(productionRun.runtimeMode) : preview?.generatedByAgents ? "real product factory" : "not generated yet";
   const monitorStatus = buildBlocked
     ? "Real OpenClaw Build Blocked"
@@ -403,6 +408,50 @@ export function ProductionPipelineWorkbench() {
                         </div>
                       ) : null}
                     </div>
+                    <div className={`mt-4 rounded-lg border p-4 ${productQualityBlocked ? "border-red-300/25 bg-red-500/10" : productFiles.length ? "border-emerald-300/20 bg-emerald-400/8" : "border-white/10 bg-black/25"}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={productQualityBlocked ? "red" : productFiles.length ? "emerald" : "slate"}>Product QA Gate</Badge>
+                            {productFiles.length ? <Badge tone={productQualityBlocked ? "red" : "emerald"}>{productQualityAverage}/100 avg</Badge> : null}
+                          </div>
+                          <h3 className="mt-2 font-display text-xl font-semibold text-stone-100">
+                            {productQualityBlocked ? "Product needs repair before review approval" : productFiles.length ? "Product files passed QA checks" : "Product QA waits for real files"}
+                          </h3>
+                          <p className="mt-1 text-sm leading-6 text-slate-300">
+                            {readinessGate?.fileQualitySummary ?? "Mission Control checks each generated file for useful length, required sections, unresolved placeholders, prompt leakage, valid JSON, and approval boundaries."}
+                          </p>
+                        </div>
+                        <div className="grid min-w-[220px] gap-2 text-sm text-slate-300">
+                          <p><span className="text-slate-500">Files checked:</span> {productFiles.length}</p>
+                          <p><span className="text-slate-500">Blocked files:</span> {productQualityBlocked}</p>
+                          <p><span className="text-slate-500">Approval:</span> {productQualityBlocked ? "disabled until repaired" : buildComplete ? "local review allowed" : "waiting"}</p>
+                        </div>
+                      </div>
+                      {productFiles.length ? (
+                        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                          {productFiles.slice(0, 8).map((file) => (
+                            <div key={`${file.id}-qa`} className="rounded-md border border-white/10 bg-black/30 p-3 text-sm">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="font-semibold text-stone-100">{file.fileName}</p>
+                                <Badge tone={file.qualityStatus === "blocked" ? "red" : file.qualityStatus === "warning" ? "amber" : "emerald"}>{file.qualityScore ?? 0}/100</Badge>
+                              </div>
+                              <p className="mt-2 text-xs uppercase text-slate-500">{label(file.qualityStatus ?? "not_checked")}</p>
+                              <div className="mt-2 space-y-1 text-xs leading-5 text-slate-300">
+                                {(file.qualityIssues?.length ? file.qualityIssues : (file.qualityChecks ?? ["QA check recorded."]).slice(0, 2)).slice(0, 3).map((item) => (
+                                  <p key={item}>- {item}</p>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {productQualityIssues.length ? (
+                        <div className="mt-4 rounded-md border border-red-300/20 bg-black/30 p-3 text-sm leading-6 text-red-100">
+                          {productQualityIssues.slice(0, 6).map((issue) => <p key={issue}>- {issue}</p>)}
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="mt-4 rounded-lg border border-teal-300/20 bg-black/35 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
@@ -524,7 +573,7 @@ export function ProductionPipelineWorkbench() {
                           <div key={file.id} className="rounded-md border border-white/10 bg-black/35 p-3">
                             <div className="flex items-center justify-between gap-2">
                               <p className="font-semibold text-stone-100">{file.fileName}</p>
-                              <Badge tone={file.status === "written" || file.status === "virtual" ? "emerald" : "red"}>{label(file.status)}</Badge>
+                              <Badge tone={file.status === "written" && file.qualityStatus !== "blocked" ? "emerald" : "red"}>{label(file.qualityStatus ?? file.status)}</Badge>
                             </div>
                             <p className="mt-2 text-xs uppercase text-slate-500">{label(file.runtimeMode)}</p>
                             <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-300">{file.content}</p>

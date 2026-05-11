@@ -1976,6 +1976,92 @@ function productFilesForTrack(track: ProductTrack, proposal: BusinessProposal, a
   ];
 }
 
+function productFileQualityCheck(file: { fileName: string; content: string }, track: ProductTrack) {
+  const checks: string[] = [];
+  const issues: string[] = [];
+  const lowerName = file.fileName.toLowerCase();
+  const content = file.content.trim();
+  const lower = content.toLowerCase();
+  const isJson = lowerName.endsWith(".json");
+  const minimumLength =
+    isJson ? 60 :
+    lowerName === "readme.md" ? 420 :
+    lowerName.includes("proof") ? 650 :
+    lowerName.includes("claims") ? 360 :
+    lowerName.includes("platform") ? 160 :
+    lowerName.includes("buyer") ? 260 :
+    lowerName.includes("faq") ? 420 :
+    lowerName.includes("packages") ? 500 :
+    lowerName.includes("fiverr") || lowerName.includes("product-full") ? 1_800 :
+    700;
+
+  if (content.length >= minimumLength) checks.push(`Minimum useful length passed (${content.length}/${minimumLength} chars).`);
+  else issues.push(`Too thin to review (${content.length}/${minimumLength} chars).`);
+
+  if (/\b(todo|tbd|replace this|lorem ipsum)\b|\{\{[^}]+\}\}|\[[^\]]*placeholder[^\]]*\]|<[^>]*(insert|replace|todo)[^>]*>|insert .{0,40} here/i.test(content)) {
+    issues.push("Contains unresolved placeholder markers.");
+  } else {
+    checks.push("No unresolved placeholder markers found.");
+  }
+
+  if (/i (can't|cannot|won't) (create|produce|write|help)|standing by|awaiting (your|the) (instruction|request)|acknowledged/i.test(content.slice(0, 1_200))) {
+    issues.push("Looks like an acknowledgement/refusal instead of a finished product file.");
+  } else {
+    checks.push("Does not look like a refusal or acknowledgement.");
+  }
+
+  if (/previous agent handoff excerpts|you must write the artifact now|use these exact markdown headings|required deliverables:/i.test(content)) {
+    issues.push("Prompt/instruction text leaked into the product file.");
+  } else {
+    checks.push("No obvious prompt leakage found.");
+  }
+
+  if (isJson) {
+    try {
+      const parsed = JSON.parse(content) as Record<string, unknown>;
+      const keyCount = Object.keys(parsed).length;
+      if (keyCount >= 2) checks.push(`JSON platform fields are parseable (${keyCount} fields).`);
+      else issues.push("JSON platform fields are too sparse.");
+    } catch {
+      issues.push("JSON platform fields are not valid JSON.");
+    }
+  }
+
+  const requiredSignals: Array<[boolean, string]> = [];
+  if (track.type === "fiverr_gig_package") {
+    if (lowerName === "fiverr-gig.md") requiredSignals.push([/gig title|gig description|packages|buyer requirements/i.test(content), "Fiverr gig file includes title/description/packages/buyer requirements."]);
+    if (lowerName === "packages.md") requiredSignals.push([/basic|standard|premium|package/i.test(content), "Package file includes package tiers or package scope."]);
+    if (lowerName === "faq.md") requiredSignals.push([/faq|\?|question|answer/i.test(content), "FAQ file includes questions/answers."]);
+    if (lowerName === "buyer-requirements.md") requiredSignals.push([/buyer|requirement|intake|question|client/i.test(content), "Buyer requirements include intake/request details."]);
+  }
+  if (lowerName.includes("claims")) {
+    requiredSignals.push([/no guaranteed|misleading|fake reviews|spam|risks|claims/i.test(content), "Claims & Safety Check covers prohibited claims and risks."]);
+    requiredSignals.push([/no publishing|no external|separate approval|approval/i.test(content), "Claims & Safety Check states the external approval boundary."]);
+  }
+  if (lowerName.includes("proof")) requiredSignals.push([/evidence|citation|validation|source|proposal|risk/i.test(content), "Proof pack contains evidence, validation, or risk context."]);
+  if (lowerName === "readme.md") requiredSignals.push([/what this is|what has not happened|review order/i.test(content), "README explains what the package is and how to review it."]);
+  for (const [passed, description] of requiredSignals) {
+    if (passed) checks.push(description);
+    else issues.push(`Missing required signal: ${description}`);
+  }
+
+  const blockingIssues = issues.filter((issue) =>
+    issue.startsWith("Too thin") ||
+    issue.includes("placeholder") ||
+    issue.includes("refusal") ||
+    issue.includes("Prompt/instruction") ||
+    issue.includes("not valid JSON") ||
+    issue.includes("Missing required signal"),
+  );
+  const score = Math.max(0, Math.min(100, 100 - issues.length * 18 - blockingIssues.length * 12));
+  return {
+    status: blockingIssues.length ? "blocked" as const : issues.length ? "warning" as const : "passed" as const,
+    score,
+    checks,
+    issues,
+  };
+}
+
 async function buildRealProductProductionBundle(current: AppDataState, proposal: BusinessProposal, businessId: string, questId: string, now: string) {
   const platformPackage = current.platformExecutionPackages.find((item) => proposal.platformExecutionPackageIds.includes(item.id));
   const trackPlan = productTrackForProposal(proposal, platformPackage);
@@ -2196,6 +2282,7 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
   const manifestId = id("product-file-manifest");
   const fileRecords: ProductFileRecord[] = fileDrafts.map((file) => {
     const written = writeResult.written.find((item) => item.fileName === file.fileName);
+    const quality = productFileQualityCheck(file, track);
     return {
       id: id("product-file"),
       manifestId,
@@ -2210,13 +2297,18 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
       content: file.content,
       status: writeResult.mode === "tauri-file" && written?.ok ? "written" : "blocked",
       runtimeMode: writeResult.mode === "tauri-file" && written?.ok ? "local_file" : "blocked",
+      qualityStatus: quality.status,
+      qualityScore: quality.score,
+      qualityChecks: quality.checks,
+      qualityIssues: quality.issues,
       createdAt: now,
       updatedAt: new Date().toISOString(),
     };
   });
   const fileIds = fileRecords.map((file) => file.id);
   const writtenFilePaths = fileRecords.filter((file) => file.status === "written").map((file) => file.path);
-  const fileWriteBlocked = !writeResult.ok || writtenFilePaths.length !== requiredFileNames.length;
+  const fileQualityIssues = fileRecords.flatMap((file) => (file.qualityStatus === "blocked" ? (file.qualityIssues ?? []).map((issue) => `${file.fileName}: ${issue}`) : []));
+  const fileWriteBlocked = !writeResult.ok || writtenFilePaths.length !== requiredFileNames.length || fileQualityIssues.length > 0;
   const manifest: ProductFileManifest = {
     id: manifestId,
     runId,
@@ -2235,8 +2327,10 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
     runId,
     businessId,
     proposalId: proposal.id,
-    title: fileWriteBlocked ? "Real local product file write blocked" : "Real local product files written",
-    summary: writeResult.message,
+    title: fileWriteBlocked ? "Real local product file QA blocked" : "Real local product files written and QA checked",
+    summary: fileWriteBlocked && fileQualityIssues.length
+      ? `Product files were written, but QA blocked review: ${fileQualityIssues.slice(0, 4).join(" ")}`
+      : writeResult.message,
     runtimeMode: fileWriteBlocked ? "blocked" : "local_file",
     fileIds,
     externalActionStatus: "none",
@@ -2260,8 +2354,12 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
     ? [
         writeResult.message,
         ...requiredFileNames.filter((fileName) => !fileRecords.some((file) => file.fileName === fileName && file.status === "written")).map((fileName) => `Missing written file: ${fileName}`),
+        ...fileQualityIssues,
       ]
     : [];
+  const fileQualitySummary = fileQualityIssues.length
+    ? `${fileQualityIssues.length} product file quality issue(s) must be repaired before local draft approval.`
+    : `Product QA passed for ${fileRecords.length} file(s).`;
   const readinessGate: ProductReadinessGate = {
     id: id("product-readiness"),
     runId,
@@ -2273,10 +2371,12 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
     blockedReasons: fileBlockers,
     requiredFileNames,
     writtenFilePaths,
+    fileQualitySummary,
+    fileQualityIssues,
     canRequestPublishApproval: false,
     summary: fileWriteBlocked
-      ? `${track.label} product build blocked during local file write. No fallback product is accepted.`
-      : `${track.label} generated ${fileRecords.length} real local product file(s) from validated OpenClaw agent artifacts.`,
+      ? `${track.label} product build blocked during local file write or Product QA. No fallback product is accepted.`
+      : `${track.label} generated ${fileRecords.length} real local product file(s) from validated OpenClaw agent artifacts and Product QA passed.`,
     updatedAt: new Date().toISOString(),
   };
   const run: ProductProductionRun = {

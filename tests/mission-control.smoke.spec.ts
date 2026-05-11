@@ -150,7 +150,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Release And Updater Checklist")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/No-Fallback Product Factory release/i)).toBeVisible();
+  await expect(page.getByText(/Product QA Gate release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

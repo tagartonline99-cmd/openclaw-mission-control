@@ -1170,6 +1170,10 @@ export interface ProductFileRecord {
   content: string;
   status: ProductFileRecordStatus;
   runtimeMode: ProductRuntimeMode;
+  qualityStatus?: "passed" | "warning" | "blocked";
+  qualityScore?: number;
+  qualityChecks?: string[];
+  qualityIssues?: string[];
   createdAt: string;
   updatedAt: string;
 }
@@ -1202,6 +1206,8 @@ export interface ProductReadinessGate {
   failedAgentId?: MissionAgentId | "TeamLeader1A";
   requiredFileNames?: string[];
   writtenFilePaths?: string[];
+  fileQualitySummary?: string;
+  fileQualityIssues?: string[];
   canRequestPublishApproval: boolean;
   summary: string;
   updatedAt: string;
