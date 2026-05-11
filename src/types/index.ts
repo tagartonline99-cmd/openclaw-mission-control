@@ -192,6 +192,17 @@ export type PublicResearchFetchStatus = "queued" | "fetched" | "failed" | "block
 export type BrowserResearchStatus = "queued" | "captured" | "failed" | "blocked" | "skipped";
 export type BrowserResearchArtifactType = "page_summary" | "screenshot";
 export type CandidateBusinessStatus = "candidate" | "winner" | "rejected" | "archived";
+export type BusinessOperatingRunStatus = "running" | "paused" | "complete" | "blocked";
+export type BusinessIterationPhase = "research" | "validate" | "produce" | "review" | "improve";
+export type BusinessIterationStatus = "queued" | "running" | "complete" | "blocked";
+export type ExecutionReceiptStatus = "success" | "warning" | "blocked" | "failed" | "pending";
+export type EvidenceQualityGrade = "strong" | "moderate" | "weak" | "unsupported";
+export type LocalAssetFileType = "fiverr_gig" | "landing_page" | "article" | "newsletter" | "template" | "sop" | "obsidian_pack";
+export type LocalAssetFileStatus = "planned" | "preview_only" | "written" | "blocked";
+export type PublishingPackageStatus = "local_draft" | "ready_for_approval" | "approval_requested" | "blocked";
+export type BudgetLedgerEntryType = "planned_spend" | "approved_spend" | "actual_spend" | "revenue" | "time_cost" | "adjustment";
+export type AutopilotJobType = "research_refresh" | "content_update" | "metric_reminder" | "improvement_proposal" | "local_asset_refresh";
+export type AutopilotJobStatus = "queued" | "running" | "completed" | "paused" | "blocked" | "failed";
 export type MissionBriefSectionKind =
   | "overview"
   | "research"
@@ -662,6 +673,190 @@ export interface AutonomousImprovementRun {
   taskIds: string[];
   lastTeamLeaderSummary: string;
   startedAt: string;
+  updatedAt: string;
+}
+
+export interface ApprovedBusinessCockpit {
+  id: string;
+  businessId: string;
+  objective: string;
+  currentStage: string;
+  operatingRunIds: string[];
+  iterationIds: string[];
+  agentArtifactIds: string[];
+  executionReceiptIds: string[];
+  metricSnapshotIds: string[];
+  budgetLedgerEntryIds: string[];
+  productionAssetIds: string[];
+  localAssetFileIds: string[];
+  publishingPackageIds: string[];
+  autopilotJobIds: string[];
+  nextBestActions: string[];
+  healthScore: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BusinessOperatingRun {
+  id: string;
+  businessId: string;
+  status: BusinessOperatingRunStatus;
+  currentCycle: BusinessIterationPhase;
+  cycleNumber: number;
+  iterationIds: string[];
+  taskIds: string[];
+  receiptIds: string[];
+  summary: string;
+  nextAction: string;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface BusinessIteration {
+  id: string;
+  businessId: string;
+  runId: string;
+  cycleNumber: number;
+  phase: BusinessIterationPhase;
+  status: BusinessIterationStatus;
+  agentId: MissionAgentId;
+  objective: string;
+  output: string;
+  evidenceIds: string[];
+  artifactIds: string[];
+  receiptIds: string[];
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface ExecutionReceipt {
+  id: string;
+  businessId?: string;
+  proposalId?: string;
+  taskId?: string;
+  agentId?: MissionAgentId;
+  actionType: string;
+  title: string;
+  summary: string;
+  source?: string;
+  artifactIds: string[];
+  budgetEffect: string;
+  externalAction: boolean;
+  approvalRequired: boolean;
+  status: ExecutionReceiptStatus;
+  nextAction: string;
+  createdAt: string;
+}
+
+export interface ResearchQueryPlan {
+  id: string;
+  huntId?: string;
+  businessId?: string;
+  prompt: string;
+  depth: OpportunityHuntDepth;
+  queries: string[];
+  sourcePackIds: string[];
+  blockedTerms: string[];
+  safeMode: "public_read_only";
+  createdAt: string;
+}
+
+export interface OpportunityCandidate {
+  id: string;
+  huntId?: string;
+  businessId?: string;
+  title: string;
+  summary: string;
+  score: number;
+  reasons: string[];
+  riskFlags: string[];
+  sourceIds: string[];
+  status: CandidateBusinessStatus;
+  createdAt: string;
+}
+
+export interface EvidenceQualityScore {
+  id: string;
+  evidenceId?: string;
+  citationId?: string;
+  source: string;
+  credibility: number;
+  freshness: number;
+  relevance: number;
+  confidence: number;
+  grade: EvidenceQualityGrade;
+  notes: string[];
+  createdAt: string;
+}
+
+export interface LocalAssetFile {
+  id: string;
+  businessId: string;
+  productionAssetId?: string;
+  title: string;
+  type: LocalAssetFileType;
+  platform: string;
+  intendedPath: string;
+  fileName: string;
+  content: string;
+  status: LocalAssetFileStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublishingPackage {
+  id: string;
+  businessId: string;
+  destinationId?: string;
+  platform: string;
+  title: string;
+  status: PublishingPackageStatus;
+  localAssetFileIds: string[];
+  approvalBoundary: string;
+  requiredUserSteps: string[];
+  connectorActionsBlocked: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BusinessMetricSnapshot {
+  id: string;
+  businessId: string;
+  traffic: number;
+  clicks: number;
+  leads: number;
+  conversions: number;
+  revenue: number;
+  cost: number;
+  timeSpentHours: number;
+  confidence: number;
+  notes: string;
+  createdAt: string;
+}
+
+export interface BudgetLedgerEntry {
+  id: string;
+  businessId: string;
+  type: BudgetLedgerEntryType;
+  amount: number;
+  currency: "USD";
+  description: string;
+  approvalId?: string;
+  createdAt: string;
+}
+
+export interface AutopilotJob {
+  id: string;
+  businessId: string;
+  type: AutopilotJobType;
+  status: AutopilotJobStatus;
+  safeAutonomous: boolean;
+  approvalRequired: boolean;
+  title: string;
+  result: string;
+  runAt: string;
   updatedAt: string;
 }
 

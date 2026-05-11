@@ -94,14 +94,20 @@ import type {
   AnalyticsSnapshot,
   AgentOrchestrationRun,
   AgentRunReview,
+  ApprovedBusinessCockpit,
   ApprovedBusiness,
   AllowlistEntry,
   ApprovalRequest,
   ApprovalDecisionRecord,
+  AutopilotJob,
   AutonomousImprovementRun,
   BatchApprovalItem,
   BatchApprovalPackage,
   Budget,
+  BudgetLedgerEntry,
+  BusinessIteration,
+  BusinessMetricSnapshot,
+  BusinessOperatingRun,
   BusinessProposal,
   BusinessIdea,
   BusinessTask,
@@ -120,14 +126,17 @@ import type {
   CommandLedgerEntry,
   ContentItem,
   ContentInventoryItem,
+  EvidenceQualityScore,
   EvidenceCitation,
   ExternalActionLock,
   ExternalPlatformRequirement,
+  ExecutionReceipt,
   GuildOfficeStation,
   ImprovementProposal,
   JobRun,
   JobSchedule,
   LearningCard,
+  LocalAssetFile,
   MarketIntelligenceReport,
   AgentTurnResult,
   MissionArtifact,
@@ -146,10 +155,12 @@ import type {
   OpenClawRuntimeStatus,
   OfferClaimReview,
   OpportunityHunt,
+  OpportunityCandidate,
   ProductionAsset,
   ProductionPack,
   ProductionDestination,
   PlatformExecutionPackage,
+  PublishingPackage,
   PublicResearchFetch,
   PublicResearchRun,
   PublishingDiff,
@@ -157,6 +168,7 @@ import type {
   PortfolioScore,
   Quest,
   ResearchEvidence,
+  ResearchQueryPlan,
   ResearchSourcePack,
   ResearchSourceCapture,
   RealPilotRun,
@@ -231,6 +243,18 @@ export interface AppDataState {
   externalPlatformRequirements: ExternalPlatformRequirement[];
   platformExecutionPackages: PlatformExecutionPackage[];
   autonomousImprovementRuns: AutonomousImprovementRun[];
+  approvedBusinessCockpits: ApprovedBusinessCockpit[];
+  businessOperatingRuns: BusinessOperatingRun[];
+  businessIterations: BusinessIteration[];
+  executionReceipts: ExecutionReceipt[];
+  researchQueryPlans: ResearchQueryPlan[];
+  opportunityCandidates: OpportunityCandidate[];
+  evidenceQualityScores: EvidenceQualityScore[];
+  localAssetFiles: LocalAssetFile[];
+  publishingPackages: PublishingPackage[];
+  businessMetricSnapshots: BusinessMetricSnapshot[];
+  budgetLedgerEntries: BudgetLedgerEntry[];
+  autopilotJobs: AutopilotJob[];
   missionDrafts: MissionDraft[];
   missionRuns: MissionRun[];
   missionAgentSteps: MissionAgentStep[];
@@ -332,6 +356,18 @@ type EntityKey =
   | "externalPlatformRequirements"
   | "platformExecutionPackages"
   | "autonomousImprovementRuns"
+  | "approvedBusinessCockpits"
+  | "businessOperatingRuns"
+  | "businessIterations"
+  | "executionReceipts"
+  | "researchQueryPlans"
+  | "opportunityCandidates"
+  | "evidenceQualityScores"
+  | "localAssetFiles"
+  | "publishingPackages"
+  | "businessMetricSnapshots"
+  | "budgetLedgerEntries"
+  | "autopilotJobs"
   | "missionDrafts"
   | "missionRuns"
   | "missionAgentSteps"
@@ -443,6 +479,18 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "externalPlatformRequirements", tableName: "external_platform_requirements" },
   { stateKey: "platformExecutionPackages", tableName: "platform_execution_packages" },
   { stateKey: "autonomousImprovementRuns", tableName: "autonomous_improvement_runs" },
+  { stateKey: "approvedBusinessCockpits", tableName: "approved_business_cockpits" },
+  { stateKey: "businessOperatingRuns", tableName: "business_operating_runs" },
+  { stateKey: "businessIterations", tableName: "business_iterations" },
+  { stateKey: "executionReceipts", tableName: "execution_receipts" },
+  { stateKey: "researchQueryPlans", tableName: "research_query_plans" },
+  { stateKey: "opportunityCandidates", tableName: "opportunity_candidates" },
+  { stateKey: "evidenceQualityScores", tableName: "evidence_quality_scores" },
+  { stateKey: "localAssetFiles", tableName: "local_asset_files" },
+  { stateKey: "publishingPackages", tableName: "publishing_packages" },
+  { stateKey: "businessMetricSnapshots", tableName: "business_metric_snapshots" },
+  { stateKey: "budgetLedgerEntries", tableName: "budget_ledger_entries" },
+  { stateKey: "autopilotJobs", tableName: "autopilot_jobs" },
   { stateKey: "missionDrafts", tableName: "mission_drafts" },
   { stateKey: "missionRuns", tableName: "mission_runs" },
   { stateKey: "missionAgentSteps", tableName: "mission_agent_steps" },
@@ -538,6 +586,18 @@ export const initialAppDataState: AppDataState = {
   externalPlatformRequirements,
   platformExecutionPackages,
   autonomousImprovementRuns,
+  approvedBusinessCockpits: [],
+  businessOperatingRuns: [],
+  businessIterations: [],
+  executionReceipts: [],
+  researchQueryPlans: [],
+  opportunityCandidates: [],
+  evidenceQualityScores: [],
+  localAssetFiles: [],
+  publishingPackages: [],
+  businessMetricSnapshots: [],
+  budgetLedgerEntries: [],
+  autopilotJobs: [],
   missionDrafts: [],
   missionRuns: [],
   missionAgentSteps: [],
@@ -902,6 +962,18 @@ function normalizePhase6BState(state: AppDataState) {
   state.externalPlatformRequirements ??= [];
   state.platformExecutionPackages ??= [];
   state.autonomousImprovementRuns ??= [];
+  state.approvedBusinessCockpits ??= [];
+  state.businessOperatingRuns ??= [];
+  state.businessIterations ??= [];
+  state.executionReceipts ??= [];
+  state.researchQueryPlans ??= [];
+  state.opportunityCandidates ??= [];
+  state.evidenceQualityScores ??= [];
+  state.localAssetFiles ??= [];
+  state.publishingPackages ??= [];
+  state.businessMetricSnapshots ??= [];
+  state.budgetLedgerEntries ??= [];
+  state.autopilotJobs ??= [];
   state.businessProposals = state.businessProposals.map((proposal) => ({
     ...proposal,
     budgetPlan: proposal.budgetPlan ?? defaultBudgetPlan(state, proposal.id),

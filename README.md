@@ -32,6 +32,7 @@ This build covers the local end-to-end MVP:
 - Phase 11B command delegation fix: normal TeamLeader work commands now create visible agent tasks, while status/help questions stay as local replies.
 - Phase 11C Budget-aware platform readiness: proposals include hard budget plans, platform/account requirements, Fiverr-style local gig packages, readiness checks, and separate publish approvals.
 - Phase 11D Public Research Opportunity Engine: TeamLeader opportunity hunts use Quick/Fast/Deep curated public source packs, real desktop GET-only fetch receipts, Top 3 + Winner candidate scorecards, evidence citations, and source-backed business proposals without approval spam.
+- Phase 12 Business Operating Loop: approving a proposal creates a Business Cockpit with operating runs, agent artifact contracts, execution receipts, evidence quality scores, local production files, publishing packages, manual metrics, budget ledger entries, and safe while-open autopilot jobs.
 - Playwright QA smoke coverage for Dashboard, TeamLeader1A Chat, Mission Briefs, Approvals, OpenClaw System, Settings, and updater marker checks.
 - Free local OpenClaw MCP Manager for scoped filesystem memory, durable local memory, and disabled approval-gated fetch configuration; browser/Puppeteer MCP remains deferred.
 - Native Tauri plugin wiring for SQL, filesystem, dialog, and opener.
@@ -52,7 +53,7 @@ Guardrails in this app:
 - User-entered URL research remains approval-gated and limited to explicit approved URLs.
 - Channel messaging drafts are visible first; dry-run is the default, broadcasts and batch targets are blocked, and real sends require explicit approval.
 
-Approvals are durable local records with safety evaluations and decision timelines. Approved OpenClaw actions execute once through the desktop bridge, with command text, stdout, stderr, exit code, events, and activity logs persisted to SQLite. Phase 6A-10 workflows remain local planning, evidence, analytics, and asset-preparation workflows. Spending, publishing, payments, bulk outreach, browser login flows, and external business automation remain disabled.
+Approvals are durable local records with safety evaluations and decision timelines. Approved OpenClaw actions execute once through the desktop bridge, with command text, stdout, stderr, exit code, events, and activity logs persisted to SQLite. Phase 12 operating loops can refresh safe research, local drafts, metrics reminders, and improvement proposals while the app is open. Spending, publishing, payments, bulk outreach, browser login flows, platform submission, and external business automation remain disabled unless a future exact action is explicitly approved.
 
 ## Stack
 

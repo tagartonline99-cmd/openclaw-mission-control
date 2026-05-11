@@ -1,4 +1,4 @@
-import { Archive, BriefcaseBusiness, ExternalLink, FileText, PackageCheck, Pause, Play, ShieldAlert, Sparkles, WalletCards } from "lucide-react";
+import { Activity, Archive, BarChart3, BriefcaseBusiness, ExternalLink, FileArchive, FileText, PackageCheck, Pause, Play, ReceiptText, RotateCw, ShieldAlert, Sparkles, WalletCards } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
 import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
@@ -7,7 +7,15 @@ import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Progress } from "../ui/progress";
 
 export function BusinessesWorkbench() {
-  const { data, preparePlatformPublishApproval } = useAppData();
+  const {
+    data,
+    preparePlatformPublishApproval,
+    runBusinessOperatingCycle,
+    addBusinessMetricSnapshot,
+    exportBusinessAssetPack,
+    operatingAutopilotEnabled,
+    setOperatingAutopilotEnabled,
+  } = useAppData();
   const activeBusinesses = data.approvedBusinesses.filter((business) => business.status !== "archived");
 
   if (activeBusinesses.length === 0) {
@@ -67,11 +75,19 @@ export function BusinessesWorkbench() {
       <div className="grid gap-5 xl:grid-cols-2">
         {activeBusinesses.map((business) => {
           const proposal = data.businessProposals.find((item) => item.id === business.proposalId);
+          const cockpit = data.approvedBusinessCockpits.find((item) => item.businessId === business.id);
           const destinations = data.productionDestinations.filter((item) => business.publishingDestinationIds.includes(item.id));
           const content = data.contentInventoryItems.filter((item) => business.contentInventoryIds.includes(item.id));
           const evidence = data.researchEvidence.filter((item) => business.researchEvidenceIds.includes(item.id));
           const platformRequirements = data.externalPlatformRequirements.filter((item) => business.externalPlatformRequirementIds.includes(item.id));
           const platformPackages = data.platformExecutionPackages.filter((item) => business.platformExecutionPackageIds.includes(item.id));
+          const publishingPackages = data.publishingPackages.filter((item) => item.businessId === business.id);
+          const localFiles = data.localAssetFiles.filter((item) => item.businessId === business.id);
+          const receipts = data.executionReceipts.filter((item) => item.businessId === business.id);
+          const metrics = data.businessMetricSnapshots.filter((item) => item.businessId === business.id);
+          const ledger = data.budgetLedgerEntries.filter((item) => item.businessId === business.id);
+          const runs = data.businessOperatingRuns.filter((item) => item.businessId === business.id);
+          const jobs = data.autopilotJobs.filter((item) => item.businessId === business.id);
           const tasks = data.businessTasks.filter((task) => business.activeTaskIds.includes(task.id) || task.businessId === business.id);
           const run = data.autonomousImprovementRuns.find((item) => item.businessId === business.id);
           return (
@@ -90,6 +106,28 @@ export function BusinessesWorkbench() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm leading-6 text-slate-300">{business.teamLeaderRecommendation}</p>
+                {cockpit ? (
+                  <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="flex items-center gap-2 text-xs font-semibold uppercase text-teal-100">
+                        <Activity className="h-3.5 w-3.5" />
+                        Business cockpit
+                      </p>
+                      <Badge tone="teal">{cockpit.healthScore}/100 health</Badge>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-slate-200">{cockpit.objective}</p>
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <span className="rounded-md border border-white/10 bg-black/25 p-2 text-xs text-slate-300">{runs.length} operating runs</span>
+                      <span className="rounded-md border border-white/10 bg-black/25 p-2 text-xs text-slate-300">{receipts.length} receipts</span>
+                      <span className="rounded-md border border-white/10 bg-black/25 p-2 text-xs text-slate-300">{localFiles.length} local files</span>
+                    </div>
+                    <div className="mt-3 space-y-1">
+                      {cockpit.nextBestActions.slice(0, 3).map((action) => (
+                        <p key={action} className="text-sm text-emerald-50">- {action}</p>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
                   <p className="flex items-center gap-2 text-xs font-semibold uppercase text-emerald-100">
                     <WalletCards className="h-3.5 w-3.5" />
@@ -121,6 +159,66 @@ export function BusinessesWorkbench() {
                     </p>
                     <p className="mt-1 text-sm leading-6 text-red-100">Publishing, messaging, spending, connector execution, launch, and forms.</p>
                   </div>
+                </div>
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+                      <ReceiptText className="h-3.5 w-3.5" />
+                      What happened receipts
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {receipts.slice(0, 4).map((receipt) => (
+                        <div key={receipt.id} className="rounded-md border border-white/10 bg-black/30 p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-stone-100">{receipt.title}</span>
+                            <Badge tone={receipt.status === "success" ? "emerald" : receipt.status === "blocked" ? "red" : "amber"}>{receipt.status}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-slate-400">{receipt.summary}</p>
+                        </div>
+                      ))}
+                      {receipts.length === 0 ? <p className="text-sm text-slate-400">No receipts yet. Run a safe operating cycle.</p> : null}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+                      <BarChart3 className="h-3.5 w-3.5" />
+                      Metrics and ledger
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {metrics.slice(0, 2).map((metric) => (
+                        <p key={metric.id} className="rounded-md border border-white/10 bg-black/30 p-2 text-xs text-slate-300">
+                          Traffic {metric.traffic} / leads {metric.leads} / revenue {formatCurrency(metric.revenue)} / cost {formatCurrency(metric.cost)} / confidence {metric.confidence}
+                        </p>
+                      ))}
+                      {ledger.slice(0, 2).map((entry) => (
+                        <p key={entry.id} className="rounded-md border border-white/10 bg-black/30 p-2 text-xs text-slate-300">
+                          {entry.type.replace(/_/g, " ")}: {formatCurrency(entry.amount)} - {entry.description}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase text-amber-100">
+                    <FileArchive className="h-3.5 w-3.5" />
+                    Local production files
+                  </p>
+                  <div className="mt-2 grid gap-2 md:grid-cols-2">
+                    {localFiles.slice(0, 6).map((file) => (
+                      <div key={file.id} className="rounded-md border border-white/10 bg-black/25 p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-stone-100">{file.title}</span>
+                          <Badge tone={file.status === "written" ? "emerald" : "amber"}>{file.status.replace(/_/g, " ")}</Badge>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-400">{file.intendedPath}</p>
+                      </div>
+                    ))}
+                  </div>
+                  {publishingPackages.map((pack) => (
+                    <p key={pack.id} className="mt-2 rounded-md border border-red-300/20 bg-red-500/8 p-2 text-xs leading-5 text-red-100">
+                      {pack.title}: {pack.approvalBoundary}
+                    </p>
+                  ))}
                 </div>
                 <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
                   <p className="text-xs font-semibold uppercase text-slate-500">Publishing destinations</p>
@@ -204,6 +302,22 @@ export function BusinessesWorkbench() {
                   </div>
                 ) : null}
                 <div className="flex flex-wrap gap-2">
+                  <Button variant="secondary" size="sm" onClick={() => void runBusinessOperatingCycle(business.id)}>
+                    <RotateCw className="h-4 w-4" />
+                    Run Safe Loop Now
+                  </Button>
+                  <Button variant={operatingAutopilotEnabled ? "secondary" : "outline"} size="sm" onClick={() => setOperatingAutopilotEnabled(!operatingAutopilotEnabled)}>
+                    <Activity className="h-4 w-4" />
+                    {operatingAutopilotEnabled ? "Autopilot On" : "Autopilot While Open"}
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => void addBusinessMetricSnapshot(business.id, { notes: "Manual checkpoint: no new external metrics entered yet." })}>
+                    <BarChart3 className="h-4 w-4" />
+                    Add Metric Checkpoint
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => void exportBusinessAssetPack(business.id)}>
+                    <FileArchive className="h-4 w-4" />
+                    Export Pack
+                  </Button>
                   <a href={`#/mission-briefs?proposal=${business.proposalId}`}>
                     <Button variant="secondary" size="sm">
                       <ExternalLink className="h-4 w-4" />
@@ -225,6 +339,7 @@ export function BusinessesWorkbench() {
                 </div>
                 {proposal ? <p className="text-xs text-slate-500">Source proposal: {proposal.title}</p> : null}
                 {tasks.length > 0 ? <p className="text-xs text-slate-500">{tasks.length} linked tasks are tracked in the Tasks tab.</p> : null}
+                {jobs.length > 0 ? <p className="text-xs text-slate-500">{jobs.length} safe local autopilot jobs are tracked for this business.</p> : null}
               </CardContent>
             </Card>
           );

@@ -46,6 +46,10 @@ export function MissionBriefWorkbench() {
   const selectedProposalContent = selectedProposal ? data.contentInventoryItems.filter((item) => selectedProposal.contentInventoryIds.includes(item.id)) : [];
   const selectedPlatformRequirements = selectedProposal ? data.externalPlatformRequirements.filter((item) => selectedProposal.externalPlatformRequirementIds.includes(item.id)) : [];
   const selectedPlatformPackages = selectedProposal ? data.platformExecutionPackages.filter((item) => selectedProposal.platformExecutionPackageIds.includes(item.id)) : [];
+  const selectedApprovedBusiness = selectedProposal?.approvedBusinessId ? data.approvedBusinesses.find((item) => item.id === selectedProposal.approvedBusinessId) : undefined;
+  const selectedAgentArtifacts = selectedApprovedBusiness ? data.agentArtifacts.filter((artifact) => data.approvedBusinessCockpits.find((cockpit) => cockpit.businessId === selectedApprovedBusiness.id)?.agentArtifactIds.includes(artifact.id)) : [];
+  const selectedReceipts = selectedApprovedBusiness ? data.executionReceipts.filter((receipt) => receipt.businessId === selectedApprovedBusiness.id) : [];
+  const selectedEvidenceQuality = selectedProposal ? data.evidenceQualityScores.filter((score) => selectedProposal.evidenceIds.includes(score.evidenceId ?? "")) : [];
   const selectedCandidates = selectedProposal?.candidateIdeaIds?.length
     ? data.candidateBusinessIdeas
         .filter((item) => selectedProposal.candidateIdeaIds?.includes(item.id))
@@ -286,6 +290,59 @@ export function MissionBriefWorkbench() {
                         </div>
                       );
                     })}
+                  </div>
+                </div>
+              ) : null}
+              {selectedAgentArtifacts.length > 0 ? (
+                <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/8 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-emerald-100">Agent artifact contracts</p>
+                      <p className="mt-1 text-sm text-slate-300">Each agent produced a structured local artifact after business approval.</p>
+                    </div>
+                    <Badge tone="emerald">{selectedAgentArtifacts.length} artifacts</Badge>
+                  </div>
+                  <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                    {selectedAgentArtifacts.map((artifact) => (
+                      <div key={artifact.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-stone-100">{artifact.title}</p>
+                          <Badge tone="teal">{artifact.type.replace(/_/g, " ")}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">{artifact.summary}</p>
+                        <pre className="mt-3 max-h-36 overflow-auto rounded-md border border-white/10 bg-black/30 p-3 text-xs leading-5 text-slate-300">{artifact.content}</pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {selectedReceipts.length > 0 ? (
+                <div className="rounded-lg border border-amber-300/20 bg-amber-400/8 p-4">
+                  <p className="text-xs font-semibold uppercase text-amber-100">Execution receipts</p>
+                  <div className="mt-3 grid gap-3 xl:grid-cols-2">
+                    {selectedReceipts.slice(0, 8).map((receipt) => (
+                      <div key={receipt.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="font-semibold text-stone-100">{receipt.title}</p>
+                          <Badge tone={receipt.externalAction ? "red" : "teal"}>{receipt.externalAction ? "external" : "local only"}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">{receipt.summary}</p>
+                        <p className="mt-2 text-xs text-emerald-100">{receipt.budgetEffect}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {selectedEvidenceQuality.length > 0 ? (
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Evidence quality scores</p>
+                  <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                    {selectedEvidenceQuality.map((score) => (
+                      <div key={score.id} className="rounded-md border border-white/10 bg-black/30 p-3">
+                        <Badge tone={score.grade === "strong" ? "emerald" : score.grade === "moderate" ? "amber" : "red"}>{score.grade}</Badge>
+                        <p className="mt-2 text-sm text-slate-300">Credibility {score.credibility} / relevance {score.relevance} / confidence {score.confidence}</p>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : null}

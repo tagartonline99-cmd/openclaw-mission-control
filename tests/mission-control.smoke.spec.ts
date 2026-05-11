@@ -46,6 +46,11 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await page.goto("/#/businesses", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Business proposals you approved" })).toBeVisible();
   await expect(page.getByRole("heading", { name: /Practical AI Workflow|Local Service Lead-Gen|Client Operations Notion/i })).toBeVisible();
+  await expect(page.getByText("Business cockpit", { exact: true })).toBeVisible();
+  await expect(page.getByText("What happened receipts")).toBeVisible();
+  await expect(page.getByText("Local production files")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Run Safe Loop Now/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Autopilot While Open/i })).toBeVisible();
   await expect(page.getByText("Budget guard")).toBeVisible();
   await expect(page.getByText("External platform requirements")).toBeVisible();
   await expect(page.getByText("Autonomous improvement", { exact: true }).last()).toBeVisible();
@@ -53,6 +58,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await page.goto("/#/production", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Business Production And Publishing Map")).toBeVisible();
   await expect(page.getByText(/Publishing destinations are visible/i).first()).toBeVisible();
+  await expect(page.getByText("Phase 12 local asset files").first()).toBeVisible();
   await expect(page.getByText(/Static Website \/ Local Draft/i).first()).toBeVisible();
   await expect(page.getByText(/approval required/i).first()).toBeVisible();
 
@@ -76,7 +82,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Browser broker hardening release/i)).toBeVisible();
+  await expect(page.getByText(/Business operating loop release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

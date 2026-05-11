@@ -35,7 +35,9 @@ export function ProductionPipelineWorkbench() {
     const content = data.contentInventoryItems.filter((item) => business.contentInventoryIds.includes(item.id));
     const platformRequirements = data.externalPlatformRequirements.filter((item) => business.externalPlatformRequirementIds.includes(item.id));
     const platformPackages = data.platformExecutionPackages.filter((item) => business.platformExecutionPackageIds.includes(item.id));
-    return destinations.map((destination) => ({ business, destination, content: content.filter((item) => !item.destinationId || item.destinationId === destination.id), platformRequirements, platformPackages }));
+    const localFiles = data.localAssetFiles.filter((item) => item.businessId === business.id);
+    const publishingPackages = data.publishingPackages.filter((item) => item.businessId === business.id);
+    return destinations.map((destination) => ({ business, destination, content: content.filter((item) => !item.destinationId || item.destinationId === destination.id), platformRequirements, platformPackages, localFiles, publishingPackages }));
   });
 
   async function createPack() {
@@ -86,7 +88,7 @@ export function ProductionPipelineWorkbench() {
             </p>
           ) : (
             <div className="grid gap-4 xl:grid-cols-2">
-              {businessProduction.map(({ business, destination, content, platformRequirements, platformPackages }) => (
+              {businessProduction.map(({ business, destination, content, platformRequirements, platformPackages, localFiles, publishingPackages }) => (
                 <div key={`${business.id}-${destination.id}`} className="rounded-lg border border-white/10 bg-black/25 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -126,6 +128,31 @@ export function ProductionPipelineWorkbench() {
                           <p className="font-semibold text-stone-100">{item.title}</p>
                           <p className="mt-1 text-xs leading-5 text-slate-400">{item.approvalBoundary}</p>
                           <p className="mt-1 text-xs text-slate-500">Fields ready: {Object.keys(item.exactFields).join(", ")}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                  {localFiles.length > 0 || publishingPackages.length > 0 ? (
+                    <div className="mt-3 rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
+                      <p className="text-xs font-semibold uppercase text-emerald-100">Phase 12 local asset files</p>
+                      <div className="mt-2 grid gap-2 md:grid-cols-2">
+                        {localFiles.map((file) => (
+                          <div key={file.id} className="rounded-md border border-white/10 bg-black/25 p-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-semibold text-stone-100">{file.title}</p>
+                              <Badge tone={file.status === "written" ? "emerald" : "amber"}>{file.status.replace(/_/g, " ")}</Badge>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-400">{file.platform} / {file.intendedPath}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {publishingPackages.map((pack) => (
+                        <div key={pack.id} className="mt-2 rounded-md border border-red-300/20 bg-red-500/8 p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold text-red-100">{pack.title}</p>
+                            <Badge tone="red">{pack.status.replace(/_/g, " ")}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-red-100">{pack.approvalBoundary}</p>
                         </div>
                       ))}
                     </div>

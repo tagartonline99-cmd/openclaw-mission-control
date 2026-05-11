@@ -12,16 +12,22 @@ import type {
   AgentRunReviewStatus,
   AgentTurnResult,
   AgentWorkSession,
+  ApprovedBusinessCockpit,
   ApprovedBusiness,
   ApprovalRequest,
   ApprovalDecisionRecord,
   ApprovalStatus,
   AffiliateOffer,
   AnalyticsSnapshot,
+  AutopilotJob,
   AutonomousImprovementRun,
   BatchApprovalItem,
   BatchApprovalPackage,
+  BudgetLedgerEntry,
+  BusinessIteration,
   BusinessIdea,
+  BusinessMetricSnapshot,
+  BusinessOperatingRun,
   BusinessProposal,
   BusinessTask,
   BrowserResearchArtifact,
@@ -39,11 +45,14 @@ import type {
   ExperimentAnalysis,
   ExternalActionLockMode,
   ExternalPlatformRequirement,
+  EvidenceQualityScore,
   EvidenceCitation,
+  ExecutionReceipt,
   JobRun,
   GuildOfficeStation,
   MarketIntelligenceReport,
   LearningCard,
+  LocalAssetFile,
   MissionArtifact,
   MissionAgentId,
   MissionAgentStep,
@@ -56,6 +65,7 @@ import type {
   MissionTask,
   OpportunityHunt,
   OpportunityHuntDepth,
+  OpportunityCandidate,
   OpenClawApprovalPayload,
   OfferClaimReview,
   OpenClawCommand,
@@ -65,11 +75,13 @@ import type {
   ProductionPack,
   ProductionDestination,
   PlatformExecutionPackage,
+  PublishingPackage,
   PublicResearchFetch,
   PublicResearchRun,
   PublishingDiff,
   Quest,
   ResearchEvidence,
+  ResearchQueryPlan,
   ResearchSourceCapture,
   RealPilotRun,
   RiskLevel,
@@ -161,6 +173,11 @@ type AppDataContextValue = {
   createOpportunityHuntFromMessage: (message: string, depth?: OpportunityHuntDepth) => Promise<string>;
   cleanupAcceptanceTestData: () => Promise<void>;
   approveBusinessProposal: (proposalId: string) => Promise<string>;
+  runBusinessOperatingCycle: (businessId: string) => Promise<string>;
+  addBusinessMetricSnapshot: (businessId: string, input: Partial<BusinessMetricSnapshot>) => Promise<string>;
+  exportBusinessAssetPack: (businessId: string) => Promise<ExportResult>;
+  operatingAutopilotEnabled: boolean;
+  setOperatingAutopilotEnabled: (enabled: boolean) => void;
   updateBusinessProposalStatus: (proposalId: string, status: BusinessProposal["status"]) => Promise<void>;
   preparePlatformPublishApproval: (packageId: string) => Promise<string>;
   createMissionDraftFromMessage: (input: { message: string; questId: string }) => Promise<string>;
@@ -891,6 +908,410 @@ function buildProposalMarkdown(proposal: BusinessProposal, evidence: ResearchEvi
     `## Risks`,
     ...proposal.risks.map((item) => `- ${item}`),
   ].join("\n");
+}
+
+const operatingPhases: Array<{ phase: BusinessIteration["phase"]; agentId: MissionAgentId; title: string; objective: string; output: string }> = [
+  {
+    phase: "research",
+    agentId: "agent-researcher",
+    title: "Refresh demand evidence",
+    objective: "Check whether the approved business still has public demand signals and weak spots.",
+    output: "Evidence refresh, competitor notes, and unsupported assumptions.",
+  },
+  {
+    phase: "validate",
+    agentId: "teamleader1a",
+    title: "Re-score validation gate",
+    objective: "Review proof, budget, assumptions, and kill criteria before any launch action.",
+    output: "Validation score, blockers, and next decision.",
+  },
+  {
+    phase: "produce",
+    agentId: "agent-production",
+    title: "Refresh local production assets",
+    objective: "Prepare or improve local-only drafts and platform packages.",
+    output: "Local asset file updates and publishing package notes.",
+  },
+  {
+    phase: "review",
+    agentId: "agent-action",
+    title: "Review operating checklist",
+    objective: "Convert agent work into safe next actions and approval-gated external actions.",
+    output: "Operating checklist, receipts, and approval boundaries.",
+  },
+  {
+    phase: "improve",
+    agentId: "agent-content",
+    title: "Improve content strategy",
+    objective: "Turn evidence into better content and validation experiments.",
+    output: "Content improvement plan and next safe tasks.",
+  },
+];
+
+function artifactContentForBusinessAgent(agentId: MissionAgentId, proposal: BusinessProposal) {
+  if (agentId === "agent-researcher") {
+    return [
+      "## Research Brief",
+      proposal.whyMightWork.map((item) => `- ${item}`).join("\n"),
+      "",
+      "## Competitor And Evidence Notes",
+      proposal.evidenceIds.length ? proposal.evidenceIds.map((item) => `- Evidence record: ${item}`).join("\n") : "- Needs more source-backed evidence before launch.",
+    ].join("\n");
+  }
+  if (agentId === "agent-seo") {
+    return ["## SEO Plan", ...proposal.seoPlan.map((item) => `- ${item}`), "", "## Search Intent", "- Prioritize practical, low-hype, beginner-friendly queries."].join("\n");
+  }
+  if (agentId === "agent-content") {
+    return ["## Content Strategy", ...proposal.contentPlan.map((item) => `- ${item}`), "", "## Calendar", "- Draft one validation article, one checklist, and one offer explainer before publishing approval."].join("\n");
+  }
+  if (agentId === "agent-writer") {
+    return [
+      "## Draft Copy",
+      `Headline: ${proposal.recommendedIdea}`,
+      "Promise: practical help, no guaranteed income, validation first.",
+      "CTA: join the waitlist or request the free draft after reviewing the proof.",
+    ].join("\n");
+  }
+  if (agentId === "agent-production") {
+    return ["## Production Proposal", ...proposal.productionPlan.map((item) => `- ${item}`), "", "## Launch Readiness Gaps", "- External publishing and platform submission require separate approval."].join("\n");
+  }
+  if (agentId === "agent-publish") {
+    return ["## Publishing Checklist", "- Confirm destination.", "- Review claims.", "- Confirm user approval.", "- Do not publish automatically."].join("\n");
+  }
+  if (agentId === "agent-action") {
+    return ["## Operations Checklist", "- Keep work local.", "- Track receipts.", "- Ask for approval only when an external action is required."].join("\n");
+  }
+  return ["## TeamLeader1A Synthesis", proposal.teamLeaderRecommendation, "", "External actions remain approval-gated."].join("\n");
+}
+
+function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessProposal, businessId: string, questId: string, now: string) {
+  const cockpitId = id("business-cockpit");
+  const operatingRunId = id("business-operating-run");
+  const cycleNumber = current.businessOperatingRuns.filter((run) => run.businessId === businessId).length + 1;
+  const taskIds = operatingPhases.map(() => id("business-task"));
+  const iterationIds = operatingPhases.map(() => id("business-iteration"));
+  const receiptIds = operatingPhases.map(() => id("execution-receipt"));
+  const localAssetFileIds = ["fiverr", "landing", "article", "newsletter", "sop", "obsidian"].map(() => id("local-asset-file"));
+  const publishingPackageId = id("publishing-package");
+  const metricSnapshotId = id("business-metric");
+  const ledgerEntryId = id("budget-ledger");
+  const autopilotJobId = id("autopilot-job");
+  const queryPlanId = id("research-query-plan");
+  const opportunityCandidateId = id("opportunity-candidate");
+  const evidenceQualityIds = proposal.evidenceIds.slice(0, 4).map(() => id("evidence-quality"));
+  const agentArtifacts = opportunityAgentOrder.map((agentId) => {
+    const type: AgentArtifact["type"] =
+      agentId === "agent-researcher"
+        ? "research_brief"
+        : agentId === "agent-seo"
+          ? "seo_map"
+          : agentId === "agent-content"
+            ? "content_brief"
+            : agentId === "agent-writer"
+              ? "draft"
+              : agentId === "agent-production"
+                ? "asset_plan"
+                : agentId === "agent-publish"
+                  ? "publish_checklist"
+                  : agentId === "agent-action"
+                    ? "ops_checklist"
+                    : "teamleader_summary";
+    return {
+      id: id("agent-artifact"),
+      runId: operatingRunId,
+      questId,
+      agentId,
+      type,
+      title: `${agentLabel(agentId)} artifact for ${proposal.recommendedIdea}`,
+      summary: `${agentLabel(agentId)} produced a structured local artifact for the approved business operating loop.`,
+      content: artifactContentForBusinessAgent(agentId, proposal),
+      status: "accepted" as const,
+      createdAt: now,
+      updatedAt: now,
+    } satisfies AgentArtifact;
+  });
+  const businessTasks: BusinessTask[] = operatingPhases.map((phase, index) => ({
+    id: taskIds[index],
+    huntId: proposal.huntId,
+    proposalId: proposal.id,
+    businessId,
+    agentId: phase.agentId,
+    title: phase.title,
+    objective: phase.objective,
+    status: index < 2 ? "now_working" : index === operatingPhases.length - 1 ? "queued" : "done",
+    progress: index < 2 ? 64 : index === operatingPhases.length - 1 ? 25 : 100,
+    currentArtifact: phase.output,
+    currentSource: index === 0 ? "Safe public source refresh only" : undefined,
+    expectedOutput: phase.output,
+    approvalRequired: false,
+    logs: [
+      `Budget known: cap ${money(proposal.budgetPlan.businessBudgetCap)}, required spend ${money(proposal.budgetPlan.requiredSpend)}.`,
+      "Safe autonomous lane only: research, planning, scoring, and local drafts.",
+      "External publishing, messaging, spending, login, connector execution, and forms remain locked.",
+    ],
+    startedAt: now,
+    updatedAt: now,
+    completedAt: index > 1 && index < operatingPhases.length - 1 ? now : undefined,
+  }));
+  const iterations: BusinessIteration[] = operatingPhases.map((phase, index) => ({
+    id: iterationIds[index],
+    businessId,
+    runId: operatingRunId,
+    cycleNumber,
+    phase: phase.phase,
+    status: index < 2 ? "running" : index === operatingPhases.length - 1 ? "queued" : "complete",
+    agentId: phase.agentId,
+    objective: phase.objective,
+    output: `${phase.output} No external action executed.`,
+    evidenceIds: proposal.evidenceIds,
+    artifactIds: agentArtifacts.filter((artifact) => artifact.agentId === phase.agentId).map((artifact) => artifact.id),
+    receiptIds: [receiptIds[index]],
+    startedAt: now,
+    updatedAt: now,
+    completedAt: index > 1 && index < operatingPhases.length - 1 ? now : undefined,
+  }));
+  const receipts: ExecutionReceipt[] = operatingPhases.map((phase, index) => ({
+    id: receiptIds[index],
+    businessId,
+    proposalId: proposal.id,
+    taskId: taskIds[index],
+    agentId: phase.agentId,
+    actionType: `safe_${phase.phase}`,
+    title: `${phase.title} receipt`,
+    summary: `${agentLabel(phase.agentId)} ran ${phase.phase} work locally. ${phase.output}`,
+    source: index === 0 ? "Browser Research Broker / curated public source packs" : "Mission Control local operating loop",
+    artifactIds: agentArtifacts.filter((artifact) => artifact.agentId === phase.agentId).map((artifact) => artifact.id),
+    budgetEffect: "No spend. Budget ledger records $0 planned operating cost for this safe cycle.",
+    externalAction: false,
+    approvalRequired: false,
+    status: "success",
+    nextAction: index === operatingPhases.length - 1 ? "Review TeamLeader1A next recommendation." : operatingPhases[index + 1].title,
+    createdAt: now,
+  }));
+  const localAssetFiles: LocalAssetFile[] = [
+    {
+      id: localAssetFileIds[0],
+      businessId,
+      title: `${proposal.recommendedIdea} Fiverr gig package`,
+      type: "fiverr_gig",
+      platform: "Fiverr",
+      intendedPath: `OpenClaw/Businesses/${filenameSafe(proposal.recommendedIdea)}/fiverr-gig.md`,
+      fileName: "fiverr-gig.md",
+      content: ["# Fiverr Gig Draft", "", `Title: ${proposal.recommendedIdea}`, "", ...proposal.productionPlan.map((item) => `- ${item}`), "", "Publish status: local draft only. User login and separate approval required."].join("\n"),
+      status: "preview_only",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: localAssetFileIds[1],
+      businessId,
+      title: `${proposal.recommendedIdea} landing page draft`,
+      type: "landing_page",
+      platform: "Static website",
+      intendedPath: `OpenClaw/Businesses/${filenameSafe(proposal.recommendedIdea)}/landing-page.md`,
+      fileName: "landing-page.md",
+      content: ["# Landing Page Draft", "", proposal.summary, "", "## Why this may help", ...proposal.whyMightWork.map((item) => `- ${item}`)].join("\n"),
+      status: "preview_only",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: localAssetFileIds[2],
+      businessId,
+      title: "Validation article draft",
+      type: "article",
+      platform: "Blog/CMS",
+      intendedPath: `OpenClaw/Businesses/${filenameSafe(proposal.recommendedIdea)}/article-draft.md`,
+      fileName: "article-draft.md",
+      content: ["# Article Draft", "", ...proposal.contentPlan.map((item) => `- ${item}`)].join("\n"),
+      status: "preview_only",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: localAssetFileIds[3],
+      businessId,
+      title: "Newsletter issue draft",
+      type: "newsletter",
+      platform: "Newsletter",
+      intendedPath: `OpenClaw/Businesses/${filenameSafe(proposal.recommendedIdea)}/newsletter-draft.md`,
+      fileName: "newsletter-draft.md",
+      content: ["# Newsletter Draft", "", "A practical update that asks readers to validate the idea before any paid product is offered."].join("\n"),
+      status: "preview_only",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: localAssetFileIds[4],
+      businessId,
+      title: "Operating SOP",
+      type: "sop",
+      platform: "Local workflow",
+      intendedPath: `OpenClaw/Businesses/${filenameSafe(proposal.recommendedIdea)}/sop.md`,
+      fileName: "sop.md",
+      content: ["# Operating SOP", "", "1. Review evidence.", "2. Improve local draft.", "3. Enter metrics.", "4. Ask for approval before external action."].join("\n"),
+      status: "preview_only",
+      createdAt: now,
+      updatedAt: now,
+    },
+    {
+      id: localAssetFileIds[5],
+      businessId,
+      title: "Obsidian export pack outline",
+      type: "obsidian_pack",
+      platform: "Obsidian",
+      intendedPath: `OpenClaw/Businesses/${filenameSafe(proposal.recommendedIdea)}/obsidian-pack.md`,
+      fileName: "obsidian-pack.md",
+      content: buildProposalMarkdown(proposal, current.researchEvidence.filter((item) => proposal.evidenceIds.includes(item.id)), current.productionDestinations.filter((item) => proposal.publishingDestinationIds.includes(item.id)), current.contentInventoryItems.filter((item) => proposal.contentInventoryIds.includes(item.id))),
+      status: "preview_only",
+      createdAt: now,
+      updatedAt: now,
+    },
+  ];
+  const publishingPackage: PublishingPackage = {
+    id: publishingPackageId,
+    businessId,
+    destinationId: proposal.publishingDestinationIds[0],
+    platform: proposal.externalPlatformRequirementIds.length ? "Fiverr / marketplace draft" : "Static website / newsletter draft",
+    title: `${proposal.recommendedIdea} publishing package`,
+    status: "local_draft",
+    localAssetFileIds,
+    approvalBoundary: "This package is a local draft. Publishing, connector execution, login automation, form submission, messaging, launch, and spending require separate approval.",
+    requiredUserSteps: ["Review claims and evidence", "Confirm platform destination", "Approve exact external action only when ready"],
+    connectorActionsBlocked: ["publish", "submit_form", "send_message", "purchase", "login_automation", "connector_execute"],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const metricSnapshot: BusinessMetricSnapshot = {
+    id: metricSnapshotId,
+    businessId,
+    traffic: 0,
+    clicks: 0,
+    leads: 0,
+    conversions: 0,
+    revenue: 0,
+    cost: 0,
+    timeSpentHours: 0,
+    confidence: proposal.validationScore,
+    notes: "Initial business cockpit snapshot. Add real manual metrics after validation activity.",
+    createdAt: now,
+  };
+  const ledgerEntry: BudgetLedgerEntry = {
+    id: ledgerEntryId,
+    businessId,
+    type: "planned_spend",
+    amount: 0,
+    currency: "USD",
+    description: "Initial safe operating loop uses $0. Any future spend requires approval.",
+    createdAt: now,
+  };
+  const operatingRun: BusinessOperatingRun = {
+    id: operatingRunId,
+    businessId,
+    status: "running",
+    currentCycle: "research",
+    cycleNumber,
+    iterationIds,
+    taskIds,
+    receiptIds,
+    summary: "Safe business operating loop started: research, validate, produce local drafts, review, and improve.",
+    nextAction: "Review receipts, then add manual metrics or run another safe local cycle.",
+    startedAt: now,
+    updatedAt: now,
+  };
+  const autopilotJob: AutopilotJob = {
+    id: autopilotJobId,
+    businessId,
+    type: "research_refresh",
+    status: "queued",
+    safeAutonomous: true,
+    approvalRequired: false,
+    title: "Safe public research refresh",
+    result: "Queued while app is open. No external action will execute.",
+    runAt: now,
+    updatedAt: now,
+  };
+  const cockpit: ApprovedBusinessCockpit = {
+    id: cockpitId,
+    businessId,
+    objective: `Operate "${proposal.recommendedIdea}" as a validation-first business experiment.`,
+    currentStage: "Safe operating loop active",
+    operatingRunIds: [operatingRunId],
+    iterationIds,
+    agentArtifactIds: agentArtifacts.map((artifact) => artifact.id),
+    executionReceiptIds: receiptIds,
+    metricSnapshotIds: [metricSnapshotId],
+    budgetLedgerEntryIds: [ledgerEntryId],
+    productionAssetIds: [],
+    localAssetFileIds,
+    publishingPackageIds: [publishingPackageId],
+    autopilotJobIds: [autopilotJobId],
+    nextBestActions: [
+      "Review the first operating-loop receipts.",
+      "Add manual metrics after any user-run validation test.",
+      "Request a separate approval before spending, publishing, messaging, or submitting a platform form.",
+    ],
+    healthScore: Math.round((proposal.validationScore + proposal.qualityScore) / 2),
+    createdAt: now,
+    updatedAt: now,
+  };
+  const queryPlan: ResearchQueryPlan = {
+    id: queryPlanId,
+    huntId: proposal.huntId,
+    businessId,
+    prompt: `Refresh evidence for ${proposal.recommendedIdea}`,
+    depth: current.userSettings.defaultOpportunityHuntDepth ?? "fast",
+    queries: [
+      `${proposal.recommendedIdea} audience problem`,
+      `${proposal.recommendedIdea} competitor examples`,
+      `${proposal.recommendedIdea} zero budget validation`,
+    ],
+    sourcePackIds: current.researchSourcePacks.slice(0, 4).map((pack) => pack.id),
+    blockedTerms: ["guaranteed income", "fake reviews", "spam", "scrape login", "auto purchase"],
+    safeMode: "public_read_only",
+    createdAt: now,
+  };
+  const opportunityCandidate: OpportunityCandidate = {
+    id: opportunityCandidateId,
+    huntId: proposal.huntId,
+    businessId,
+    title: proposal.recommendedIdea,
+    summary: proposal.summary,
+    score: proposal.validationScore,
+    reasons: proposal.whyMightWork,
+    riskFlags: proposal.risks,
+    sourceIds: proposal.evidenceIds,
+    status: "winner",
+    createdAt: now,
+  };
+  const evidenceQualityScores: EvidenceQualityScore[] = proposal.evidenceIds.slice(0, 4).map((evidenceId, index) => ({
+    id: evidenceQualityIds[index],
+    evidenceId,
+    source: current.researchEvidence.find((item) => item.id === evidenceId)?.url ?? "local evidence record",
+    credibility: 72 + index * 3,
+    freshness: 68,
+    relevance: 78,
+    confidence: Math.min(92, 72 + index * 5),
+    grade: index === 0 ? "strong" : "moderate",
+    notes: ["Source-backed enough for validation planning; not enough for income claims.", "Needs metric feedback after the first user-run test."],
+    createdAt: now,
+  }));
+  return {
+    cockpit,
+    operatingRun,
+    iterations,
+    receipts,
+    agentArtifacts,
+    businessTasks,
+    localAssetFiles,
+    publishingPackage,
+    metricSnapshot,
+    ledgerEntry,
+    autopilotJob,
+    queryPlan,
+    opportunityCandidate,
+    evidenceQualityScores,
+  };
 }
 
 function buildOpportunityHuntState(
@@ -2588,9 +3009,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [adapter, setAdapter] = useState<StorageAdapter>("browser-local-storage");
   const [isLoading, setIsLoading] = useState(true);
   const [simulationEnabled, setSimulationEnabled] = useState(false);
+  const [operatingAutopilotEnabled, setOperatingAutopilotEnabled] = useState(false);
   const [lastExportResult, setLastExportResult] = useState<ExportResult | null>(null);
   const intervalRef = useRef<number | null>(null);
   const opportunityIntervalRef = useRef<number | null>(null);
+  const operatingAutopilotIntervalRef = useRef<number | null>(null);
   const dataRef = useRef<AppDataState>(initialAppDataState);
   const executeApprovedActionRef = useRef<((approval: ApprovalRequest) => Promise<void>) | null>(null);
 
@@ -4006,6 +4429,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       externalPlatformRequirements: current.externalPlatformRequirements.filter((item) => !item.proposalId || !proposalIds.has(item.proposalId)),
       platformExecutionPackages: current.platformExecutionPackages.filter((item) => !item.proposalId || !proposalIds.has(item.proposalId)),
       autonomousImprovementRuns: current.autonomousImprovementRuns.filter((run) => !businessIds.has(run.businessId)),
+      approvedBusinessCockpits: current.approvedBusinessCockpits.filter((cockpit) => !businessIds.has(cockpit.businessId)),
+      businessOperatingRuns: current.businessOperatingRuns.filter((run) => !businessIds.has(run.businessId)),
+      businessIterations: current.businessIterations.filter((iteration) => !businessIds.has(iteration.businessId)),
+      executionReceipts: current.executionReceipts.filter((receipt) => !receipt.businessId || !businessIds.has(receipt.businessId)),
+      researchQueryPlans: current.researchQueryPlans.filter((plan) => !plan.huntId || !testHuntIds.has(plan.huntId)),
+      opportunityCandidates: current.opportunityCandidates.filter((candidate) => !candidate.huntId || !testHuntIds.has(candidate.huntId)),
+      evidenceQualityScores: current.evidenceQualityScores.filter((score) => !score.evidenceId || !current.researchEvidence.some((evidence) => evidence.id === score.evidenceId && evidence.huntId && testHuntIds.has(evidence.huntId))),
+      localAssetFiles: current.localAssetFiles.filter((file) => !businessIds.has(file.businessId)),
+      publishingPackages: current.publishingPackages.filter((pack) => !businessIds.has(pack.businessId)),
+      businessMetricSnapshots: current.businessMetricSnapshots.filter((snapshot) => !businessIds.has(snapshot.businessId)),
+      budgetLedgerEntries: current.budgetLedgerEntries.filter((entry) => !businessIds.has(entry.businessId)),
+      autopilotJobs: current.autopilotJobs.filter((job) => !businessIds.has(job.businessId)),
+      agentArtifacts: current.agentArtifacts.filter((artifact) => !proposalIds.has(artifact.runId) && !businessIds.has(artifact.runId)),
       activityLogs: [
         {
           id: id("log-cleanup-test-data"),
@@ -4146,6 +4582,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         createdAt: now,
         updatedAt: now,
       };
+      const operatingBundle = buildBusinessOperatingBundle(current, proposal, businessId, questId, now);
+      const inheritedTaskIds = current.businessTasks.filter((task) => task.proposalId === proposalId && task.status !== "done").map((task) => task.id);
       const approvedBusiness: ApprovedBusiness = {
         id: businessId,
         proposalId,
@@ -4156,7 +4594,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         teamLeaderRecommendation: proposal.teamLeaderRecommendation,
         validationScore: proposal.validationScore,
         assignedAgentIds: opportunityAgentOrder,
-        activeTaskIds: current.businessTasks.filter((task) => task.proposalId === proposalId && task.status !== "done").map((task) => task.id),
+        activeTaskIds: [...inheritedTaskIds, ...operatingBundle.businessTasks.map((task) => task.id)],
         productionAssetIds: [assetId],
         publishingDestinationIds: proposal.publishingDestinationIds,
         contentInventoryIds: proposal.contentInventoryIds,
@@ -4166,7 +4604,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         platformExecutionPackageIds: proposal.platformExecutionPackageIds,
         readinessChecklist: proposal.readinessChecklist,
         risks: proposal.risks,
-        nextAction: "Continue safe autonomous improvement and prepare approval packages only when external action is needed.",
+        nextAction: "Review the Business Cockpit receipts, then add metrics or run the next safe operating cycle.",
         createdAt: now,
         updatedAt: now,
       };
@@ -4202,6 +4640,20 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         productionAssets: [asset, ...current.productionAssets],
         approvedBusinesses: [approvedBusiness, ...current.approvedBusinesses],
         autonomousImprovementRuns: [run, ...current.autonomousImprovementRuns],
+        approvedBusinessCockpits: [operatingBundle.cockpit, ...current.approvedBusinessCockpits],
+        businessOperatingRuns: [operatingBundle.operatingRun, ...current.businessOperatingRuns],
+        businessIterations: [...operatingBundle.iterations, ...current.businessIterations],
+        executionReceipts: [...operatingBundle.receipts, ...current.executionReceipts],
+        researchQueryPlans: [operatingBundle.queryPlan, ...current.researchQueryPlans],
+        opportunityCandidates: [operatingBundle.opportunityCandidate, ...current.opportunityCandidates],
+        evidenceQualityScores: [...operatingBundle.evidenceQualityScores, ...current.evidenceQualityScores],
+        localAssetFiles: [...operatingBundle.localAssetFiles, ...current.localAssetFiles],
+        publishingPackages: [operatingBundle.publishingPackage, ...current.publishingPackages],
+        businessMetricSnapshots: [operatingBundle.metricSnapshot, ...current.businessMetricSnapshots],
+        budgetLedgerEntries: [operatingBundle.ledgerEntry, ...current.budgetLedgerEntries],
+        autopilotJobs: [operatingBundle.autopilotJob, ...current.autopilotJobs],
+        businessTasks: [...operatingBundle.businessTasks, ...current.businessTasks],
+        agentArtifacts: [...operatingBundle.agentArtifacts, ...current.agentArtifacts],
         productionDestinations: updatedDestinations,
         contentInventoryItems: updatedContent,
         externalPlatformRequirements: updatedPlatformRequirements,
@@ -4243,6 +4695,187 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       };
       await persistOptimistic(next);
       return businessId;
+    },
+    [persistOptimistic],
+  );
+
+  const runBusinessOperatingCycle = useCallback(
+    async (businessId: string) => {
+      const current = dataRef.current;
+      const business = current.approvedBusinesses.find((item) => item.id === businessId);
+      if (!business) throw new Error("Approved business not found.");
+      const proposal = current.businessProposals.find((item) => item.id === business.proposalId);
+      if (!proposal) throw new Error("Source proposal not found.");
+      const now = new Date().toISOString();
+      const questId = business.questId ?? proposal.questId ?? id("quest-business-cycle");
+      const operatingBundle = buildBusinessOperatingBundle(current, proposal, businessId, questId, now);
+      const existingCockpit = current.approvedBusinessCockpits.find((cockpit) => cockpit.businessId === businessId);
+      const nextCockpits = existingCockpit
+        ? current.approvedBusinessCockpits.map((cockpit) =>
+            cockpit.id === existingCockpit.id
+              ? {
+                  ...cockpit,
+                  currentStage: "Safe operating cycle refreshed",
+                  operatingRunIds: [operatingBundle.operatingRun.id, ...cockpit.operatingRunIds],
+                  iterationIds: [...operatingBundle.iterations.map((iteration) => iteration.id), ...cockpit.iterationIds],
+                  agentArtifactIds: [...operatingBundle.agentArtifacts.map((artifact) => artifact.id), ...cockpit.agentArtifactIds],
+                  executionReceiptIds: [...operatingBundle.receipts.map((receipt) => receipt.id), ...cockpit.executionReceiptIds],
+                  metricSnapshotIds: [operatingBundle.metricSnapshot.id, ...cockpit.metricSnapshotIds],
+                  budgetLedgerEntryIds: [operatingBundle.ledgerEntry.id, ...cockpit.budgetLedgerEntryIds],
+                  localAssetFileIds: [...operatingBundle.localAssetFiles.map((file) => file.id), ...cockpit.localAssetFileIds],
+                  publishingPackageIds: [operatingBundle.publishingPackage.id, ...cockpit.publishingPackageIds],
+                  autopilotJobIds: [operatingBundle.autopilotJob.id, ...cockpit.autopilotJobIds],
+                  nextBestActions: operatingBundle.cockpit.nextBestActions,
+                  healthScore: Math.max(cockpit.healthScore, operatingBundle.cockpit.healthScore),
+                  updatedAt: now,
+                }
+              : cockpit,
+          )
+        : [operatingBundle.cockpit, ...current.approvedBusinessCockpits];
+      const next: AppDataState = {
+        ...current,
+        approvedBusinessCockpits: nextCockpits,
+        businessOperatingRuns: [operatingBundle.operatingRun, ...current.businessOperatingRuns],
+        businessIterations: [...operatingBundle.iterations, ...current.businessIterations],
+        executionReceipts: [...operatingBundle.receipts, ...current.executionReceipts],
+        researchQueryPlans: [operatingBundle.queryPlan, ...current.researchQueryPlans],
+        opportunityCandidates: [operatingBundle.opportunityCandidate, ...current.opportunityCandidates],
+        evidenceQualityScores: [...operatingBundle.evidenceQualityScores, ...current.evidenceQualityScores],
+        localAssetFiles: [...operatingBundle.localAssetFiles, ...current.localAssetFiles],
+        publishingPackages: [operatingBundle.publishingPackage, ...current.publishingPackages],
+        businessMetricSnapshots: [operatingBundle.metricSnapshot, ...current.businessMetricSnapshots],
+        budgetLedgerEntries: [operatingBundle.ledgerEntry, ...current.budgetLedgerEntries],
+        autopilotJobs: [{ ...operatingBundle.autopilotJob, status: "completed", result: "Safe operating cycle completed locally. No external action executed.", updatedAt: now }, ...current.autopilotJobs],
+        businessTasks: [...operatingBundle.businessTasks, ...current.businessTasks],
+        agentArtifacts: [...operatingBundle.agentArtifacts, ...current.agentArtifacts],
+        approvedBusinesses: current.approvedBusinesses.map((item) =>
+          item.id === businessId
+            ? {
+                ...item,
+                activeTaskIds: [...operatingBundle.businessTasks.map((task) => task.id), ...item.activeTaskIds],
+                nextAction: "Review the latest operating-loop receipts and update manual metrics.",
+                updatedAt: now,
+              }
+            : item,
+        ),
+        autonomousImprovementRuns: current.autonomousImprovementRuns.map((run) =>
+          run.businessId === businessId
+            ? {
+                ...run,
+                status: "running",
+                currentFocus: "Safe operating cycle refreshed: evidence, local production, metrics reminder, and next actions.",
+                taskIds: [...operatingBundle.businessTasks.map((task) => task.id), ...run.taskIds],
+                lastTeamLeaderSummary: "I ran another safe local operating cycle. No spending, publishing, messaging, login, forms, or connector execution occurred.",
+                updatedAt: now,
+              }
+            : run,
+        ),
+        teamLeaderChatMessages: [
+          ...current.teamLeaderChatMessages,
+          {
+            id: id("tl-chat-operating-cycle"),
+            role: "teamleader",
+            content: `I ran a safe operating cycle for "${business.name}". The team refreshed evidence, local production, checks, receipts, and next actions. No external action ran.`,
+            createdAt: now,
+            mode: "local",
+            relatedApprovedBusinessId: businessId,
+            relatedBusinessProposalId: business.proposalId,
+          } satisfies TeamLeaderChatMessage,
+        ].slice(-120),
+        activityLogs: [
+          {
+            id: id("log-operating-cycle"),
+            category: "system",
+            title: "Safe business operating cycle completed",
+            detail: `${business.name}: local research/planning/production/metrics refresh completed. External actions remain approval-gated.`,
+            severity: "success",
+            createdAt: now,
+            relatedQuestId: business.questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+      };
+      await persistOptimistic(next);
+      return operatingBundle.operatingRun.id;
+    },
+    [persistOptimistic],
+  );
+
+  const addBusinessMetricSnapshot = useCallback(
+    async (businessId: string, input: Partial<BusinessMetricSnapshot>) => {
+      const current = dataRef.current;
+      const business = current.approvedBusinesses.find((item) => item.id === businessId);
+      if (!business) throw new Error("Approved business not found.");
+      const now = new Date().toISOString();
+      const snapshot: BusinessMetricSnapshot = {
+        id: id("business-metric"),
+        businessId,
+        traffic: input.traffic ?? 0,
+        clicks: input.clicks ?? 0,
+        leads: input.leads ?? 0,
+        conversions: input.conversions ?? 0,
+        revenue: input.revenue ?? 0,
+        cost: input.cost ?? 0,
+        timeSpentHours: input.timeSpentHours ?? 0,
+        confidence: input.confidence ?? business.validationScore,
+        notes: input.notes ?? "Manual metric snapshot recorded by the user.",
+        createdAt: now,
+      };
+      const revenueEntry: BudgetLedgerEntry | null = snapshot.revenue
+        ? {
+            id: id("budget-ledger"),
+            businessId,
+            type: "revenue",
+            amount: snapshot.revenue,
+            currency: "USD",
+            description: "Manual revenue metric recorded. Verify source before using it for scale decisions.",
+            createdAt: now,
+          }
+        : null;
+      const costEntry: BudgetLedgerEntry | null = snapshot.cost
+        ? {
+            id: id("budget-ledger"),
+            businessId,
+            type: "actual_spend",
+            amount: snapshot.cost,
+            currency: "USD",
+            description: "Manual cost metric recorded. Future spend still requires approval.",
+            createdAt: now,
+          }
+        : null;
+      const ledgerEntries = [revenueEntry, costEntry].filter(Boolean) as BudgetLedgerEntry[];
+      await persistOptimistic({
+        ...current,
+        businessMetricSnapshots: [snapshot, ...current.businessMetricSnapshots],
+        budgetLedgerEntries: [...ledgerEntries, ...current.budgetLedgerEntries],
+        approvedBusinessCockpits: current.approvedBusinessCockpits.map((cockpit) =>
+          cockpit.businessId === businessId
+            ? {
+                ...cockpit,
+                metricSnapshotIds: [snapshot.id, ...cockpit.metricSnapshotIds],
+                budgetLedgerEntryIds: [...ledgerEntries.map((entry) => entry.id), ...cockpit.budgetLedgerEntryIds],
+                nextBestActions:
+                  snapshot.revenue > 0 || snapshot.conversions > 0
+                    ? ["Review evidence quality before scale.", "Prepare a separate approval for any publishing, spend, or connector action."]
+                    : ["Revise the offer or run another no-spend validation test.", "Collect more traffic and lead data before scaling."],
+                updatedAt: now,
+              }
+            : cockpit,
+        ),
+        activityLogs: [
+          {
+            id: id("log-business-metrics"),
+            category: "system",
+            title: "Business metric snapshot recorded",
+            detail: `${business.name}: traffic ${snapshot.traffic}, leads ${snapshot.leads}, revenue ${money(snapshot.revenue)}, cost ${money(snapshot.cost)}.`,
+            severity: "info",
+            createdAt: now,
+            relatedQuestId: business.questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+      });
+      return snapshot.id;
     },
     [persistOptimistic],
   );
@@ -6346,6 +6979,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
   }, [simulationEnabled]);
 
+  useEffect(() => {
+    if (!operatingAutopilotEnabled) {
+      if (operatingAutopilotIntervalRef.current) {
+        window.clearInterval(operatingAutopilotIntervalRef.current);
+        operatingAutopilotIntervalRef.current = null;
+      }
+      return;
+    }
+
+    operatingAutopilotIntervalRef.current = window.setInterval(() => {
+      const business = dataRef.current.approvedBusinesses.find((item) => item.status === "active");
+      if (!business) return;
+      void runBusinessOperatingCycle(business.id);
+    }, 120_000);
+
+    return () => {
+      if (operatingAutopilotIntervalRef.current) {
+        window.clearInterval(operatingAutopilotIntervalRef.current);
+        operatingAutopilotIntervalRef.current = null;
+      }
+    };
+  }, [operatingAutopilotEnabled, runBusinessOperatingCycle]);
+
   const selectObsidianVault = useCallback(async () => {
     if (!isTauriRuntime()) {
       setLastExportResult({
@@ -6409,6 +7065,69 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return result;
     },
     [persist],
+  );
+
+  const exportBusinessAssetPack = useCallback(
+    async (businessId: string) => {
+      const current = dataRef.current;
+      const business = current.approvedBusinesses.find((item) => item.id === businessId);
+      if (!business) {
+        return { ok: false, mode: "preview" as const, message: "Approved business not found." };
+      }
+      const cockpit = current.approvedBusinessCockpits.find((item) => item.businessId === businessId);
+      const files = current.localAssetFiles.filter((file) => file.businessId === businessId);
+      const receipts = current.executionReceipts.filter((receipt) => receipt.businessId === businessId);
+      const metrics = current.businessMetricSnapshots.filter((snapshot) => snapshot.businessId === businessId);
+      const ledger = current.budgetLedgerEntries.filter((entry) => entry.businessId === businessId);
+      const note: ObsidianNote = {
+        id: `obsidian-business-pack-${businessId}`,
+        title: `${business.name} Business Operating Pack`,
+        type: "sop",
+        folder: `OpenClaw/Businesses/${filenameSafe(business.name)}`,
+        frontmatter: {
+          type: "business_operating_pack",
+          system: "openclaw",
+          business_id: businessId,
+          status: business.status,
+          validation_score: business.validationScore,
+          external_actions: "approval_required",
+          updated_at: new Date().toISOString(),
+        },
+        linkedQuestId: business.questId,
+        body: [
+          `# ${business.name} Business Operating Pack`,
+          "",
+          "## TeamLeader1A Recommendation",
+          business.teamLeaderRecommendation,
+          "",
+          "## Business Cockpit",
+          cockpit ? `Health score: ${cockpit.healthScore}/100` : "Cockpit record not found.",
+          ...(cockpit?.nextBestActions ?? []).map((item) => `- ${item}`),
+          "",
+          "## Local Asset Files",
+          ...files.map((file) => `- ${file.title} (${file.platform}) -> ${file.intendedPath}`),
+          "",
+          "## Execution Receipts",
+          ...receipts.slice(0, 12).map((receipt) => `- ${receipt.title}: ${receipt.summary} Budget effect: ${receipt.budgetEffect}`),
+          "",
+          "## Metrics",
+          ...metrics.slice(0, 6).map((metric) => `- ${metric.createdAt}: traffic ${metric.traffic}, leads ${metric.leads}, revenue ${money(metric.revenue)}, cost ${money(metric.cost)}, confidence ${metric.confidence}`),
+          "",
+          "## Budget Ledger",
+          ...ledger.slice(0, 10).map((entry) => `- ${entry.type}: ${money(entry.amount)} - ${entry.description}`),
+          "",
+          "## Approval Boundary",
+          "This pack is local only. Publishing, messaging, spending, launch, connector execution, login automation, form submission, and purchases require separate explicit approval.",
+        ].join("\n"),
+      };
+      const noteExists = current.obsidianNotes.some((item) => item.id === note.id);
+      await persistOptimistic({
+        ...current,
+        obsidianNotes: noteExists ? current.obsidianNotes.map((item) => (item.id === note.id ? note : item)) : [note, ...current.obsidianNotes],
+      });
+      return exportObsidianNote(note);
+    },
+    [exportObsidianNote, persistOptimistic],
   );
 
   const exportRealPilotReport = useCallback(
@@ -6498,6 +7217,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       adapter,
       isLoading,
       simulationEnabled,
+      operatingAutopilotEnabled,
       lastExportResult,
       refresh,
       resetLocalData,
@@ -6521,6 +7241,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       createOpportunityHuntFromMessage,
       cleanupAcceptanceTestData,
       approveBusinessProposal,
+      runBusinessOperatingCycle,
+      addBusinessMetricSnapshot,
+      exportBusinessAssetPack,
+      setOperatingAutopilotEnabled,
       updateBusinessProposalStatus,
       preparePlatformPublishApproval,
       createMissionDraftFromMessage,
@@ -6565,6 +7289,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       adapter,
       isLoading,
       simulationEnabled,
+      operatingAutopilotEnabled,
       lastExportResult,
       refresh,
       resetLocalData,
@@ -6587,6 +7312,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       createOpportunityHuntFromMessage,
       cleanupAcceptanceTestData,
       approveBusinessProposal,
+      runBusinessOperatingCycle,
+      addBusinessMetricSnapshot,
+      exportBusinessAssetPack,
       updateBusinessProposalStatus,
       preparePlatformPublishApproval,
       createMissionDraftFromMessage,
