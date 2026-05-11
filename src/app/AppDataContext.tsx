@@ -76,6 +76,13 @@ import type {
   ProductionDestination,
   PlatformExecutionPackage,
   PublishingPackage,
+  ProductBlueprint,
+  ProductDraftApproval,
+  ProductPreview,
+  ProductPreviewSection,
+  ProductRevisionRequest,
+  PublishPayloadPreview,
+  ApprovalGateState,
   PublicResearchFetch,
   PublicResearchRun,
   PublishingDiff,
@@ -179,6 +186,9 @@ type AppDataContextValue = {
   operatingAutopilotEnabled: boolean;
   setOperatingAutopilotEnabled: (enabled: boolean) => void;
   updateBusinessProposalStatus: (proposalId: string, status: BusinessProposal["status"]) => Promise<void>;
+  approveProductLocalDraft: (previewId: string) => Promise<void>;
+  requestProductRevision: (previewId: string, reason?: string) => Promise<string>;
+  prepareProductPublishApproval: (previewId: string) => Promise<string>;
   preparePlatformPublishApproval: (packageId: string) => Promise<string>;
   createMissionDraftFromMessage: (input: { message: string; questId: string }) => Promise<string>;
   requestMissionStart: (draftId: string) => Promise<string>;
@@ -1097,7 +1107,7 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
       platform: "Fiverr",
       intendedPath: `OpenClaw/Businesses/${filenameSafe(proposal.recommendedIdea)}/fiverr-gig.md`,
       fileName: "fiverr-gig.md",
-      content: ["# Fiverr Gig Draft", "", `Title: ${proposal.recommendedIdea}`, "", ...proposal.productionPlan.map((item) => `- ${item}`), "", "Publish status: local draft only. User login and separate approval required."].join("\n"),
+      content: ["# Fiverr Gig Draft", "", `Title: ${proposal.recommendedIdea}`, "", ...proposal.productionPlan.map((item) => `- ${item}`), "", "Publish status: local draft only. User login and a separate exact publish approval are required later."].join("\n"),
       status: "preview_only",
       createdAt: now,
       updatedAt: now,
@@ -1311,6 +1321,229 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
     queryPlan,
     opportunityCandidate,
     evidenceQualityScores,
+  };
+}
+
+function buildProductStudioRecords(
+  current: AppDataState,
+  proposal: BusinessProposal,
+  businessId: string,
+  now: string,
+  localAssetFiles: LocalAssetFile[],
+  publishingPackage: PublishingPackage,
+) {
+  const destination = current.productionDestinations.find((item) => proposal.publishingDestinationIds.includes(item.id));
+  const platformPackage = current.platformExecutionPackages.find((item) => proposal.platformExecutionPackageIds.includes(item.id));
+  const fiverrMode = platformPackage?.platform.toLowerCase().includes("fiverr") ?? false;
+  const blueprintId = id("product-blueprint");
+  const previewId = id("product-preview");
+  const gateId = id("approval-gate");
+  const exactFields = platformPackage?.exactFields ?? {
+    "Product name": proposal.title.replace("Business Proposal: ", ""),
+    Destination: destination?.name ?? publishingPackage.platform,
+    "Local draft": proposal.contentPlan.join(" / "),
+  };
+  const fullDraft = localAssetFiles.map((file) => [`## ${file.title}`, file.content].join("\n\n")).join("\n\n---\n\n");
+  const sectionBlueprints: Array<{
+    kind: ProductPreviewSection["kind"];
+    title: string;
+    summary: string;
+    content: string;
+    fields?: Record<string, string>;
+    status: ProductPreviewSection["status"];
+  }> = [
+    {
+      kind: "overview",
+      title: "Product overview",
+      summary: "The product, buyer, problem, offer, destination, and current locks.",
+      content: [
+        `Product: ${fiverrMode ? "Fiverr gig draft" : "Local product draft"} for ${proposal.title.replace("Business Proposal: ", "")}`,
+        `Buyer: ${proposal.targetAudience}`,
+        `Problem solved: ${proposal.summary}`,
+        `Offer/deliverable: ${proposal.productionPlan[0] ?? "Local draft package"}`,
+        `Intended destination: ${destination?.name ?? publishingPackage.platform}`,
+        `Locked actions: publish, spend, message, login automation, form submission, purchase, connector execution.`,
+      ].join("\n"),
+      status: "passed",
+    },
+    {
+      kind: "full_draft",
+      title: "Full local draft",
+      summary: "Exact product content to inspect before any publish request.",
+      content: fullDraft,
+      status: fullDraft.trim() ? "passed" : "missing",
+    },
+    {
+      kind: "platform_fields",
+      title: fiverrMode ? "Fiverr platform fields" : "Platform fields",
+      summary: "Exact fields that would later be submitted only after a separate approval.",
+      content: Object.entries(exactFields).map(([key, value]) => `${key}: ${value}`).join("\n"),
+      fields: exactFields,
+      status: Object.keys(exactFields).length ? "passed" : "missing",
+    },
+    {
+      kind: "assets",
+      title: "Product Files",
+      summary: "Local files and content created by agents.",
+      content: localAssetFiles.map((file) => `- ${file.title}: ${file.intendedPath}`).join("\n"),
+      status: localAssetFiles.length ? "passed" : "needs_review",
+    },
+    {
+      kind: "claims_safety",
+      title: "Claims & Safety Check",
+      summary: "Claims, policy, and blocked behavior review.",
+      content: [
+        "- No guaranteed income claims.",
+        "- No fake reviews, spam, hidden outreach, or misleading promises.",
+        "- No purchases, paid promotion, login automation, form submission, or connector execution.",
+        "- Manual platform terms review is still required before external use.",
+        ...(platformPackage?.policyChecks.map((check) => `- ${check}`) ?? []),
+      ].join("\n"),
+      status: "needs_review",
+    },
+    {
+      kind: "publishing_preview",
+      title: "Publishing preview",
+      summary: "What a later approval would ask for; nothing external happens here.",
+      content: [
+        `Destination: ${destination?.name ?? publishingPackage.platform}`,
+        `User login required: ${platformPackage?.userLoginRequired ? "yes, manual login only" : "not configured"}`,
+        "What the app will not do from local draft approval: publish, spend, message, log in, submit forms, purchase, execute connectors, or change external accounts.",
+        publishingPackage.approvalBoundary,
+      ].join("\n"),
+      status: "needs_review",
+    },
+    {
+      kind: "revision_requests",
+      title: "Revision requests",
+      summary: "Safe internal revisions requested before publishing.",
+      content: "No revision requests yet.",
+      status: "passed",
+    },
+  ];
+  const sections = sectionBlueprints.map((section) => ({
+    id: id("product-section"),
+    previewId,
+    kind: section.kind,
+    title: section.title,
+    summary: section.summary,
+    content: section.content,
+    fields: section.fields,
+    status: section.status,
+    createdAt: now,
+    updatedAt: now,
+  })) satisfies ProductPreviewSection[];
+  const blueprint: ProductBlueprint = {
+    id: blueprintId,
+    businessId,
+    proposalId: proposal.id,
+    name: fiverrMode ? `${proposal.title.replace("Business Proposal: ", "")} Fiverr gig draft` : `${proposal.title.replace("Business Proposal: ", "")} product draft`,
+    productType: fiverrMode ? "fiverr_gig" : "landing_page",
+    audience: proposal.targetAudience,
+    problemSolved: proposal.summary,
+    offerDeliverable: proposal.productionPlan[0] ?? "Local draft package",
+    valueProposition: proposal.whyMightWork[0] ?? "Validation-first local draft; results are not guaranteed.",
+    intendedDestination: destination?.name ?? publishingPackage.platform,
+    zeroBudgetDeliveryPath: proposal.budgetPlan.zeroBudgetPath,
+    stage: "review",
+    readinessScore: proposal.validationScore,
+    requiredAssetIds: localAssetFiles.map((file) => file.id),
+    blockedExternalActions: ["publish", "message", "spend", "login_automation", "submit_form", "purchase", "connector_execute"],
+    nextProductionStep: "View the product, then approve the local draft or request revision.",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const preview: ProductPreview = {
+    id: previewId,
+    blueprintId,
+    businessId,
+    proposalId: proposal.id,
+    destinationId: destination?.id,
+    platformPackageId: platformPackage?.id,
+    publishingPackageId: publishingPackage.id,
+    status: "needs_product_review",
+    localDraftApproved: false,
+    sectionIds: sections.map((section) => section.id),
+    assetFileIds: localAssetFiles.map((file) => file.id),
+    claimsSafetyStatus: "needs_review",
+    missingItems: localAssetFiles.length ? [] : ["At least one local product file is required before a publish approval."],
+    readinessScore: proposal.validationScore,
+    approvalGateStateId: gateId,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const draftApproval: ProductDraftApproval = {
+    id: id("product-draft-approval"),
+    previewId,
+    businessId,
+    status: "not_reviewed",
+    note: "Local draft has not been approved for the next step yet.",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const gateState: ApprovalGateState = {
+    id: gateId,
+    businessId,
+    previewId,
+    gate: "publish",
+    status: "needs_product_review",
+    label: "Needs Product Review",
+    reason: "Inspect and approve the local draft before requesting a publish approval.",
+    actionLabel: "Open Product Studio",
+    linkedPath: "/#/production",
+    updatedAt: now,
+  };
+  return { blueprint, preview, sections, draftApproval, gateState };
+}
+
+function buildPublishPayloadPreview(
+  current: AppDataState,
+  preview: ProductPreview,
+  now: string,
+): PublishPayloadPreview {
+  const business = current.approvedBusinesses.find((item) => item.id === preview.businessId);
+  const blueprint = current.productBlueprints.find((item) => item.id === preview.blueprintId);
+  const platformPackage = preview.platformPackageId ? current.platformExecutionPackages.find((item) => item.id === preview.platformPackageId) : undefined;
+  const destination = preview.destinationId ? current.productionDestinations.find((item) => item.id === preview.destinationId) : undefined;
+  const platform = platformPackage?.platform ?? destination?.name ?? "Manual / no connector";
+  const exactFields = platformPackage?.exactFields ?? Object.fromEntries(
+    current.productPreviewSections
+      .filter((section) => preview.sectionIds.includes(section.id) && section.fields)
+      .flatMap((section) => Object.entries(section.fields ?? {})),
+  );
+  return {
+    id: id("publish-payload-preview"),
+    previewId: preview.id,
+    businessId: preview.businessId,
+    platform,
+    destinationId: preview.destinationId,
+    platformPackageId: preview.platformPackageId,
+    exactFields: Object.keys(exactFields).length ? exactFields : {
+      "Product name": blueprint?.name ?? business?.name ?? "Product draft",
+      Destination: platform,
+      "Local-only status": "Ready for exact publish approval request only after user review.",
+    },
+    contentSummary: blueprint
+      ? `${blueprint.name} for ${blueprint.audience}. Deliverable: ${blueprint.offerDeliverable}.`
+      : "Local product draft approved for the next approval request step.",
+    userLoginRequired: platformPackage?.userLoginRequired ?? false,
+    credentialsStored: false,
+    whatWillNotHappen: [
+      "No publishing until this exact approval is approved.",
+      "No spending, paid promotion, purchases, messaging, login automation, form submission, or connector execution.",
+      "No credentials are stored.",
+      "No guaranteed income, fake reviews, spam, or misleading claims are allowed.",
+    ],
+    rollbackNotes: [
+      "If anything looks wrong, reject the approval and request a Product Studio revision.",
+      "Any external platform change must be manually reviewed after execution.",
+    ],
+    budgetBoundary: business
+      ? `Budget cap ${money(business.budgetPlan.businessBudgetCap)}, required spend ${money(business.budgetPlan.requiredSpend)}, recommended spend ${money(business.budgetPlan.recommendedSpend)}.`
+      : "No spend is included in this publish payload.",
+    status: "frozen",
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -3090,6 +3323,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 }
               : command,
           ),
+          approvalGateStates: current.approvalGateStates.map((gate) =>
+            gate.id === existingApproval.approvalGateStateId
+              ? {
+                  ...gate,
+                  status: "blocked",
+                  label: "Blocked",
+                  reason: blockedDetail,
+                  actionLabel: "Review Product Studio",
+                  updatedAt: now,
+                }
+              : gate,
+          ),
           commandLedgerEntries: current.commandLedgerEntries.map((entry) =>
             entry.approvalId === approvalId || entry.commandId === existingApproval.commandId
               ? {
@@ -3131,6 +3376,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ...current,
         approvalRequests: current.approvalRequests.map((request) =>
           request.id === approvalId ? { ...request, status, safetyEvaluation: safetyEvaluation ?? request.safetyEvaluation } : request,
+        ),
+        approvalGateStates: current.approvalGateStates.map((gate) =>
+          gate.id === existingApproval.approvalGateStateId
+            ? {
+                ...gate,
+                status: status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "blocked" ? "blocked" : gate.status,
+                label: status === "approved" ? "Approved" : status === "rejected" ? "Rejected" : status === "blocked" ? "Blocked" : gate.label,
+                reason:
+                  status === "approved"
+                    ? "The exact publish request was approved. Execution still remains limited to the approved payload and connector availability."
+                    : status === "rejected"
+                      ? "The exact publish request was rejected. Request a revision or prepare a new approval later."
+                      : gate.reason,
+                updatedAt: now,
+              }
+            : gate,
         ),
         commandLedgerEntries: current.commandLedgerEntries.map((entry) =>
           entry.approvalId === approvalId || entry.commandId === existingApproval.commandId
@@ -4576,13 +4837,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         status: "draft",
         sourceReportIds: [proposal.id],
         claims: ["Practical workflow templates", "No guaranteed income", "Validation-first offer"],
-        policyChecks: ["Draft only", "Publishing approval required", "No misleading claims"],
+        policyChecks: ["Draft only", "Publishing locked until exact approval", "No misleading claims"],
         localPreview: proposal.contentPlan.join(" / "),
         exportFolder: "OpenClaw/Production",
         createdAt: now,
         updatedAt: now,
       };
       const operatingBundle = buildBusinessOperatingBundle(current, proposal, businessId, questId, now);
+      const productStudio = buildProductStudioRecords(current, proposal, businessId, now, operatingBundle.localAssetFiles, operatingBundle.publishingPackage);
       const inheritedTaskIds = current.businessTasks.filter((task) => task.proposalId === proposalId && task.status !== "done").map((task) => task.id);
       const approvedBusiness: ApprovedBusiness = {
         id: businessId,
@@ -4649,6 +4911,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         evidenceQualityScores: [...operatingBundle.evidenceQualityScores, ...current.evidenceQualityScores],
         localAssetFiles: [...operatingBundle.localAssetFiles, ...current.localAssetFiles],
         publishingPackages: [operatingBundle.publishingPackage, ...current.publishingPackages],
+        productBlueprints: [productStudio.blueprint, ...current.productBlueprints],
+        productPreviews: [productStudio.preview, ...current.productPreviews],
+        productPreviewSections: [...productStudio.sections, ...current.productPreviewSections],
+        productDraftApprovals: [productStudio.draftApproval, ...current.productDraftApprovals],
+        approvalGateStates: [productStudio.gateState, ...current.approvalGateStates],
         businessMetricSnapshots: [operatingBundle.metricSnapshot, ...current.businessMetricSnapshots],
         budgetLedgerEntries: [operatingBundle.ledgerEntry, ...current.budgetLedgerEntries],
         autopilotJobs: [operatingBundle.autopilotJob, ...current.autopilotJobs],
@@ -4880,45 +5147,288 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [persistOptimistic],
   );
 
-  const preparePlatformPublishApproval = useCallback(
-    async (packageId: string) => {
+  const approveProductLocalDraft = useCallback(
+    async (previewId: string) => {
       const current = dataRef.current;
-      const executionPackage = current.platformExecutionPackages.find((item) => item.id === packageId);
-      if (!executionPackage) throw new Error("Platform execution package not found.");
+      const preview = current.productPreviews.find((item) => item.id === previewId);
+      if (!preview) throw new Error("Product preview not found.");
+      const business = current.approvedBusinesses.find((item) => item.id === preview.businessId);
       const now = new Date().toISOString();
-      const approvalId = id("approval-platform-publish");
-      const business = executionPackage.businessId ? current.approvedBusinesses.find((item) => item.id === executionPackage.businessId) : undefined;
+      const payloadPreview = buildPublishPayloadPreview(current, preview, now);
+      await persistOptimistic({
+        ...current,
+        productPreviews: current.productPreviews.map((item) =>
+          item.id === previewId
+            ? {
+                ...item,
+                status: "local_draft_approved",
+                localDraftApproved: true,
+                publishPayloadPreviewId: payloadPreview.id,
+                missingItems: item.missingItems.filter((missing) => !missing.toLowerCase().includes("local product")),
+                updatedAt: now,
+              }
+            : item,
+        ),
+        productDraftApprovals: current.productDraftApprovals.map((item) =>
+          item.previewId === previewId
+            ? {
+                ...item,
+                status: "approved_local",
+                note: "User approved this local draft for the next step only. Nothing was published.",
+                approvedAt: now,
+                updatedAt: now,
+              }
+            : item,
+        ),
+        productBlueprints: current.productBlueprints.map((item) =>
+          item.id === preview.blueprintId
+            ? { ...item, stage: "ready_for_publish_request", nextProductionStep: "Prepare an exact publish approval if you want to continue.", updatedAt: now }
+            : item,
+        ),
+        publishPayloadPreviews: [payloadPreview, ...current.publishPayloadPreviews.filter((item) => item.previewId !== previewId || item.status !== "frozen")],
+        approvalGateStates: current.approvalGateStates.map((item) =>
+          item.id === preview.approvalGateStateId
+            ? {
+                ...item,
+                publishPayloadPreviewId: payloadPreview.id,
+                status: "ready_to_request_approval",
+                label: "Ready To Request Approval",
+                reason: "Local draft is approved. You can now create a pending publish approval from the frozen payload.",
+                actionLabel: "Prepare Publish Approval",
+                updatedAt: now,
+              }
+            : item,
+        ),
+        activityLogs: [
+          {
+            id: id("log-product-draft-approved"),
+            category: "system",
+            title: "Local product draft approved",
+            detail: `${business?.name ?? "Product draft"} was approved locally. No external publishing, spending, login, messaging, form submission, or connector action ran.`,
+            severity: "success",
+            createdAt: now,
+            relatedQuestId: business?.questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+      });
+    },
+    [persistOptimistic],
+  );
+
+  const requestProductRevision = useCallback(
+    async (previewId: string, reason = "Please revise the product draft before any publishing approval is requested.") => {
+      const current = dataRef.current;
+      const preview = current.productPreviews.find((item) => item.id === previewId);
+      if (!preview) throw new Error("Product preview not found.");
+      const business = current.approvedBusinesses.find((item) => item.id === preview.businessId);
+      const now = new Date().toISOString();
+      const revisionId = id("product-revision");
+      const taskIds = [id("business-task"), id("business-task")];
+      const revisionTasks: BusinessTask[] = [
+        {
+          id: taskIds[0],
+          businessId: preview.businessId,
+          proposalId: preview.proposalId,
+          agentId: "agent-production",
+          title: "Revise product package",
+          objective: reason,
+          status: "queued",
+          progress: 0,
+          currentArtifact: "Product draft revision",
+          expectedOutput: "Updated local product draft and platform field notes.",
+          approvalRequired: false,
+          logs: ["Revision is safe internal work only. No external publishing, login, form submission, spending, or connector action."],
+          updatedAt: now,
+        },
+        {
+          id: taskIds[1],
+          businessId: preview.businessId,
+          proposalId: preview.proposalId,
+          agentId: "agent-writer",
+          title: "Revise product copy",
+          objective: reason,
+          status: "queued",
+          progress: 0,
+          currentArtifact: "Copy and claims revision",
+          expectedOutput: "Sharper copy with unsupported claims removed.",
+          approvalRequired: false,
+          logs: ["Writer revision stays local and must preserve the no-guaranteed-income safety rule."],
+          updatedAt: now,
+        },
+      ];
+      const revision: ProductRevisionRequest = {
+        id: revisionId,
+        previewId,
+        businessId: preview.businessId,
+        requestedBy: "user",
+        reason,
+        taskIds,
+        status: "open",
+        createdAt: now,
+        updatedAt: now,
+      };
+      await persistOptimistic({
+        ...current,
+        productRevisionRequests: [revision, ...current.productRevisionRequests],
+        businessTasks: [...revisionTasks, ...current.businessTasks],
+        productPreviews: current.productPreviews.map((item) =>
+          item.id === previewId ? { ...item, status: "revision_requested", localDraftApproved: false, updatedAt: now } : item,
+        ),
+        productDraftApprovals: current.productDraftApprovals.map((item) =>
+          item.previewId === previewId ? { ...item, status: "revision_requested", revisionRequestId: revisionId, note: reason, updatedAt: now } : item,
+        ),
+        productPreviewSections: current.productPreviewSections.map((section) =>
+          section.previewId === previewId && section.kind === "revision_requests"
+            ? {
+                ...section,
+                content: [section.content, "", `## ${new Date(now).toLocaleString()}`, reason].join("\n"),
+                status: "needs_review",
+                updatedAt: now,
+              }
+            : section,
+        ),
+        approvalGateStates: current.approvalGateStates.map((item) =>
+          item.id === preview.approvalGateStateId
+            ? {
+                ...item,
+                status: "needs_product_review",
+                label: "Needs Product Review",
+                reason: "A revision was requested. Review the updated draft before creating any publish approval.",
+                actionLabel: "Review Product",
+                updatedAt: now,
+              }
+            : item,
+        ),
+        activityLogs: [
+          {
+            id: id("log-product-revision"),
+            category: "agent",
+            title: "Product revision requested",
+            detail: `${business?.name ?? "Product draft"} revision queued for AgentProduction and AgentWriter. No external action ran.`,
+            severity: "info",
+            createdAt: now,
+            relatedQuestId: business?.questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+      });
+      return revisionId;
+    },
+    [persistOptimistic],
+  );
+
+  const prepareProductPublishApproval = useCallback(
+    async (previewId: string) => {
+      const current = dataRef.current;
+      const preview = current.productPreviews.find((item) => item.id === previewId);
+      if (!preview) throw new Error("Product preview not found.");
+      const business = current.approvedBusinesses.find((item) => item.id === preview.businessId);
+      const blueprint = current.productBlueprints.find((item) => item.id === preview.blueprintId);
+      const existingGate = current.approvalGateStates.find((item) => item.id === preview.approvalGateStateId);
+      const existingPending = existingGate?.approvalId ? current.approvalRequests.find((item) => item.id === existingGate.approvalId && item.status === "pending") : undefined;
+      if (existingPending) return existingPending.id;
+      const now = new Date().toISOString();
+      const blockedReason = !preview.localDraftApproved
+        ? "The local draft must be approved in Product Studio before a publish approval can be requested."
+        : preview.claimsSafetyStatus === "blocked"
+          ? "Claims & Safety Check is blocked. Request a revision before publishing."
+          : preview.missingItems.length
+            ? `Missing product items: ${preview.missingItems.join(", ")}`
+            : "";
+      if (blockedReason) {
+        await persistOptimistic({
+          ...current,
+          approvalGateStates: current.approvalGateStates.map((item) =>
+            item.id === preview.approvalGateStateId
+              ? {
+                  ...item,
+                  status: preview.localDraftApproved ? "locked" : "needs_product_review",
+                  label: preview.localDraftApproved ? "Locked" : "Needs Product Review",
+                  reason: blockedReason,
+                  actionLabel: "Open Product Studio",
+                  updatedAt: now,
+                }
+              : item,
+          ),
+          activityLogs: [
+            {
+              id: id("log-publish-gate-locked"),
+              category: "approval",
+              title: "Publish approval not requested",
+              detail: blockedReason,
+              severity: "warning",
+              createdAt: now,
+              relatedQuestId: business?.questId,
+            } satisfies ActivityLog,
+            ...current.activityLogs,
+          ].slice(0, 80),
+        });
+        return "";
+      }
+      const payloadPreview = preview.publishPayloadPreviewId
+        ? current.publishPayloadPreviews.find((item) => item.id === preview.publishPayloadPreviewId) ?? buildPublishPayloadPreview(current, preview, now)
+        : buildPublishPayloadPreview(current, preview, now);
+      const approvalId = id("approval-product-publish");
       const approval: ApprovalRequest = {
         id: approvalId,
         type: "Publish externally",
-        title: `${executionPackage.platform} publish approval: ${executionPackage.title}`,
+        title: `${payloadPreview.platform} publish approval: ${blueprint?.name ?? business?.name ?? "Product draft"}`,
         questId: business?.questId,
         requestedBy: "TeamLeader1A",
         riskLevel: "high",
-        reason: `${executionPackage.actionLabel} requires a separate exact approval. User must be logged in manually; Mission Control will not store credentials.`,
+        reason: "This approval is for the exact frozen Product Studio payload only. It records the publish request; connector execution remains separate unless a later executor is explicitly approved.",
         safetyChecklist: [
-          "Exact fields must be reviewed before execution.",
-          "User login is manual and credentials are not stored.",
+          "Product preview exists and the local draft was approved.",
+          "Exact fields/content are frozen in the publish payload preview.",
+          "User login, if needed, is manual and credentials are not stored.",
           "No spend, paid promotion, messaging, purchases, or broad account control is included.",
           "No guaranteed income, fake reviews, spam, or misleading claims.",
-          "Approval records the package only; connector/browser execution remains locked until a later approved executor exists.",
+          "Publishing connector/browser execution remains locked until a later exact executor is approved.",
         ],
         blockedBehaviors: ["Credential storage", "Unapproved login automation", "Form submission beyond exact approved fields", "Paid promotion", "Buyer messaging", "Purchases", "Guaranteed income claims"],
         status: "pending",
         createdAt: now,
+        productPreviewId: preview.id,
+        publishPayloadPreviewId: payloadPreview.id,
+        approvalGateStateId: preview.approvalGateStateId,
       };
       await persistOptimistic({
         ...current,
         approvalRequests: [approval, ...current.approvalRequests],
+        publishPayloadPreviews: current.publishPayloadPreviews.some((item) => item.id === payloadPreview.id)
+          ? current.publishPayloadPreviews
+          : [payloadPreview, ...current.publishPayloadPreviews],
+        productPreviews: current.productPreviews.map((item) =>
+          item.id === preview.id ? { ...item, publishPayloadPreviewId: payloadPreview.id, updatedAt: now } : item,
+        ),
+        approvalGateStates: current.approvalGateStates.map((item) =>
+          item.id === preview.approvalGateStateId
+            ? {
+                ...item,
+                approvalId,
+                publishPayloadPreviewId: payloadPreview.id,
+                status: "pending_approval",
+                label: "Pending Approval",
+                reason: "A real pending approval exists in the Approvals tab.",
+                actionLabel: "Open Pending Approval",
+                linkedPath: "/#/approvals",
+                updatedAt: now,
+              }
+            : item,
+        ),
         platformExecutionPackages: current.platformExecutionPackages.map((item) =>
-          item.id === packageId ? { ...item, status: "approval_requested", approvalId, updatedAt: now } : item,
+          item.id === preview.platformPackageId ? { ...item, status: "approval_requested", approvalId, updatedAt: now } : item,
+        ),
+        publishingPackages: current.publishingPackages.map((item) =>
+          item.id === preview.publishingPackageId ? { ...item, status: "approval_requested", updatedAt: now } : item,
         ),
         activityLogs: [
           {
-            id: id("log-platform-approval"),
+            id: id("log-product-publish-approval"),
             category: "approval",
-            title: `${executionPackage.platform} publish approval prepared`,
-            detail: "Exact platform publish package is waiting for user review. No external action executed.",
+            title: "Product publish pending approval",
+            detail: `${payloadPreview.platform} publish payload is now visible in Approvals. No external action executed.`,
             severity: "warning",
             createdAt: now,
             relatedQuestId: business?.questId,
@@ -4929,6 +5439,33 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return approvalId;
     },
     [persistOptimistic],
+  );
+
+  const preparePlatformPublishApproval = useCallback(
+    async (packageId: string) => {
+      const current = dataRef.current;
+      const preview = current.productPreviews.find((item) => item.platformPackageId === packageId);
+      if (preview) return prepareProductPublishApproval(preview.id);
+      const executionPackage = current.platformExecutionPackages.find((item) => item.id === packageId);
+      if (!executionPackage) throw new Error("Platform execution package not found.");
+      const now = new Date().toISOString();
+      await persistOptimistic({
+        ...current,
+        activityLogs: [
+          {
+            id: id("log-platform-approval-locked"),
+            category: "approval",
+            title: "Publish approval locked until Product Studio review",
+            detail: `${executionPackage.title} needs a Product Studio preview and local draft approval before a pending approval can be created.`,
+            severity: "warning",
+            createdAt: now,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+      });
+      return "";
+    },
+    [persistOptimistic, prepareProductPublishApproval],
   );
 
   const createMissionDraftFromMessage = useCallback(
@@ -5473,7 +6010,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             id: logId,
             category: "approval",
-            title: result.blocked ? "Real pilot URL research blocked" : "Real pilot URL research approval requested",
+            title: result.blocked ? "Real pilot URL research blocked" : "Real pilot URL research pending approval",
             detail: result.blocked
               ? `No browser research ran. ${result.safetyEvaluation.blockedReasons.join(" ")}`
               : "Approved URL research is queued behind a user approval. No browser research has run yet.",
@@ -5544,7 +6081,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             id: logId,
             category: "approval",
-            title: result.blocked ? "TeamLeader1A pilot review blocked" : "TeamLeader1A pilot review approval requested",
+            title: result.blocked ? "TeamLeader1A pilot review blocked" : "TeamLeader1A pilot review pending approval",
             detail: result.blocked
               ? `No local agent turn ran. ${result.safetyEvaluation.blockedReasons.join(" ")}`
               : "A local TeamLeader1A review is queued behind approval. The prompt blocks browsing, publishing, messaging, launch, and spending.",
@@ -7246,6 +7783,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       exportBusinessAssetPack,
       setOperatingAutopilotEnabled,
       updateBusinessProposalStatus,
+      approveProductLocalDraft,
+      requestProductRevision,
+      prepareProductPublishApproval,
       preparePlatformPublishApproval,
       createMissionDraftFromMessage,
       requestMissionStart,
@@ -7316,6 +7856,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       addBusinessMetricSnapshot,
       exportBusinessAssetPack,
       updateBusinessProposalStatus,
+      approveProductLocalDraft,
+      requestProductRevision,
+      prepareProductPublishApproval,
       preparePlatformPublishApproval,
       createMissionDraftFromMessage,
       requestMissionStart,

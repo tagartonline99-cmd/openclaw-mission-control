@@ -546,7 +546,7 @@ const checklist = (questId: string, overrides: Partial<ValidationReport> = {}): 
     { id: `${questId}-failure`, label: "Failure metrics", status: "passed", evidence: "Kill criteria are documented." },
     { id: `${questId}-risk`, label: "Risk assessment", status: "passed", evidence: "Risks and assumptions are listed." },
     { id: `${questId}-legal`, label: "Legal/platform policy concerns", status: "needs_review", evidence: "Policy review is pending." },
-    { id: `${questId}-approval`, label: "User approval required", status: "passed", evidence: "Spend, publish, launch, and automation are gated." },
+    { id: `${questId}-approval`, label: "User approval gate", status: "passed", evidence: "Spend, publish, launch, and automation are gated." },
   ],
   whyItMightWork: "The audience has repeated, practical pain points and the MVP can be tested cheaply.",
   whyItMightFail: "Traffic or willingness-to-pay signals may be weaker than early research suggests.",
@@ -1996,7 +1996,7 @@ export const approvalRequests: ApprovalRequest[] = [
 ];
 
 export const activityLogs: ActivityLog[] = [
-  { id: "log-1", category: "approval", title: "Launch approval required", detail: "Notion template smoke test is staged but locked until user approval.", severity: "warning", createdAt: "2026-05-09T11:12:00+08:00", relatedQuestId: "quest-notion-pack" },
+  { id: "log-1", category: "approval", title: "Launch locked until approval", detail: "Notion template smoke test is staged but locked until user approval.", severity: "warning", createdAt: "2026-05-09T11:12:00+08:00", relatedQuestId: "quest-notion-pack" },
   { id: "log-2", category: "agent", title: "AgentSeo updated keyword map", detail: "Beginner AI tools cluster split into comparison, tutorial, and limitations pages.", severity: "info", createdAt: "2026-05-09T10:44:00+08:00", relatedQuestId: "quest-ai-tools" },
   { id: "log-3", category: "quest", title: "Lead-gen quest blocked", detail: "TeamLeader1A blocked risky external actions pending policy review.", severity: "danger", createdAt: "2026-05-08T18:20:00+08:00", relatedQuestId: "quest-local-leadgen" },
   { id: "log-4", category: "obsidian", title: "Markdown export prepared", detail: "Validation report Markdown is ready for local vault export from the Tauri desktop shell.", severity: "success", createdAt: "2026-05-08T15:15:00+08:00", relatedQuestId: "quest-home-office" },

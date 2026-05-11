@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { AlertTriangle, Check, Coins, ExternalLink, GitBranch, Lock, ShieldCheck, X } from "lucide-react";
-import type { ApprovalRequest } from "../../types";
+import type { ApprovalGateState, ApprovalRequest, PublishPayloadPreview } from "../../types";
 import { formatCurrency, formatDateTime, riskTone, statusTone } from "../../utils/formatting";
 import { safetyPolicyService } from "../../services/safetyPolicyService";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -22,7 +22,33 @@ function actionKind(request: ApprovalRequest) {
   return request.payload?.actionKind ?? "local";
 }
 
-function PayloadCard({ request }: { request: ApprovalRequest }) {
+function PayloadCard({ request, publishPayloadPreview }: { request: ApprovalRequest; publishPayloadPreview?: PublishPayloadPreview }) {
+  if (publishPayloadPreview) {
+    return (
+      <div className="grid gap-3">
+        <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+          <p className="text-xs font-semibold uppercase text-teal-100">Frozen publish payload</p>
+          <p className="mt-1 text-sm leading-6 text-slate-300">{publishPayloadPreview.contentSummary}</p>
+          <p className="mt-2 text-xs text-slate-500">{publishPayloadPreview.budgetBoundary}</p>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          {Object.entries(publishPayloadPreview.exactFields).map(([key, value]) => (
+            <div key={key} className="rounded-md border border-white/10 bg-black/25 p-3">
+              <p className="text-xs font-semibold uppercase text-slate-500">{key}</p>
+              <p className="mt-1 text-sm leading-6 text-slate-300">{value}</p>
+            </div>
+          ))}
+        </div>
+        <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
+          <p className="text-xs font-semibold uppercase text-red-100">What will not happen</p>
+          <ul className="mt-2 space-y-1 text-sm text-red-100">
+            {publishPayloadPreview.whatWillNotHappen.map((item) => <li key={item}>- {item}</li>)}
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
   if (!request.payload) {
     return <p className="text-sm text-slate-300">{request.reason}</p>;
   }
@@ -100,7 +126,7 @@ function PayloadCard({ request }: { request: ApprovalRequest }) {
 
 export function ApprovalCenter() {
   const { data, updateApprovalStatus } = useAppData();
-  const { approvalRequests, approvalDecisionRecords, openClawCommands, quests } = data;
+  const { approvalRequests, approvalDecisionRecords, openClawCommands, quests, publishPayloadPreviews, approvalGateStates, approvedBusinesses } = data;
   const [selected, setSelected] = useState<ApprovalRequest | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [actionFilter, setActionFilter] = useState("all");
@@ -115,16 +141,28 @@ export function ApprovalCenter() {
     });
   }, [actionFilter, approvalRequests, riskFilter, statusFilter]);
 
+  const pendingRequests = filteredRequests.filter((request) => request.status === "pending");
+  const nonPendingRequests = filteredRequests.filter((request) => request.status !== "pending");
+  const lockedGateStates = approvalGateStates.filter((gate) => ["locked", "needs_product_review", "ready_to_request_approval", "blocked"].includes(gate.status));
+
+  function publishPreviewFor(request: ApprovalRequest) {
+    return request.publishPayloadPreviewId ? publishPayloadPreviews.find((item) => item.id === request.publishPayloadPreviewId) : undefined;
+  }
+
+  function gateBusiness(gate: ApprovalGateState) {
+    return approvedBusinesses.find((business) => business.id === gate.businessId);
+  }
+
   return (
     <>
       <Card>
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <CardTitle>Safety Review Desk</CardTitle>
-              <p className="mt-1 text-sm text-slate-400">Every risky action shows its payload, safety evaluation, blocked reasons, execution result, and decision timeline.</p>
+              <CardTitle>Pending Requests</CardTitle>
+              <p className="mt-1 text-sm text-slate-400">Only real approval records appear here. If something is locked but not requested, it is shown in the lane below without approve buttons.</p>
             </div>
-            <Badge tone="red">{approvalRequests.filter((request) => request.status === "pending").length} pending</Badge>
+            <Badge tone="red">{approvalRequests.filter((request) => request.status === "pending").length} pending approval</Badge>
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -153,10 +191,16 @@ export function ApprovalCenter() {
           </div>
         </CardHeader>
         <CardContent className="grid gap-4">
-          {filteredRequests.map((request) => {
+          {pendingRequests.length === 0 ? (
+            <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
+              No pending approval requests match these filters. Locked actions that have not been requested yet are listed below.
+            </p>
+          ) : null}
+          {pendingRequests.map((request) => {
             const Icon = requestIcon(request.type);
             const quest = quests.find((item) => item.id === request.questId);
             const command = openClawCommands.find((item) => item.id === request.commandId);
+            const publishPayload = publishPreviewFor(request);
             const blocked = request.status === "blocked" || request.safetyEvaluation?.allowed === false;
             return (
               <div key={request.id} className="rounded-lg border border-white/10 bg-black/25 p-4">
@@ -202,6 +246,11 @@ export function ApprovalCenter() {
                     View Mission Brief
                   </a>
                 ) : null}
+                {publishPayload ? (
+                  <a className="mt-3 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href="#/production">
+                    View Product Studio payload
+                  </a>
+                ) : null}
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button variant="secondary" size="sm" onClick={() => setSelected(request)}>
                     <ShieldCheck className="h-4 w-4" />
@@ -226,6 +275,53 @@ export function ApprovalCenter() {
           })}
         </CardContent>
       </Card>
+      <Card className="mt-5">
+        <CardHeader>
+          <CardTitle>Locked / Not Requested Yet</CardTitle>
+          <p className="mt-1 text-sm text-slate-400">These are gates that explain why an action cannot be approved from here yet. Use the linked Product Studio step first.</p>
+        </CardHeader>
+        <CardContent className="grid gap-3 lg:grid-cols-2">
+          {lockedGateStates.length === 0 ? (
+            <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">No locked product gates are waiting for review.</p>
+          ) : null}
+          {lockedGateStates.map((gate) => {
+            const business = gateBusiness(gate);
+            return (
+              <div key={gate.id} className="rounded-lg border border-white/10 bg-black/25 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <Badge tone={gate.status === "blocked" ? "red" : gate.status === "ready_to_request_approval" ? "emerald" : "amber"}>{gate.label}</Badge>
+                    <h3 className="mt-3 font-display text-lg font-semibold text-stone-100">{business?.name ?? "Product gate"}</h3>
+                  </div>
+                  <Badge tone="slate">{gate.gate}</Badge>
+                </div>
+                <p className="mt-3 text-sm leading-6 text-slate-300">{gate.reason}</p>
+                <a className="mt-3 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href={gate.linkedPath}>
+                  {gate.actionLabel}
+                </a>
+              </div>
+            );
+          })}
+        </CardContent>
+      </Card>
+      {nonPendingRequests.length > 0 ? (
+        <Card className="mt-5">
+          <CardHeader>
+            <CardTitle>Approval History</CardTitle>
+          </CardHeader>
+          <CardContent className="grid gap-3">
+            {nonPendingRequests.slice(0, 8).map((request) => (
+              <div key={request.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="font-semibold text-stone-100">{request.title}</p>
+                  <Badge tone={request.status === "approved" ? "emerald" : request.status === "rejected" ? "red" : "amber"}>{request.status}</Badge>
+                </div>
+                <p className="mt-1 text-sm text-slate-400">{formatDateTime(request.createdAt)}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : null}
       <Dialog open={Boolean(selected)} title={selected?.title ?? "Approval request"} onClose={() => setSelected(null)}>
         {selected ? (
           <div className="space-y-4">
@@ -239,7 +335,7 @@ export function ApprovalCenter() {
               </p>
             </div>
 
-            <PayloadCard request={selected} />
+            <PayloadCard request={selected} publishPayloadPreview={publishPreviewFor(selected)} />
 
             {selected.safetyEvaluation ? (
               <div className="grid gap-4 md:grid-cols-2">

@@ -122,7 +122,7 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
             </div>
             {latestPlatformRequirements.length > 0 ? (
               <p className="mt-2 text-xs leading-5 text-slate-300">
-                Platform boundaries: {latestPlatformRequirements.map((item) => `${item.platform} ${item.userLoginRequired ? "requires manual login" : "does not require login"}; credentials stored: ${item.credentialsStored ? "yes" : "no"}; publish approval: ${item.approvalRequiredBeforePublish ? "required" : "not required"}`).join(" / ")}.
+                Platform boundaries: {latestPlatformRequirements.map((item) => `${item.platform} ${item.userLoginRequired ? "requires manual login" : "does not require login"}; credentials stored: ${item.credentialsStored ? "yes" : "no"}; publish gate: ${item.approvalRequiredBeforePublish ? "separate exact approval later" : "not needed"}`).join(" / ")}.
               </p>
             ) : null}
           </div>

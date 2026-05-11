@@ -56,16 +56,23 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Autonomous improvement", { exact: true }).last()).toBeVisible();
 
   await page.goto("/#/production", { waitUntil: "domcontentloaded" });
-  await expect(page.getByText("Business Production And Publishing Map")).toBeVisible();
-  await expect(page.getByText(/Publishing destinations are visible/i).first()).toBeVisible();
-  await expect(page.getByText("Phase 12 local asset files").first()).toBeVisible();
-  await expect(page.getByText(/Static Website \/ Local Draft/i).first()).toBeVisible();
-  await expect(page.getByText(/approval required/i).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Product Studio" })).toBeVisible();
+  await expect(page.getByText(/See the exact product before any publishing approval/i)).toBeVisible();
+  await expect(page.getByText("Product Files")).toBeVisible();
+  await expect(page.getByText("Claims & Safety")).toBeVisible();
+  await expect(page.getByText("Publishing Preview")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Prepare Publish Approval/i })).toBeDisabled();
+  await page.getByRole("button", { name: /View Product/i }).click();
+  await expect(page.getByText("Full local draft")).toBeVisible();
+  await page.getByRole("button", { name: /Approve Local Draft/i }).click();
+  await expect(page.getByRole("button", { name: /Local Draft Approved/i })).toBeVisible();
+  await page.getByRole("button", { name: /Prepare Publish Approval/i }).click();
 
   await page.goto("/#/approvals", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Approval gates for risky actions" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Safety Review Desk" })).toBeVisible();
-  await expect(page.getByText(/Spend money|Publish externally|Launch experiment/i).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Pending Requests" })).toBeVisible();
+  await expect(page.getByText(/Product publish|Publish externally/i).first()).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Locked / Not Requested Yet" })).toBeVisible();
 
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("OpenClaw System Health")).toBeVisible();
@@ -82,7 +89,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Business operating loop release/i)).toBeVisible();
+  await expect(page.getByText(/Product Studio preview gate release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {
@@ -97,7 +104,7 @@ test("Fiverr prompt still creates a locked local platform package", async ({ pag
   await expect(page.getByText("External platform/account needs")).toBeVisible();
   await expect(page.getByText(/User login required: yes/i)).toBeVisible();
   await expect(page.getByText(/Credentials stored: no/i)).toBeVisible();
-  await expect(page.getByText(/Prepare Fiverr Publish Approval/i)).toBeVisible();
+  await expect(page.getByText(/Approve Business First/i)).toBeVisible();
 });
 
 test("MCP refresh keeps browser automation brokered in browser fallback", async ({ page }) => {

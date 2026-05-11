@@ -6,10 +6,16 @@ import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Progress } from "../ui/progress";
 
+function clearStatusLabel(status: string) {
+  if (status === "needs_approval") return "Locked";
+  if (status === "approval_requested") return "Pending Approval";
+  if (status === "ready_for_approval") return "Ready To Request Approval";
+  return status.replace(/_/g, " ");
+}
+
 export function BusinessesWorkbench() {
   const {
     data,
-    preparePlatformPublishApproval,
     runBusinessOperatingCycle,
     addBusinessMetricSnapshot,
     exportBusinessAssetPack,
@@ -90,6 +96,9 @@ export function BusinessesWorkbench() {
           const jobs = data.autopilotJobs.filter((item) => item.businessId === business.id);
           const tasks = data.businessTasks.filter((task) => business.activeTaskIds.includes(task.id) || task.businessId === business.id);
           const run = data.autonomousImprovementRuns.find((item) => item.businessId === business.id);
+          const preview = data.productPreviews.find((item) => item.businessId === business.id);
+          const blueprint = preview ? data.productBlueprints.find((item) => item.id === preview.blueprintId) : undefined;
+          const gate = preview?.approvalGateStateId ? data.approvalGateStates.find((item) => item.id === preview.approvalGateStateId) : undefined;
           return (
             <Card key={business.id}>
               <CardHeader>
@@ -106,6 +115,21 @@ export function BusinessesWorkbench() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm leading-6 text-slate-300">{business.teamLeaderRecommendation}</p>
+                {blueprint && gate ? (
+                  <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="flex items-center gap-2 text-xs font-semibold uppercase text-teal-100">
+                        <PackageCheck className="h-3.5 w-3.5" />
+                        Product Studio
+                      </p>
+                      <Badge tone={gate.status === "pending_approval" ? "amber" : gate.status === "approved" ? "emerald" : "slate"}>{gate.label}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-slate-200">{blueprint.name}: {blueprint.offerDeliverable}</p>
+                    <a className="mt-2 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href="#/production">
+                      View exact product draft
+                    </a>
+                  </div>
+                ) : null}
                 {cockpit ? (
                   <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
@@ -155,7 +179,7 @@ export function BusinessesWorkbench() {
                   <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
                     <p className="flex items-center gap-2 text-xs font-semibold uppercase text-red-100">
                       <ShieldAlert className="h-3.5 w-3.5" />
-                      Approval locked
+                      External actions locked
                     </p>
                     <p className="mt-1 text-sm leading-6 text-red-100">Publishing, messaging, spending, connector execution, launch, and forms.</p>
                   </div>
@@ -227,7 +251,7 @@ export function BusinessesWorkbench() {
                       <div key={destination.id} className="rounded-md border border-white/10 bg-black/25 p-2">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-semibold text-stone-100">{destination.name}</span>
-                          <Badge tone={destination.approvalRequired ? "red" : "teal"}>{destination.status.replace(/_/g, " ")}</Badge>
+                          <Badge tone={destination.approvalRequired ? "red" : "teal"}>{clearStatusLabel(destination.status)}</Badge>
                         </div>
                         <p className="mt-1 text-xs text-slate-400">{destination.description}</p>
                       </div>
@@ -242,7 +266,7 @@ export function BusinessesWorkbench() {
                         <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-2">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-sm font-semibold text-stone-100">{item.platform}</span>
-                            <Badge tone="red">{item.publishStatus.replace(/_/g, " ")}</Badge>
+                            <Badge tone="red">{clearStatusLabel(item.publishStatus)}</Badge>
                           </div>
                           <p className="mt-1 text-xs text-slate-400">
                             Account needed: {item.accountNeeded ? "yes" : "no"} / User login: {item.userLoginRequired ? "yes" : "no"} / Credentials stored: {item.credentialsStored ? "yes" : "no"}
@@ -263,12 +287,14 @@ export function BusinessesWorkbench() {
                         <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <span className="text-sm font-semibold text-stone-100">{item.title}</span>
-                            <Badge tone={item.status === "approval_requested" ? "red" : "amber"}>{item.status.replace(/_/g, " ")}</Badge>
+                            <Badge tone={item.status === "approval_requested" ? "amber" : "slate"}>{clearStatusLabel(item.status)}</Badge>
                           </div>
                           <p className="mt-1 text-xs leading-5 text-slate-400">{item.approvalBoundary}</p>
-                          <Button className="mt-2" variant="outline" size="sm" disabled={item.status === "approval_requested"} onClick={() => void preparePlatformPublishApproval(item.id)}>
-                            Prepare Fiverr Publish Approval
-                          </Button>
+                          <a href="#/production">
+                            <Button className="mt-2" variant="outline" size="sm">
+                              Open Product Studio
+                            </Button>
+                          </a>
                         </div>
                       ))}
                     </div>

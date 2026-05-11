@@ -203,6 +203,28 @@ export type PublishingPackageStatus = "local_draft" | "ready_for_approval" | "ap
 export type BudgetLedgerEntryType = "planned_spend" | "approved_spend" | "actual_spend" | "revenue" | "time_cost" | "adjustment";
 export type AutopilotJobType = "research_refresh" | "content_update" | "metric_reminder" | "improvement_proposal" | "local_asset_refresh";
 export type AutopilotJobStatus = "queued" | "running" | "completed" | "paused" | "blocked" | "failed";
+export type ProductBlueprintType = "fiverr_gig" | "landing_page" | "article" | "newsletter" | "template" | "sop" | "obsidian_pack";
+export type ProductPreviewStatus = "needs_product_review" | "local_draft_approved" | "revision_requested" | "blocked";
+export type ProductPreviewSectionKind =
+  | "overview"
+  | "full_draft"
+  | "platform_fields"
+  | "assets"
+  | "claims_safety"
+  | "publishing_preview"
+  | "revision_requests";
+export type ProductDraftApprovalStatus = "not_reviewed" | "approved_local" | "revision_requested";
+export type ProductRevisionStatus = "open" | "in_progress" | "resolved";
+export type PublishPayloadPreviewStatus = "frozen" | "stale" | "blocked";
+export type ApprovalGateKind = "publish" | "spend" | "message" | "launch" | "connector";
+export type ApprovalGateStateStatus =
+  | "locked"
+  | "needs_product_review"
+  | "ready_to_request_approval"
+  | "pending_approval"
+  | "approved"
+  | "rejected"
+  | "blocked";
 export type MissionBriefSectionKind =
   | "overview"
   | "research"
@@ -818,6 +840,119 @@ export interface PublishingPackage {
   requiredUserSteps: string[];
   connectorActionsBlocked: string[];
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductBlueprint {
+  id: string;
+  businessId: string;
+  proposalId: string;
+  name: string;
+  productType: ProductBlueprintType;
+  audience: string;
+  problemSolved: string;
+  offerDeliverable: string;
+  valueProposition: string;
+  intendedDestination: string;
+  zeroBudgetDeliveryPath: string;
+  stage: "local_draft" | "review" | "ready_for_publish_request" | "blocked";
+  readinessScore: number;
+  requiredAssetIds: string[];
+  blockedExternalActions: string[];
+  nextProductionStep: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductPreview {
+  id: string;
+  blueprintId: string;
+  businessId: string;
+  proposalId: string;
+  destinationId?: string;
+  platformPackageId?: string;
+  publishingPackageId?: string;
+  status: ProductPreviewStatus;
+  localDraftApproved: boolean;
+  sectionIds: string[];
+  assetFileIds: string[];
+  claimsSafetyStatus: ReadinessStatus;
+  missingItems: string[];
+  readinessScore: number;
+  approvalGateStateId?: string;
+  publishPayloadPreviewId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductPreviewSection {
+  id: string;
+  previewId: string;
+  kind: ProductPreviewSectionKind;
+  title: string;
+  summary: string;
+  content: string;
+  fields?: Record<string, string>;
+  status: ReadinessStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductDraftApproval {
+  id: string;
+  previewId: string;
+  businessId: string;
+  status: ProductDraftApprovalStatus;
+  note: string;
+  revisionRequestId?: string;
+  approvedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductRevisionRequest {
+  id: string;
+  previewId: string;
+  businessId: string;
+  requestedBy: "user" | "TeamLeader1A";
+  reason: string;
+  taskIds: string[];
+  status: ProductRevisionStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublishPayloadPreview {
+  id: string;
+  previewId: string;
+  businessId: string;
+  platform: string;
+  destinationId?: string;
+  platformPackageId?: string;
+  exactFields: Record<string, string>;
+  contentSummary: string;
+  userLoginRequired: boolean;
+  credentialsStored: boolean;
+  whatWillNotHappen: string[];
+  rollbackNotes: string[];
+  budgetBoundary: string;
+  status: PublishPayloadPreviewStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ApprovalGateState {
+  id: string;
+  businessId: string;
+  previewId?: string;
+  approvalId?: string;
+  publishPayloadPreviewId?: string;
+  gate: ApprovalGateKind;
+  status: ApprovalGateStateStatus;
+  label: string;
+  reason: string;
+  actionLabel: string;
+  linkedPath: string;
   updatedAt: string;
 }
 
@@ -1720,6 +1855,9 @@ export interface ApprovalRequest {
   createdAt: string;
   payload?: OpenClawApprovalPayload;
   payloadSnapshot?: OpenClawApprovalPayload;
+  productPreviewId?: string;
+  publishPayloadPreviewId?: string;
+  approvalGateStateId?: string;
   commandId?: string;
   missionDraftId?: string;
   missionRunId?: string;

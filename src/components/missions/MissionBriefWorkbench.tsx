@@ -13,6 +13,13 @@ function label(value: string) {
   return value.replace(/_/g, " ");
 }
 
+function clearStatusLabel(status: string) {
+  if (status === "needs_approval") return "Locked";
+  if (status === "approval_requested") return "Pending Approval";
+  if (status === "ready_for_approval") return "Ready To Request Approval";
+  return label(status);
+}
+
 function stepProgress(steps: MissionAgentStep[]) {
   if (steps.length === 0) return 0;
   const done = steps.filter((step) => ["complete", "skipped", "local_draft"].includes(step.status)).length;
@@ -456,7 +463,7 @@ export function MissionBriefWorkbench() {
                       <div key={destination.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="font-semibold text-stone-100">{destination.name}</p>
-                          <Badge tone={destination.approvalRequired ? "red" : "teal"}>{destination.status.replace(/_/g, " ")}</Badge>
+                          <Badge tone={destination.approvalRequired ? "red" : "teal"}>{clearStatusLabel(destination.status)}</Badge>
                         </div>
                         <p className="mt-1 text-sm leading-6 text-slate-300">{destination.description}</p>
                       </div>
@@ -470,14 +477,14 @@ export function MissionBriefWorkbench() {
                       <div key={requirement.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="font-semibold text-stone-100">{requirement.platform}</p>
-                          <Badge tone={requirement.approvalRequiredBeforePublish ? "red" : "teal"}>{requirement.publishStatus.replace(/_/g, " ")}</Badge>
+                          <Badge tone={requirement.approvalRequiredBeforePublish ? "red" : "teal"}>{clearStatusLabel(requirement.publishStatus)}</Badge>
                         </div>
                         <p className="mt-2 text-sm leading-6 text-slate-300">{requirement.notes}</p>
                         <div className="mt-2 grid gap-2 text-xs text-slate-400 md:grid-cols-2">
                           <span>Account needed: {requirement.accountNeeded ? "yes" : "no"}</span>
                           <span>User login required: {requirement.userLoginRequired ? "yes" : "no"}</span>
                           <span>Credentials stored: {requirement.credentialsStored ? "yes" : "no"}</span>
-                          <span>Approval before publish: {requirement.approvalRequiredBeforePublish ? "yes" : "no"}</span>
+                          <span>Publish gate: {requirement.approvalRequiredBeforePublish ? "separate exact approval later" : "not needed"}</span>
                         </div>
                         <p className="mt-2 text-xs text-slate-500">Required assets: {requirement.requiredAssets.join(", ")}</p>
                       </div>
@@ -508,15 +515,15 @@ export function MissionBriefWorkbench() {
                       <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="font-semibold text-stone-100">{item.title}</p>
-                          <Badge tone={item.status === "local_draft" ? "amber" : item.status === "approval_requested" ? "red" : "teal"}>{item.status.replace(/_/g, " ")}</Badge>
+                          <Badge tone={item.status === "local_draft" ? "amber" : item.status === "approval_requested" ? "amber" : "teal"}>{clearStatusLabel(item.status)}</Badge>
                         </div>
                         <p className="mt-2 text-sm leading-6 text-slate-300">{item.approvalBoundary}</p>
                         <div className="mt-2 space-y-1 text-xs text-slate-400">
                           {Object.entries(item.exactFields).slice(0, 4).map(([key, value]) => <p key={key}><span className="text-slate-300">{key}:</span> {value}</p>)}
                         </div>
-                        <Button className="mt-3" variant="outline" size="sm" disabled={item.status === "approval_requested"} onClick={() => void preparePlatformPublishApproval(item.id)}>
+                        <Button className="mt-3" variant="outline" size="sm" disabled={!item.businessId || item.status === "approval_requested"} onClick={() => void preparePlatformPublishApproval(item.id)}>
                           <ShieldCheck className="h-4 w-4" />
-                          Prepare Fiverr Publish Approval
+                          {item.businessId ? "Open Product Studio Publish Gate" : "Approve Business First"}
                         </Button>
                       </div>
                     ))}

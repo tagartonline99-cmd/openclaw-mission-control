@@ -161,6 +161,13 @@ import type {
   ProductionDestination,
   PlatformExecutionPackage,
   PublishingPackage,
+  ProductBlueprint,
+  ProductDraftApproval,
+  ProductPreview,
+  ProductPreviewSection,
+  ProductRevisionRequest,
+  PublishPayloadPreview,
+  ApprovalGateState,
   PublicResearchFetch,
   PublicResearchRun,
   PublishingDiff,
@@ -171,6 +178,7 @@ import type {
   ResearchQueryPlan,
   ResearchSourcePack,
   ResearchSourceCapture,
+  ReadinessStatus,
   RealPilotRun,
   SearchConsoleMetric,
   SearchConsoleProperty,
@@ -252,6 +260,13 @@ export interface AppDataState {
   evidenceQualityScores: EvidenceQualityScore[];
   localAssetFiles: LocalAssetFile[];
   publishingPackages: PublishingPackage[];
+  productBlueprints: ProductBlueprint[];
+  productPreviews: ProductPreview[];
+  productPreviewSections: ProductPreviewSection[];
+  productDraftApprovals: ProductDraftApproval[];
+  productRevisionRequests: ProductRevisionRequest[];
+  publishPayloadPreviews: PublishPayloadPreview[];
+  approvalGateStates: ApprovalGateState[];
   businessMetricSnapshots: BusinessMetricSnapshot[];
   budgetLedgerEntries: BudgetLedgerEntry[];
   autopilotJobs: AutopilotJob[];
@@ -365,6 +380,13 @@ type EntityKey =
   | "evidenceQualityScores"
   | "localAssetFiles"
   | "publishingPackages"
+  | "productBlueprints"
+  | "productPreviews"
+  | "productPreviewSections"
+  | "productDraftApprovals"
+  | "productRevisionRequests"
+  | "publishPayloadPreviews"
+  | "approvalGateStates"
   | "businessMetricSnapshots"
   | "budgetLedgerEntries"
   | "autopilotJobs"
@@ -488,6 +510,13 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "evidenceQualityScores", tableName: "evidence_quality_scores" },
   { stateKey: "localAssetFiles", tableName: "local_asset_files" },
   { stateKey: "publishingPackages", tableName: "publishing_packages" },
+  { stateKey: "productBlueprints", tableName: "product_blueprints" },
+  { stateKey: "productPreviews", tableName: "product_previews" },
+  { stateKey: "productPreviewSections", tableName: "product_preview_sections" },
+  { stateKey: "productDraftApprovals", tableName: "product_draft_approvals" },
+  { stateKey: "productRevisionRequests", tableName: "product_revision_requests" },
+  { stateKey: "publishPayloadPreviews", tableName: "publish_payload_previews" },
+  { stateKey: "approvalGateStates", tableName: "approval_gate_states" },
   { stateKey: "businessMetricSnapshots", tableName: "business_metric_snapshots" },
   { stateKey: "budgetLedgerEntries", tableName: "budget_ledger_entries" },
   { stateKey: "autopilotJobs", tableName: "autopilot_jobs" },
@@ -595,6 +624,13 @@ export const initialAppDataState: AppDataState = {
   evidenceQualityScores: [],
   localAssetFiles: [],
   publishingPackages: [],
+  productBlueprints: [],
+  productPreviews: [],
+  productPreviewSections: [],
+  productDraftApprovals: [],
+  productRevisionRequests: [],
+  publishPayloadPreviews: [],
+  approvalGateStates: [],
   businessMetricSnapshots: [],
   budgetLedgerEntries: [],
   autopilotJobs: [],
@@ -906,6 +942,187 @@ function defaultBudgetPlan(state: AppDataState, proposalId: string) {
   };
 }
 
+function productTypeForBusiness(state: AppDataState, business: ApprovedBusiness): ProductBlueprint["productType"] {
+  const packageItem = state.platformExecutionPackages.find((item) => business.platformExecutionPackageIds.includes(item.id));
+  if (packageItem?.platform.toLowerCase().includes("fiverr")) return "fiverr_gig";
+  const file = state.localAssetFiles.find((item) => item.businessId === business.id);
+  return file?.type ?? "landing_page";
+}
+
+function productContentSummary(state: AppDataState, business: ApprovedBusiness) {
+  const proposal = state.businessProposals.find((item) => item.id === business.proposalId);
+  const firstContent = state.contentInventoryItems.find((item) => business.contentInventoryIds.includes(item.id));
+  return firstContent?.draftContent || proposal?.contentPlan.join("\n") || proposal?.summary || business.teamLeaderRecommendation;
+}
+
+function ensureProductPreviewRecords(state: AppDataState) {
+  const now = nowIso();
+  for (const business of state.approvedBusinesses) {
+    if (state.productPreviews.some((preview) => preview.businessId === business.id)) continue;
+    const proposal = state.businessProposals.find((item) => item.id === business.proposalId);
+    const localFiles = state.localAssetFiles.filter((item) => item.businessId === business.id);
+    const publishingPackage = state.publishingPackages.find((item) => item.businessId === business.id);
+    const destination = state.productionDestinations.find((item) => business.publishingDestinationIds.includes(item.id));
+    const platformPackage = state.platformExecutionPackages.find((item) => business.platformExecutionPackageIds.includes(item.id));
+    const blueprintId = `product-blueprint-${business.id}`;
+    const previewId = `product-preview-${business.id}`;
+    const gateId = `approval-gate-publish-${business.id}`;
+    const productType = productTypeForBusiness(state, business);
+    const productName = productType === "fiverr_gig" ? `${business.name} Fiverr gig draft` : `${business.name} local product draft`;
+    const fullDraft = localFiles.length
+      ? localFiles.map((file) => [`## ${file.title}`, file.content].join("\n\n")).join("\n\n---\n\n")
+      : productContentSummary(state, business);
+    const exactFields = platformPackage?.exactFields ?? {
+      "Product name": business.name,
+      Destination: destination?.name ?? "Manual / local draft",
+      "Local draft": productContentSummary(state, business),
+    };
+    const sectionKinds: Array<{ kind: ProductPreviewSection["kind"]; title: string; summary: string; content: string; fields?: Record<string, string>; status: ReadinessStatus }> = [
+      {
+        kind: "overview",
+        title: "Product overview",
+        summary: "What the agents created and who it is for.",
+        content: [
+          `Product: ${productName}`,
+          `Audience: ${proposal?.targetAudience ?? "Audience needs review."}`,
+          `Problem solved: ${proposal?.summary ?? business.teamLeaderRecommendation}`,
+          `Offer/deliverable: ${proposal?.productionPlan[0] ?? "Local draft package for review."}`,
+          `Destination: ${destination?.name ?? "Manual / no connector"}`,
+        ].join("\n"),
+        status: "passed",
+      },
+      {
+        kind: "full_draft",
+        title: "Full local draft",
+        summary: "The exact local content to inspect before any publish request.",
+        content: fullDraft,
+        status: fullDraft.trim() ? "passed" : "missing",
+      },
+      {
+        kind: "platform_fields",
+        title: platformPackage ? `${platformPackage.platform} fields` : "Platform fields",
+        summary: "Exact fields that would later be submitted only after a separate approval.",
+        content: Object.entries(exactFields).map(([key, value]) => `${key}: ${value}`).join("\n"),
+        fields: exactFields,
+        status: Object.keys(exactFields).length ? "passed" : "missing",
+      },
+      {
+        kind: "assets",
+        title: "Product Files",
+        summary: "Local-only files and content created by the agents.",
+        content: localFiles.length ? localFiles.map((file) => `- ${file.title}: ${file.intendedPath}`).join("\n") : "No local product files are attached yet.",
+        status: localFiles.length ? "passed" : "needs_review",
+      },
+      {
+        kind: "claims_safety",
+        title: "Claims & Safety Check",
+        summary: "Safety review for claims, compliance, and blocked actions.",
+        content: [
+          "No guaranteed income claims.",
+          "No fake reviews, spam, paid promotion, purchases, login automation, or form submission.",
+          "Manual platform terms review is still required before publishing.",
+          ...(platformPackage?.policyChecks ?? ["Claims require final user review before any external use."]),
+        ].map((item) => `- ${item}`).join("\n"),
+        status: "needs_review",
+      },
+      {
+        kind: "publishing_preview",
+        title: "Publishing preview",
+        summary: "What would be requested later; nothing external is executed here.",
+        content: [
+          `Destination: ${destination?.name ?? publishingPackage?.platform ?? "Manual / no connector"}`,
+          `Login required: ${platformPackage?.userLoginRequired ? "yes, manual user login only" : "no connector login configured"}`,
+          "What will not happen: no publishing, messaging, spending, purchases, connector execution, login automation, or form submission without a separate exact approval.",
+          publishingPackage?.approvalBoundary ?? platformPackage?.approvalBoundary ?? "External action remains locked until product review and a separate approval.",
+        ].join("\n"),
+        status: "needs_review",
+      },
+      {
+        kind: "revision_requests",
+        title: "Revision requests",
+        summary: "Safe internal revision tasks requested by the user.",
+        content: "No revision requests yet.",
+        status: "passed",
+      },
+    ];
+    const sectionIds = sectionKinds.map((section) => `product-section-${business.id}-${section.kind}`);
+    state.productBlueprints.push({
+      id: blueprintId,
+      businessId: business.id,
+      proposalId: business.proposalId,
+      name: productName,
+      productType,
+      audience: proposal?.targetAudience ?? "Needs audience review.",
+      problemSolved: proposal?.summary ?? business.teamLeaderRecommendation,
+      offerDeliverable: proposal?.productionPlan[0] ?? "Local draft package for review.",
+      valueProposition: proposal?.whyMightWork[0] ?? "Validation-first offer; no guaranteed results.",
+      intendedDestination: destination?.name ?? publishingPackage?.platform ?? "Manual / no connector",
+      zeroBudgetDeliveryPath: business.budgetPlan.zeroBudgetPath,
+      stage: "review",
+      readinessScore: business.validationScore,
+      requiredAssetIds: localFiles.map((file) => file.id),
+      blockedExternalActions: ["publish", "message", "spend", "login_automation", "submit_form", "purchase", "connector_execute"],
+      nextProductionStep: "View the full product, then approve the local draft or request revision.",
+      createdAt: now,
+      updatedAt: now,
+    });
+    state.productPreviews.push({
+      id: previewId,
+      blueprintId,
+      businessId: business.id,
+      proposalId: business.proposalId,
+      destinationId: destination?.id,
+      platformPackageId: platformPackage?.id,
+      publishingPackageId: publishingPackage?.id,
+      status: "needs_product_review",
+      localDraftApproved: false,
+      sectionIds,
+      assetFileIds: localFiles.map((file) => file.id),
+      claimsSafetyStatus: "needs_review",
+      missingItems: localFiles.length ? [] : ["Attach at least one local product file before publishing approval."],
+      readinessScore: business.validationScore,
+      approvalGateStateId: gateId,
+      createdAt: now,
+      updatedAt: now,
+    });
+    state.productPreviewSections.push(
+      ...sectionKinds.map((section, index) => ({
+        id: sectionIds[index],
+        previewId,
+        kind: section.kind,
+        title: section.title,
+        summary: section.summary,
+        content: section.content,
+        fields: section.fields,
+        status: section.status,
+        createdAt: now,
+        updatedAt: now,
+      })),
+    );
+    state.productDraftApprovals.push({
+      id: `product-draft-approval-${business.id}`,
+      previewId,
+      businessId: business.id,
+      status: "not_reviewed",
+      note: "Local draft has not been approved by the user yet.",
+      createdAt: now,
+      updatedAt: now,
+    });
+    state.approvalGateStates.push({
+      id: gateId,
+      businessId: business.id,
+      previewId,
+      gate: "publish",
+      status: "needs_product_review",
+      label: "Needs Product Review",
+      reason: "Review and approve the local product draft before requesting a publish approval.",
+      actionLabel: "Open Product Studio",
+      linkedPath: "/#/production",
+      updatedAt: now,
+    });
+  }
+}
+
 function normalizePhase6BState(state: AppDataState) {
   state.missionDrafts ??= [];
   state.missionRuns ??= [];
@@ -971,6 +1188,13 @@ function normalizePhase6BState(state: AppDataState) {
   state.evidenceQualityScores ??= [];
   state.localAssetFiles ??= [];
   state.publishingPackages ??= [];
+  state.productBlueprints ??= [];
+  state.productPreviews ??= [];
+  state.productPreviewSections ??= [];
+  state.productDraftApprovals ??= [];
+  state.productRevisionRequests ??= [];
+  state.publishPayloadPreviews ??= [];
+  state.approvalGateStates ??= [];
   state.businessMetricSnapshots ??= [];
   state.budgetLedgerEntries ??= [];
   state.autopilotJobs ??= [];
@@ -999,6 +1223,7 @@ function normalizePhase6BState(state: AppDataState) {
       readinessChecklist: business.readinessChecklist ?? proposal?.readinessChecklist ?? [],
     };
   });
+  ensureProductPreviewRecords(state);
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;
   state.publishingConnectors ??= cloneState(initialAppDataState).publishingConnectors;
