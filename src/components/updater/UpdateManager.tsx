@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "Approval Inbox 2.0 release 0.1.25";
+const UPDATER_VERIFICATION_MARKER = "Business Operating Cockpit v2 release 0.1.26";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;

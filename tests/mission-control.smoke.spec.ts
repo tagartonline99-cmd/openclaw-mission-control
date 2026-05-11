@@ -61,6 +61,10 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
   await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: /Practical AI Workflow|Local Service Lead-Gen|Client Operations Notion/i })).toBeVisible();
+  await expect(page.getByText("Business Operating Cockpit v2").first()).toBeVisible();
+  await expect(page.getByText("Today's objective").first()).toBeVisible();
+  await expect(page.getByText("Current experiment").first()).toBeVisible();
+  await expect(page.getByText("Manual metrics entry").first()).toBeVisible();
   await expect(page.getByText("Business cockpit", { exact: true })).toBeVisible();
   await expect(page.getByText("What happened receipts")).toBeVisible();
   await expect(page.getByText("Local production files")).toBeVisible();
@@ -116,7 +120,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Approval Inbox 2.0 release/i)).toBeVisible();
+  await expect(page.getByText(/Business Operating Cockpit v2 release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

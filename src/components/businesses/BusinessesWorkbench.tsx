@@ -5,6 +5,7 @@ import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { Input } from "../ui/input";
 import { Progress } from "../ui/progress";
 
 function clearStatusLabel(status: string) {
@@ -24,6 +25,7 @@ export function BusinessesWorkbench() {
     setOperatingAutopilotEnabled,
   } = useAppData();
   const [teamLeaderOnly, setTeamLeaderOnly] = useState(true);
+  const [metricDrafts, setMetricDrafts] = useState<Record<string, Record<string, string>>>({});
   const allActiveBusinesses = data.approvedBusinesses.filter((business) => business.status !== "archived");
   const activeBusinesses = teamLeaderOnly
     ? allActiveBusinesses.filter((business) => data.businessProposals.some((proposal) => proposal.id === business.proposalId))
@@ -114,6 +116,24 @@ export function BusinessesWorkbench() {
           const preview = data.productPreviews.find((item) => item.businessId === business.id);
           const blueprint = preview ? data.productBlueprints.find((item) => item.id === preview.blueprintId) : undefined;
           const gate = preview?.approvalGateStateId ? data.approvalGateStates.find((item) => item.id === preview.approvalGateStateId) : undefined;
+          const dailyStatus = data.businessDailyStatuses.find((item) => item.id === business.dailyStatusId || item.businessId === business.id);
+          const lastDecision = data.businessOperatingDecisions.find((item) => item.businessId === business.id);
+          const latestMetric = metrics[0];
+          const metricDraft = metricDrafts[business.id] ?? {};
+          const setMetric = (key: string, value: string) => setMetricDrafts((current) => ({ ...current, [business.id]: { ...(current[business.id] ?? {}), [key]: value } }));
+          const saveMetrics = () => {
+            void addBusinessMetricSnapshot(business.id, {
+              traffic: Number(metricDraft.traffic ?? 0),
+              clicks: Number(metricDraft.clicks ?? 0),
+              leads: Number(metricDraft.leads ?? 0),
+              conversions: Number(metricDraft.conversions ?? 0),
+              revenue: Number(metricDraft.revenue ?? 0),
+              cost: Number(metricDraft.cost ?? 0),
+              timeSpentHours: Number(metricDraft.timeSpentHours ?? 0),
+              confidence: Number(metricDraft.confidence ?? 50),
+              notes: metricDraft.notes ?? "Manual business cockpit metric entry.",
+            });
+          };
           return (
             <Card key={business.id}>
               <CardHeader>
@@ -130,6 +150,67 @@ export function BusinessesWorkbench() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm leading-6 text-slate-300">{business.teamLeaderRecommendation}</p>
+                <div className="rounded-lg border border-teal-300/25 bg-teal-400/8 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-xs font-semibold uppercase text-teal-100">Business Operating Cockpit v2</p>
+                    <Badge tone="teal">live local cockpit</Badge>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-2">
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Today's objective</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-200">{dailyStatus?.todaysObjective ?? cockpit?.objective ?? business.nextAction}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Current experiment</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-200">{dailyStatus?.currentExperiment ?? "Zero-budget validation and local product improvement."}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Latest product</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-200">{blueprint?.name ?? "No Product Studio preview yet."}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Last decision</p>
+                      <p className="mt-2 text-sm leading-6 text-slate-200">{lastDecision ? `${clearStatusLabel(lastDecision.decision)}: ${lastDecision.rationale}` : "No decision recorded yet."}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-5">
+                    {["continue", "revise", "pause", "kill", "scale later"].map((decision) => (
+                      <div key={decision} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <Badge tone={decision === "continue" ? "emerald" : decision === "kill" ? "red" : "amber"}>{decision}</Badge>
+                        <p className="mt-2 text-xs leading-5 text-slate-400">
+                          {decision === "scale later" ? "Requires stronger evidence and future approvals." : "Local decision only; external actions stay gated."}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-4 rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Manual metrics entry</p>
+                    <div className="mt-3 grid gap-2 md:grid-cols-4">
+                      {[
+                        ["traffic", "Traffic"],
+                        ["clicks", "Clicks"],
+                        ["leads", "Leads"],
+                        ["conversions", "Conversions"],
+                        ["revenue", "Revenue"],
+                        ["cost", "Cost"],
+                        ["timeSpentHours", "Hours"],
+                        ["confidence", "Confidence"],
+                      ].map(([key, labelText]) => (
+                        <Input key={key} type="number" min="0" placeholder={labelText} value={metricDraft[key] ?? ""} onChange={(event) => setMetric(key, event.target.value)} />
+                      ))}
+                    </div>
+                    <Input className="mt-2" placeholder="Metric notes" value={metricDraft.notes ?? ""} onChange={(event) => setMetric("notes", event.target.value)} />
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <Button variant="secondary" size="sm" onClick={saveMetrics}>
+                        <BarChart3 className="h-4 w-4" />
+                        Save Manual Metrics
+                      </Button>
+                      <span className="text-xs text-slate-500">
+                        Current snapshot: traffic {latestMetric?.traffic ?? 0}, revenue {formatCurrency(latestMetric?.revenue ?? 0)}, confidence {latestMetric?.confidence ?? 0}.
+                      </span>
+                    </div>
+                  </div>
+                </div>
                 {blueprint && gate ? (
                   <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">

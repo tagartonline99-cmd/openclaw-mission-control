@@ -298,7 +298,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('approval inbox 2.0 release')", "0.1.25 updater marker");
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('business operating cockpit v2 release')", "0.1.26 updater marker");
     evidence.appVersion = await waitFor(
       client,
       `(async () => {

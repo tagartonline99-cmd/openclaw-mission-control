@@ -1530,6 +1530,50 @@ function ensureApprovalActionHints(state: AppDataState) {
   }
 }
 
+function ensureBusinessDailyStatuses(state: AppDataState) {
+  state.businessDailyStatuses ??= [];
+  state.businessOperatingDecisions ??= [];
+  const now = nowIso();
+  for (const business of state.approvedBusinesses) {
+    const cockpit = state.approvedBusinessCockpits.find((item) => item.businessId === business.id);
+    const latestMetric = state.businessMetricSnapshots.find((item) => item.businessId === business.id);
+    const ledgerIds = state.budgetLedgerEntries.filter((item) => item.businessId === business.id).map((item) => item.id);
+    const preview = state.productPreviews.find((item) => item.businessId === business.id);
+    const statusId = business.dailyStatusId ?? `business-daily-${business.id}`;
+    if (!state.businessDailyStatuses.some((item) => item.id === statusId)) {
+      state.businessDailyStatuses.push({
+        id: statusId,
+        businessId: business.id,
+        todaysObjective: cockpit?.objective ?? "Run the next safe research, validation, production, review, and improve cycle.",
+        currentExperiment: "Zero-budget validation: collect evidence, improve the local product draft, and enter manual metrics.",
+        activeTaskIds: business.activeTaskIds,
+        latestEvidenceIds: business.researchEvidenceIds.slice(0, 5),
+        latestProductPreviewId: preview?.id,
+        metricSnapshotId: latestMetric?.id,
+        budgetLedgerEntryIds: ledgerIds,
+        nextBestAction: business.nextAction,
+        createdAt: now,
+        updatedAt: business.updatedAt,
+      });
+    }
+    business.dailyStatusId = statusId;
+
+    const decisionId = `business-decision-${business.id}`;
+    if (!state.businessOperatingDecisions.some((item) => item.id === decisionId)) {
+      state.businessOperatingDecisions.push({
+        id: decisionId,
+        businessId: business.id,
+        decision: "continue",
+        rationale: "Continue safe local validation until real manual metrics prove whether to revise, pause, kill, or scale later.",
+        metricSnapshotId: latestMetric?.id,
+        budgetEffect: "No spend recorded by this decision.",
+        requiresExternalApproval: false,
+        createdAt: now,
+      });
+    }
+  }
+}
+
 function normalizePhase6BState(state: AppDataState) {
   state.missionDrafts ??= [];
   state.missionRuns ??= [];
@@ -1643,6 +1687,7 @@ function normalizePhase6BState(state: AppDataState) {
   ensureRenderedProductPreviewRecords(state);
   ensureAgentEvidenceTrails(state);
   ensureApprovalActionHints(state);
+  ensureBusinessDailyStatuses(state);
   ensureRealityReceipts(state);
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;
