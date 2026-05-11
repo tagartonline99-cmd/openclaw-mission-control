@@ -47,6 +47,11 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Output artifact").first()).toBeVisible();
   await expect(page.getByText("Research Confidence Report").first()).toBeVisible();
   await expect(page.getByText("FactCheck Station").first()).toBeVisible();
+  await expect(page.getByText("Full Proposal")).toBeVisible();
+  await expect(page.getByText("Who it is for")).toBeVisible();
+  await expect(page.getByText("What the product is")).toBeVisible();
+  await expect(page.getByText("Where it would publish")).toBeVisible();
+  await expect(page.getByText("Draft product fields already prepared")).toBeVisible();
   await expect(page.getByText("Tavily API research").first()).toBeVisible();
   await expect(page.getByText("Query plan preview").first()).toBeVisible();
   await expect(page.getByText("Weak claim detection").first()).toBeVisible();
@@ -137,7 +142,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Release And Updater Checklist")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Runtime agent roster repair release/i)).toBeVisible();
+  await expect(page.getByText(/Full proposal visibility release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

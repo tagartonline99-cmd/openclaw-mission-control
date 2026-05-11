@@ -313,7 +313,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('runtime agent roster repair release')", `${expectedVersion} updater marker`);
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('full proposal visibility release')", `${expectedVersion} updater marker`);
     evidence.appVersion = await waitFor(
       client,
       `(async () => {

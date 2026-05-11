@@ -100,6 +100,11 @@ export function MissionBriefWorkbench() {
   const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
   const factCheckBlocks = selectedProposalGate && selectedProposalGate.status !== "proposal_ready" ? selectedProposalGate.missingRequirements : [];
   const canApproveBusiness = selectedProposal?.status === "ready_for_review" && (selectedProposalGate?.status === "proposal_ready" || !selectedProposalGate) && budgetBlockers.length === 0;
+  const primaryDestination = selectedProposalDestinations[0];
+  const primaryPlatformPackage = selectedPlatformPackages[0];
+  const primaryPlatformRequirement = selectedPlatformRequirements[0];
+  const primaryContentDraft = selectedProposalContent[0];
+  const productDraftFields = primaryPlatformPackage?.exactFields ? Object.entries(primaryPlatformPackage.exactFields) : [];
   const firstRun = data.missionRuns[0];
   const firstDraft = data.missionDrafts[0];
   const initialId = requestedRunId ?? requestedDraftId ?? firstRun?.id ?? firstDraft?.id ?? "";
@@ -236,6 +241,126 @@ export function MissionBriefWorkbench() {
               <div className="rounded-lg border border-amber-300/20 bg-amber-400/8 p-4">
                 <p className="text-xs font-semibold uppercase text-slate-500">TeamLeader1A recommendation</p>
                 <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.teamLeaderRecommendation}</p>
+              </div>
+              <div className="rounded-lg border border-teal-300/25 bg-teal-400/8 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-teal-100">Full Proposal</p>
+                    <h3 className="mt-2 font-display text-2xl font-semibold text-stone-50">{selectedProposal.recommendedIdea}</h3>
+                    <p className="mt-2 max-w-5xl text-sm leading-6 text-slate-200">{selectedProposal.summary}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge tone="teal">{selectedProposal.businessModel}</Badge>
+                    <Badge tone="amber">{formatCurrency(selectedProposal.budgetPlan.businessBudgetCap)} cap</Badge>
+                    <Badge tone={selectedProposal.budgetPlan.requiredSpend === 0 ? "emerald" : "amber"}>
+                      {formatCurrency(selectedProposal.budgetPlan.requiredSpend)} required spend
+                    </Badge>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-4">
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Who it is for</p>
+                    <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.targetAudience}</p>
+                  </div>
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">What the product is</p>
+                    <p className="mt-2 text-sm leading-6 text-stone-100">
+                      {primaryPlatformPackage?.title ?? primaryContentDraft?.title ?? selectedProposal.recommendedIdea}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Where it would publish</p>
+                    <p className="mt-2 text-sm leading-6 text-stone-100">
+                      {primaryDestination?.name ?? primaryPlatformRequirement?.platform ?? "Local draft first; destination not selected yet."}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-red-100">Approval boundary</p>
+                    <p className="mt-2 text-sm leading-6 text-red-100">Business approval creates local work only. No publishing, login, forms, messaging, purchases, or spend.</p>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                  <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-emerald-100">Zero-budget validation test</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-200">{selectedProposal.zeroBudgetValidationTest}</p>
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-slate-500">Success means</p>
+                        <ul className="mt-1 space-y-1 text-sm leading-6 text-slate-300">
+                          {selectedProposal.successMetrics.slice(0, 4).map((metric) => <li key={metric}>- {metric}</li>)}
+                        </ul>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase text-slate-500">Kill criteria</p>
+                        <ul className="mt-1 space-y-1 text-sm leading-6 text-slate-300">
+                          {selectedProposal.failureMetrics.slice(0, 4).map((metric) => <li key={metric}>- {metric}</li>)}
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-amber-100">Draft product fields already prepared</p>
+                    {productDraftFields.length > 0 ? (
+                      <div className="mt-2 space-y-2">
+                        {productDraftFields.slice(0, 6).map(([key, value]) => (
+                          <div key={key} className="rounded border border-white/10 bg-black/25 p-2">
+                            <p className="text-xs font-semibold uppercase text-slate-500">{key}</p>
+                            <p className="mt-1 text-sm leading-6 text-stone-100">{String(value)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-2 text-sm leading-6 text-slate-300">
+                        No platform fields are attached yet. Request a revision before approving if you want exact product fields first.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 xl:grid-cols-3">
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">SEO plan</p>
+                    <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-300">
+                      {selectedProposal.seoPlan.slice(0, 4).map((item) => <li key={item}>- {item}</li>)}
+                    </ul>
+                  </div>
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Content plan</p>
+                    <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-300">
+                      {selectedProposal.contentPlan.slice(0, 4).map((item) => <li key={item}>- {item}</li>)}
+                    </ul>
+                  </div>
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Production plan</p>
+                    <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-300">
+                      {selectedProposal.productionPlan.slice(0, 4).map((item) => <li key={item}>- {item}</li>)}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-md border border-teal-300/20 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-teal-100">Why this might work</p>
+                    <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-300">
+                      {selectedProposal.whyMightWork.slice(0, 5).map((item) => <li key={item}>- {item}</li>)}
+                    </ul>
+                  </div>
+                  <div className="rounded-md border border-red-300/20 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-red-100">Risks and reasons to reject</p>
+                    <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-300">
+                      {[...selectedProposal.whyMightFail, ...selectedProposal.risks].slice(0, 5).map((item) => <li key={item}>- {item}</li>)}
+                    </ul>
+                  </div>
+                </div>
+
+                <div className="mt-4 rounded-md border border-white/10 bg-black/25 p-3">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Next actions if you approve this business</p>
+                  <ul className="mt-2 space-y-1 text-sm leading-6 text-slate-300">
+                    {selectedProposal.nextActions.slice(0, 6).map((item) => <li key={item}>- {item}</li>)}
+                  </ul>
+                </div>
               </div>
               {selectedFactCheckRun ? (
                 <div className={`rounded-lg border p-4 ${selectedProposalGate?.status === "proposal_ready" ? "border-emerald-300/20 bg-emerald-400/8" : "border-red-300/25 bg-red-500/8"}`}>
