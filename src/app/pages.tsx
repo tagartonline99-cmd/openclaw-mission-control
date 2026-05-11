@@ -52,6 +52,7 @@ import { RealityMeter, RealityPill } from "../components/reality/RealityMeter";
 import { SecondBrainPanel } from "../components/second-brain/SecondBrainPanel";
 import { BusinessTasksBoard } from "../components/tasks/BusinessTasksBoard";
 import { UpdateManager } from "../components/updater/UpdateManager";
+import { ReleaseChecklistPanel } from "../components/updater/ReleaseChecklistPanel";
 import { ValidationGate } from "../components/validation/ValidationGate";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
@@ -1145,6 +1146,7 @@ export function SettingsPage() {
         </CardContent>
       </Card>
       <AllowlistManager compact />
+      <ReleaseChecklistPanel />
       <UpdateManager compact />
     </div>
   );
