@@ -123,12 +123,21 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Approved URL Fetch MCP", { exact: true })).toBeVisible();
   await expect(page.getByText("Puppeteer MCP Compatibility", { exact: true })).toBeVisible();
   await expect(page.getByText(/Browser Research Broker is not direct agent control/i)).toBeVisible();
+  await expect(page.getByText("Runtime Role Map")).toBeVisible();
+  await expect(page.getByText("TeamLeader1A", { exact: true })).toBeVisible();
+  await expect(page.getByText("AgentResearcher", { exact: true })).toBeVisible();
+  await expect(page.getByText("AgentSeo", { exact: true })).toBeVisible();
+  await expect(page.getByText("AgentWriter", { exact: true })).toBeVisible();
+  await expect(page.getByText("AgentContent", { exact: true })).toBeVisible();
+  await expect(page.getByText("AgentProduction", { exact: true })).toBeVisible();
+  await expect(page.getByText("AgentPublish", { exact: true })).toBeVisible();
+  await expect(page.getByText("AgentAction", { exact: true })).toBeVisible();
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Release And Updater Checklist")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Tavily Research \+ FactCheck release/i)).toBeVisible();
+  await expect(page.getByText(/Runtime agent roster repair release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

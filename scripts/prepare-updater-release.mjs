@@ -19,7 +19,8 @@ function walk(dir) {
 }
 
 function githubAssetUrl(filePath) {
-  const name = path.basename(filePath);
+  // GitHub release assets normalize spaces in uploaded file names to dots.
+  const name = path.basename(filePath).replace(/\s+/g, ".");
   return `https://github.com/${repoOwner}/${repoName}/releases/download/v${version}/${encodeURIComponent(name)}`;
 }
 

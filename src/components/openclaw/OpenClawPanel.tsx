@@ -10,6 +10,7 @@ import { Input } from "../ui/input";
 import { Select } from "../ui/select";
 import { Dialog } from "../ui/dialog";
 import { safetyPolicyService } from "../../services/safetyPolicyService";
+import { completeOpenClawRoleMap } from "../../services/openclawService";
 import { AllowlistManager } from "./AllowlistManager";
 import { McpManager } from "./McpManager";
 
@@ -65,6 +66,8 @@ export function OpenClawPanel() {
   const [notice, setNotice] = useState<ActionNotice | null>(null);
   const [pendingRecovery, setPendingRecovery] = useState<{ kind: "cancel" | "fail" | "retry"; commandId: string } | null>(null);
 
+  const roleMap = useMemo(() => completeOpenClawRoleMap(data.userSettings), [data.userSettings]);
+  const mappedRoleCount = agents.filter((agent) => agent.openClawProfileId && agent.openClawProfileId === roleMap[agent.name]).length;
   const researchUrlsList = researchUrls.split(/[,\n]/g).map((url) => url.trim()).filter(Boolean);
   const researchEvaluation = useMemo(
     () =>
@@ -314,18 +317,38 @@ export function OpenClawPanel() {
             <CardTitle className="flex items-center gap-2">
               <Users className="h-4 w-4 text-amber-100" />
               Runtime Role Map
+              <Badge tone={mappedRoleCount === agents.length ? "teal" : "amber"}>{mappedRoleCount}/{agents.length} mapped</Badge>
             </CardTitle>
+            <p className="mt-1 text-sm text-slate-400">
+              This always shows the full OpenClaw roster. If a role says profile missing, click Sync Agents after checking the local runtime profiles.
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            {agents.map((agent) => (
-              <div key={agent.id} className="rounded-lg border border-white/10 bg-black/25 p-3">
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-semibold text-stone-100">{agent.name}</p>
-                  <Badge tone={agent.openClawProfileId ? "teal" : "slate"}>{agent.openClawProfileId ?? "not synced"}</Badge>
+            {agents.map((agent) => {
+              const expectedProfileId = roleMap[agent.name];
+              const correctlyMapped = Boolean(agent.openClawProfileId && expectedProfileId && agent.openClawProfileId === expectedProfileId);
+              const hasUnexpectedProfile = Boolean(agent.openClawProfileId && expectedProfileId && agent.openClawProfileId !== expectedProfileId);
+              const badgeTone = correctlyMapped ? "teal" : hasUnexpectedProfile ? "amber" : "red";
+              const badgeLabel = correctlyMapped
+                ? agent.openClawProfileId
+                : hasUnexpectedProfile
+                  ? `${agent.openClawProfileId} -> expected ${expectedProfileId}`
+                  : expectedProfileId
+                    ? `${expectedProfileId} profile missing`
+                    : "not mapped";
+              return (
+                <div key={agent.id} className="rounded-lg border border-white/10 bg-black/25 p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="font-semibold text-stone-100">{agent.name}</p>
+                    <Badge tone={badgeTone}>{badgeLabel}</Badge>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">
+                    {agent.openClawModel ?? "Sync real profiles to populate model/workspace."}
+                    {agent.openClawWorkspace ? ` / ${agent.openClawWorkspace}` : ""}
+                  </p>
                 </div>
-                <p className="mt-1 text-xs text-slate-500">{agent.openClawModel ?? "Sync real profiles to populate model/workspace."}</p>
-              </div>
-            ))}
+              );
+            })}
           </CardContent>
         </Card>
       </div>

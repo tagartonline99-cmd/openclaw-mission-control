@@ -1631,7 +1631,47 @@ function ensureBusinessDailyStatuses(state: AppDataState) {
   }
 }
 
+function ensureCanonicalOpenClawRoster(state: AppDataState) {
+  const baseline = cloneState(initialAppDataState);
+  state.userSettings = {
+    ...baseline.userSettings,
+    ...(state.userSettings ?? {}),
+    openClawRoleMap: {
+      ...baseline.userSettings.openClawRoleMap,
+      ...((state.userSettings ?? baseline.userSettings).openClawRoleMap ?? {}),
+    },
+    approvalRules: {
+      ...baseline.userSettings.approvalRules,
+      ...((state.userSettings ?? baseline.userSettings).approvalRules ?? {}),
+    },
+    obsidianDefaultFolders: {
+      ...baseline.userSettings.obsidianDefaultFolders,
+      ...((state.userSettings ?? baseline.userSettings).obsidianDefaultFolders ?? {}),
+    },
+  };
+
+  const savedAgents = Array.isArray(state.agents) ? state.agents : [];
+  const savedByName = new Map(savedAgents.map((agent) => [agent.name, agent]));
+  const canonicalNames = new Set(baseline.agents.map((agent) => agent.name));
+  const restoredCanonicalAgents = baseline.agents.map((seedAgent) => {
+    const savedAgent = savedByName.get(seedAgent.name);
+    if (!savedAgent) return seedAgent;
+    return {
+      ...seedAgent,
+      ...savedAgent,
+      skills: savedAgent.skills?.length ? savedAgent.skills : seedAgent.skills,
+      assignedQuestIds: savedAgent.assignedQuestIds ?? seedAgent.assignedQuestIds,
+      suggestedSkillUpgrades: savedAgent.suggestedSkillUpgrades?.length
+        ? savedAgent.suggestedSkillUpgrades
+        : seedAgent.suggestedSkillUpgrades,
+    };
+  });
+  const customAgents = savedAgents.filter((agent) => !canonicalNames.has(agent.name));
+  state.agents = [...restoredCanonicalAgents, ...customAgents];
+}
+
 function normalizePhase6BState(state: AppDataState) {
+  ensureCanonicalOpenClawRoster(state);
   state.missionDrafts ??= [];
   state.missionRuns ??= [];
   state.missionAgentSteps ??= [];

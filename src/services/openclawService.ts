@@ -109,6 +109,24 @@ export type OpenClawMcpConfig = Record<
   }
 >;
 
+export const DEFAULT_OPENCLAW_ROLE_MAP: Record<string, string> = {
+  TeamLeader1A: "main",
+  AgentResearcher: "researcher",
+  AgentWriter: "writer",
+  AgentSeo: "seo",
+  AgentContent: "content",
+  AgentAction: "action",
+  AgentProduction: "production",
+  AgentPublish: "publish",
+};
+
+export function completeOpenClawRoleMap(settings?: Pick<UserSettings, "openClawRoleMap">) {
+  return {
+    ...DEFAULT_OPENCLAW_ROLE_MAP,
+    ...(settings?.openClawRoleMap ?? {}),
+  };
+}
+
 async function state() {
   return (await persistenceService.loadState()).state;
 }
@@ -166,13 +184,25 @@ export function profilesFromResult(result: OpenClawBridgeResult): OpenClawAgentP
 }
 
 export function applyProfilesToAgents(agents: Agent[], profiles: OpenClawAgentProfile[], settings: UserSettings): Agent[] {
-  const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+  const roleMap = completeOpenClawRoleMap(settings);
+  const profileById = new Map(profiles.map((profile) => [profile.id.toLowerCase(), profile]));
   const syncedAt = new Date().toISOString();
 
   return agents.map((agent) => {
-    const profileId = settings.openClawRoleMap[agent.name];
-    const profile = profileId ? profileById.get(profileId) : undefined;
-    if (!profileId || !profile) return agent;
+    const profileId = roleMap[agent.name];
+    const profile = profileId ? profileById.get(profileId.toLowerCase()) : undefined;
+    if (!profileId || !profile) {
+      return profiles.length > 0
+        ? {
+            ...agent,
+            openClawProfileId: undefined,
+            openClawWorkspace: undefined,
+            openClawModel: undefined,
+            openClawBindings: undefined,
+            lastRuntimeSyncAt: syncedAt,
+          }
+        : agent;
+    }
 
     return {
       ...agent,

@@ -294,6 +294,11 @@ async function main() {
       "document.body.innerText.includes('Tavily Research + FactCheck Station') && document.body.innerText.includes('Browser Research Broker') && document.body.innerText.includes('Puppeteer MCP Compatibility') && document.body.innerText.includes('direct agent control')",
       "browser broker system status",
     );
+    await waitFor(
+      client,
+      "['TeamLeader1A','AgentResearcher','AgentSeo','AgentWriter','AgentContent','AgentProduction','AgentPublish','AgentAction'].every((name) => document.body.innerText.includes(name))",
+      "complete runtime role map",
+    );
     evidence.brokerVisible = true;
     await click(client, "Test browser read with example.com");
     await waitFor(client, "document.body.innerText.includes('Last artifact:') && document.body.innerText.includes('example.com')", "browser broker diagnostic artifact", 120_000);
@@ -308,7 +313,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('tavily research + factcheck release')", `${expectedVersion} updater marker`);
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('runtime agent roster repair release')", `${expectedVersion} updater marker`);
     evidence.appVersion = await waitFor(
       client,
       `(async () => {
