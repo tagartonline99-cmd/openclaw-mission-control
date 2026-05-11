@@ -17,6 +17,10 @@ import {
   businessProposals,
   businessIdeas,
   businessTasks,
+  browserResearchArtifacts,
+  browserResearchFetches,
+  browserResearchRuns,
+  browserSafetyReceipts,
   contentInventoryItems,
   contentItems,
   dashboardSummary,
@@ -101,6 +105,10 @@ import type {
   BusinessProposal,
   BusinessIdea,
   BusinessTask,
+  BrowserResearchArtifact,
+  BrowserResearchFetch,
+  BrowserResearchRun,
+  BrowserSafetyReceipt,
   CandidateBusinessIdea,
   CandidateScorecard,
   DashboardSummary,
@@ -208,6 +216,10 @@ export interface AppDataState {
   evidenceCitations: EvidenceCitation[];
   candidateBusinessIdeas: CandidateBusinessIdea[];
   candidateScorecards: CandidateScorecard[];
+  browserResearchRuns: BrowserResearchRun[];
+  browserResearchFetches: BrowserResearchFetch[];
+  browserResearchArtifacts: BrowserResearchArtifact[];
+  browserSafetyReceipts: BrowserSafetyReceipt[];
   businessProposals: BusinessProposal[];
   approvedBusinesses: ApprovedBusiness[];
   businessTasks: BusinessTask[];
@@ -305,6 +317,10 @@ type EntityKey =
   | "evidenceCitations"
   | "candidateBusinessIdeas"
   | "candidateScorecards"
+  | "browserResearchRuns"
+  | "browserResearchFetches"
+  | "browserResearchArtifacts"
+  | "browserSafetyReceipts"
   | "businessProposals"
   | "approvedBusinesses"
   | "businessTasks"
@@ -412,6 +428,10 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "evidenceCitations", tableName: "evidence_citations" },
   { stateKey: "candidateBusinessIdeas", tableName: "candidate_business_ideas" },
   { stateKey: "candidateScorecards", tableName: "candidate_scorecards" },
+  { stateKey: "browserResearchRuns", tableName: "browser_research_runs" },
+  { stateKey: "browserResearchFetches", tableName: "browser_research_fetches" },
+  { stateKey: "browserResearchArtifacts", tableName: "browser_research_artifacts" },
+  { stateKey: "browserSafetyReceipts", tableName: "browser_safety_receipts" },
   { stateKey: "businessProposals", tableName: "business_proposals" },
   { stateKey: "approvedBusinesses", tableName: "approved_businesses" },
   { stateKey: "businessTasks", tableName: "business_tasks" },
@@ -503,6 +523,10 @@ export const initialAppDataState: AppDataState = {
   evidenceCitations,
   candidateBusinessIdeas,
   candidateScorecards,
+  browserResearchRuns,
+  browserResearchFetches,
+  browserResearchArtifacts,
+  browserSafetyReceipts,
   businessProposals,
   approvedBusinesses,
   businessTasks,
@@ -857,6 +881,10 @@ function normalizePhase6BState(state: AppDataState) {
   state.evidenceCitations ??= [];
   state.candidateBusinessIdeas ??= [];
   state.candidateScorecards ??= [];
+  state.browserResearchRuns ??= [];
+  state.browserResearchFetches ??= [];
+  state.browserResearchArtifacts ??= [];
+  state.browserSafetyReceipts ??= [];
   state.opportunityHunts = state.opportunityHunts.map((hunt) => ({
     ...hunt,
     depth: hunt.depth ?? state.userSettings.defaultOpportunityHuntDepth ?? "fast",
@@ -907,6 +935,24 @@ function normalizePhase6BState(state: AppDataState) {
   state.portfolioScores ??= cloneState(initialAppDataState).portfolioScores;
   state.externalActionLock ??= cloneState(initialAppDataState).externalActionLock;
   state.openClawMcpServers ??= cloneState(initialAppDataState).openClawMcpServers;
+  state.openClawMcpServers = state.openClawMcpServers.map((server) =>
+    server.id === "mcp-puppeteer-deferred"
+      ? {
+          ...server,
+          safetyMode: server.safetyMode === "deferred" ? "brokered" : server.safetyMode,
+          status: server.configured && server.installed ? "safe_public_read" : server.status === "disabled" ? "safe_public_read" : server.status,
+          env: {
+            ...server.env,
+            OPENCLAW_MISSION_CONTROL_BROKER_REQUIRED: "true",
+            OPENCLAW_MISSION_CONTROL_BROWSER_MODE: "safe-public-read",
+          },
+          notes:
+            server.notes.includes("Deferred")
+              ? "Brokered by Mission Control for safe public read-and-screenshot research only; direct agent control remains disabled."
+              : server.notes,
+        }
+      : server,
+  );
   state.userSettings.defaultOpportunityHuntDepth ??= "fast";
   state.approvalDecisionRecords ??= [];
   state.allowlistEntries = safetyPolicyService.migrateSettingsAllowlists(state.userSettings, state.allowlistEntries ?? []);

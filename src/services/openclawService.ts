@@ -71,6 +71,32 @@ export type PublicResearchFetchResult = {
   fetchedAt: string;
 };
 
+export type BrowserPublicReadInput = {
+  url: string;
+  purpose: string;
+  sourcePackId?: string;
+  huntId?: string;
+  timeoutSeconds?: number;
+  captureScreenshot?: boolean;
+};
+
+export type BrowserPublicReadResult = {
+  ok: boolean;
+  url: string;
+  sourcePackId?: string;
+  huntId?: string;
+  statusCode?: number | null;
+  title?: string | null;
+  excerpt?: string | null;
+  contentType?: string | null;
+  screenshotPath?: string | null;
+  screenshotCaptured: boolean;
+  basicLinks: string[];
+  safetyReceipt: string;
+  error?: string | null;
+  capturedAt: string;
+};
+
 export type OpenClawMcpConfig = Record<
   string,
   {
@@ -174,6 +200,8 @@ export function mcpServersFromResult(result: OpenClawBridgeResult, existing: Ope
           ? parsed.memory
           : server.id === "mcp-fetch-approved-url-research"
             ? parsed.fetch_approved_url_research
+            : server.id === "mcp-puppeteer-deferred"
+              ? parsed.browser_safe_public_read
             : undefined;
     if (!config) {
       return {
@@ -187,12 +215,14 @@ export function mcpServersFromResult(result: OpenClawBridgeResult, existing: Ope
     }
     const disabled = config.disabled === true;
     const installed = packageInstalled(config);
+    const brokeredBrowser = server.kind === "browser" && config.note === "safe-public-browser-read-brokered";
     return {
       ...server,
       command: config.command,
       args: config.args ?? [],
       env: config.env,
-      status: disabled ? "disabled" : installed ? "configured" : "installed",
+      status: brokeredBrowser && installed ? "safe_public_read" : disabled ? "disabled" : installed ? "configured" : "installed",
+      safetyMode: brokeredBrowser ? "brokered" : server.safetyMode,
       enabled: !disabled,
       configured: true,
       installed,
@@ -359,6 +389,47 @@ export const openclawService = {
         contentType: null,
         error: error instanceof Error ? error.message : String(error),
         fetchedAt: new Date().toISOString(),
+      };
+    }
+  },
+  async readPublicBrowserSource(input: BrowserPublicReadInput): Promise<BrowserPublicReadResult> {
+    if (!isTauriRuntime()) {
+      return {
+        ok: true,
+        url: input.url,
+        sourcePackId: input.sourcePackId,
+        huntId: input.huntId,
+        statusCode: 200,
+        title: "Browser preview safe read",
+        excerpt: "Browser preview simulates the Mission Control broker. The installed desktop app performs the guarded local browser read and screenshot capture.",
+        contentType: "text/html; preview=true",
+        screenshotPath: "browser-preview-no-local-file",
+        screenshotCaptured: false,
+        basicLinks: [],
+        safetyReceipt: `safe-browser-public-read:browser-preview:${input.captureScreenshot === false ? "no-screenshot" : "screenshot-requested"}:no-login:no-forms:no-spend:no-publish`,
+        capturedAt: new Date().toISOString(),
+      };
+    }
+    try {
+      return await invoke<BrowserPublicReadResult>("browser_public_read", {
+        request: { ...input, timeoutSeconds: input.timeoutSeconds ?? 18, captureScreenshot: input.captureScreenshot ?? true },
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        url: input.url,
+        sourcePackId: input.sourcePackId,
+        huntId: input.huntId,
+        statusCode: null,
+        title: null,
+        excerpt: null,
+        contentType: null,
+        screenshotPath: null,
+        screenshotCaptured: false,
+        basicLinks: [],
+        safetyReceipt: "safe-browser-public-read:failed-before-execution",
+        error: error instanceof Error ? error.message : String(error),
+        capturedAt: new Date().toISOString(),
       };
     }
   },

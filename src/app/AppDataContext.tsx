@@ -24,6 +24,10 @@ import type {
   BusinessIdea,
   BusinessProposal,
   BusinessTask,
+  BrowserResearchArtifact,
+  BrowserResearchFetch,
+  BrowserResearchRun,
+  BrowserSafetyReceipt,
   CandidateBusinessIdea,
   CandidateScorecard,
   CommandLedgerEntry,
@@ -88,6 +92,7 @@ import {
   applyProfilesToAgents,
   openclawService,
   type ChannelMessageInput,
+  type BrowserPublicReadResult,
   type OpenClawBridgeResult,
   type PublicResearchFetchResult,
   type UrlResearchInput,
@@ -439,6 +444,12 @@ function depthFetchLimit(depth: OpportunityHuntDepth) {
   return 7;
 }
 
+function depthBrowserLimit(depth: OpportunityHuntDepth) {
+  if (depth === "quick") return 2;
+  if (depth === "deep") return 6;
+  return 4;
+}
+
 function depthLabel(depth: OpportunityHuntDepth) {
   if (depth === "quick") return "Quick";
   if (depth === "deep") return "Deep";
@@ -457,6 +468,14 @@ function safeFetchSummary(result: PublicResearchFetchResult, fallbackTitle: stri
     return result.excerpt?.slice(0, 240) || `Fetched ${result.title || fallbackTitle} as a public read-only source.`;
   }
   return `Fetch failed safely: ${result.error || "source unavailable"}. Source remains a candidate citation, not proof.`;
+}
+
+function safeBrowserSummary(result: BrowserPublicReadResult) {
+  if (result.ok) {
+    const screenshot = result.screenshotCaptured ? " Screenshot artifact captured." : " Screenshot artifact path was not available.";
+    return `${result.excerpt?.slice(0, 220) || result.title || "Browser-rendered public page read completed."}${screenshot}`;
+  }
+  return `Browser public read failed safely: ${result.error || "source unavailable"}. No login, form, spend, publishing, or messaging occurred.`;
 }
 
 async function buildPublicResearchBundle(current: AppDataState, huntId: string, proposalId: string, message: string, depth: OpportunityHuntDepth) {
@@ -480,8 +499,13 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
   const urls = sourcePacks.flatMap((pack) => pack.urls.map((source) => ({ pack, source }))).slice(0, depthFetchLimit(depth));
   const fetches: PublicResearchFetch[] = [];
   const citations: EvidenceCitation[] = [];
+  const browserRunId = id("browser-research-run");
+  const browserFetches: BrowserResearchFetch[] = [];
+  const browserArtifacts: BrowserResearchArtifact[] = [];
+  const browserSafetyReceipts: BrowserSafetyReceipt[] = [];
+  const browserLimit = depthBrowserLimit(depth);
 
-  for (const { pack, source } of urls) {
+  for (const [index, { pack, source }] of urls.entries()) {
     const fetchId = id("public-research-fetch");
     const startedAt = new Date().toISOString();
     let result: PublicResearchFetchResult;
@@ -500,6 +524,72 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
         fetchedAt: new Date().toISOString(),
       };
     }
+    let browserFetchId: string | undefined;
+    let browserArtifactIds: string[] = [];
+    let browserResult: BrowserPublicReadResult | null = null;
+    if (index < browserLimit) {
+      browserFetchId = id("browser-research-fetch");
+      const browserStartedAt = new Date().toISOString();
+      browserResult = await openclawService.readPublicBrowserSource({
+        url: source.url,
+        sourcePackId: pack.id,
+        huntId,
+        purpose: `Opportunity hunt evidence for: ${message.slice(0, 160)}`,
+        timeoutSeconds: depth === "quick" ? 14 : 18,
+        captureScreenshot: true,
+      });
+      const browserCompletedAt = new Date().toISOString();
+      const receiptId = id("browser-safety-receipt");
+      browserSafetyReceipts.push({
+        id: receiptId,
+        runId: browserRunId,
+        url: source.url,
+        allowed: browserResult.ok,
+        blockedReasons: browserResult.ok ? [] : [browserResult.error || "Browser public read failed safely."],
+        safetyChecklist: [
+          "Exact public URL only",
+          "GET/read-only page access",
+          "No login or credential use",
+          "No form submission",
+          "No purchase or spend",
+          "No publishing or messaging",
+        ],
+        receipt: browserResult.safetyReceipt,
+        createdAt: browserCompletedAt,
+      });
+      browserFetches.push({
+        id: browserFetchId,
+        runId: browserRunId,
+        sourcePackId: pack.id,
+        url: source.url,
+        status: browserResult.ok ? "captured" : "failed",
+        title: browserResult.title ?? source.title,
+        excerpt: browserResult.excerpt ?? undefined,
+        screenshotPath: browserResult.screenshotPath ?? undefined,
+        screenshotCaptured: browserResult.screenshotCaptured,
+        basicLinks: browserResult.basicLinks,
+        error: browserResult.error ?? undefined,
+        safetyReceiptId: receiptId,
+        startedAt: browserStartedAt,
+        completedAt: browserCompletedAt,
+      });
+      const artifactId = id("browser-research-artifact");
+      browserArtifactIds = [artifactId];
+      browserArtifacts.push({
+        id: artifactId,
+        runId: browserRunId,
+        fetchId: browserFetchId,
+        huntId,
+        proposalId,
+        type: "page_summary",
+        url: source.url,
+        title: browserResult.title ?? result.title ?? source.title,
+        summary: safeBrowserSummary(browserResult),
+        screenshotPath: browserResult.screenshotPath ?? undefined,
+        safetyReceiptId: receiptId,
+        createdAt: browserCompletedAt,
+      });
+    }
     const completedAt = new Date().toISOString();
     fetches.push({
       id: fetchId,
@@ -508,9 +598,10 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
       url: source.url,
       status: result.ok ? "fetched" : "failed",
       httpStatus: result.statusCode ?? undefined,
-      title: result.title ?? source.title,
-      excerpt: result.excerpt ?? undefined,
+      title: browserResult?.title ?? result.title ?? source.title,
+      excerpt: browserResult?.excerpt ?? result.excerpt ?? undefined,
       error: result.error ?? undefined,
+      browserResearchFetchId: browserFetchId,
       startedAt,
       completedAt,
     });
@@ -523,9 +614,12 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
       title: result.title || source.title,
       url: source.url,
       sourceType: source.sourceType || sourceTypeFromPack(pack.category),
-      summary: safeFetchSummary(result, source.title),
-      excerpt: result.excerpt ?? undefined,
-      confidence: result.ok ? 72 : 45,
+      summary: browserResult?.ok
+        ? `${safeFetchSummary(result, source.title)} Browser evidence: ${safeBrowserSummary(browserResult)}`
+        : safeFetchSummary(result, source.title),
+      excerpt: browserResult?.excerpt ?? result.excerpt ?? undefined,
+      browserArtifactIds,
+      confidence: result.ok || browserResult?.ok ? 76 : 45,
       capturedAt: completedAt,
     });
     await new Promise((resolve) => window.setTimeout(resolve, depth === "deep" ? 450 : 250));
@@ -667,6 +761,20 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
     return bScore - aScore;
   });
   const rankedCandidates = ranked.map((candidate, index) => ({ ...candidate, rank: index + 1, status: index === 0 ? "winner" as const : "candidate" as const }));
+  const browserRun: BrowserResearchRun = {
+    id: browserRunId,
+    huntId,
+    publicResearchRunId: runId,
+    depth,
+    status: browserFetches.some((item) => item.status === "captured") ? "completed" : browserFetches.length ? "failed" : "completed",
+    fetchIds: browserFetches.map((item) => item.id),
+    artifactIds: browserArtifacts.map((item) => item.id),
+    safetyReceiptIds: browserSafetyReceipts.map((item) => item.id),
+    startedAt: now,
+    completedAt: new Date().toISOString(),
+    summary: `Browser public read captured ${browserFetches.filter((item) => item.status === "captured").length}/${browserFetches.length} approved public pages with screenshots where the local browser was available.`,
+    executionReceipt: `safe-browser-public-read:${browserRunId}:${depth}:${browserFetches.length}-urls:no-login:no-forms:no-spend:no-publish`,
+  };
   const run: PublicResearchRun = {
     id: runId,
     huntId,
@@ -674,14 +782,27 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
     status: fetches.some((item) => item.status === "fetched") ? "completed" : "failed",
     sourcePackIds: sourcePacks.map((pack) => pack.id),
     fetchIds: fetches.map((item) => item.id),
+    browserResearchRunId: browserRun.id,
     evidenceCitationIds: citations.map((item) => item.id),
     candidateIdeaIds: rankedCandidates.map((candidate) => candidate.id),
     startedAt: now,
     completedAt: new Date().toISOString(),
     summary: `Public research ${fetches.some((item) => item.status === "fetched") ? "completed" : "failed safely"} with ${fetches.filter((item) => item.status === "fetched").length}/${fetches.length} sources fetched.`,
-    executionReceipt: `safe-public-research:${runId}:GET-only:${depth}:${fetches.length}-urls:no-login:no-forms:no-spend:no-publish`,
+    executionReceipt: `safe-public-research:${runId}:GET-only:${depth}:${fetches.length}-urls:browser-read-${browserFetches.length}:no-login:no-forms:no-spend:no-publish`,
   };
-  return { run, fetches, citations, candidates: rankedCandidates, scorecards };
+  return {
+    run,
+    fetches,
+    citations,
+    candidates: rankedCandidates,
+    scorecards,
+    browserResearch: {
+      run: browserRun,
+      fetches: browserFetches,
+      artifacts: browserArtifacts,
+      safetyReceipts: browserSafetyReceipts,
+    },
+  };
 }
 
 function buildBudgetPlan(current: AppDataState, proposalId: string, options: { requiredSpend: number; recommendedSpend: number; businessBudgetCap: number; zeroBudgetPath: string; assumptions: string[] }) {
@@ -783,6 +904,12 @@ function buildOpportunityHuntState(
     citations: EvidenceCitation[];
     candidates: CandidateBusinessIdea[];
     scorecards: CandidateScorecard[];
+    browserResearch?: {
+      run: BrowserResearchRun;
+      fetches: BrowserResearchFetch[];
+      artifacts: BrowserResearchArtifact[];
+      safetyReceipts: BrowserSafetyReceipt[];
+    };
   },
 ) {
   const now = new Date().toISOString();
@@ -1038,6 +1165,8 @@ function buildOpportunityHuntState(
       ]
     : [];
   const firstFetchedSource = publicResearch?.fetches.find((fetch) => fetch.status === "fetched") ?? publicResearch?.fetches[0];
+  const firstBrowserArtifact = publicResearch?.browserResearch?.artifacts[0];
+  const browserArtifactCount = publicResearch?.browserResearch?.artifacts.length ?? 0;
   const tasks: BusinessTask[] = taskBlueprints.map((task, index) => ({
     id: id("business-task"),
     huntId,
@@ -1047,14 +1176,15 @@ function buildOpportunityHuntState(
     objective: `${task.objective} Budget context: portfolio ${money(budgetPlan.portfolioStartingCapital)}, remaining ${money(budgetPlan.portfolioRemainingCapital)}, business cap ${money(budgetPlan.businessBudgetCap)}, required spend ${money(budgetPlan.requiredSpend)}. ${fiverrMode ? "Platform context: Fiverr requires manual user login and a separate publish approval." : ""}`,
     status: index < 3 ? "now_working" : "queued",
     progress: index < 3 ? 18 + index * 8 : 0,
-    currentArtifact: task.artifact,
-    currentSource: index < 2 && firstFetchedSource ? firstFetchedSource.url : task.source,
+    currentArtifact: index < 2 && browserArtifactCount ? `${task.artifact} + browser evidence receipt` : task.artifact,
+    currentSource: index < 2 && firstBrowserArtifact ? firstBrowserArtifact.url : index < 2 && firstFetchedSource ? firstFetchedSource.url : task.source,
     dependency: index === 0 ? undefined : taskBlueprints[index - 1].title,
     expectedOutput: task.expectedOutput,
     approvalRequired: false,
     logs: [
       `${agentLabel(task.agentId)} accepted the task from TeamLeader1A.`,
       `Budget guard: cap ${money(budgetPlan.businessBudgetCap)}, required spend ${money(budgetPlan.requiredSpend)}, recommended spend ${money(budgetPlan.recommendedSpend)}.`,
+      browserArtifactCount ? `Browser guard: ${browserArtifactCount} public read artifact(s) captured through the safe browser broker; no login, forms, publishing, messaging, or spend.` : "Browser guard: no browser artifact was required for this task.",
       fiverrMode ? "Platform guard: Fiverr publish/login/form submission are locked behind a separate approval." : "Platform guard: external publishing stays locked until approval.",
     ],
     startedAt: index < 3 ? now : undefined,
@@ -1140,7 +1270,7 @@ function buildOpportunityHuntState(
     evidenceCitationIds: publicResearch?.citations.map((citation) => citation.id) ?? [],
     readinessChecklist: [
       { label: "Budget", status: budgetPlan.approvalBlockers.length ? "blocked" : "passed", detail: `${money(budgetPlan.requiredSpend)} required spend, ${money(budgetPlan.businessBudgetCap)} cap, ${money(budgetPlan.portfolioRemainingCapital)} remaining.` },
-      { label: "Evidence", status: evidence.length >= 3 ? "passed" : "needs_review", detail: `${evidence.length} evidence items are attached from ${depthLabel(depth)} curated public research.` },
+      { label: "Evidence", status: evidence.length >= 3 ? "passed" : "needs_review", detail: `${evidence.length} evidence items and ${browserArtifactCount} browser artifact(s) are attached from ${depthLabel(depth)} curated public research.` },
       { label: "Platform", status: fiverrMode ? "needs_review" : "passed", detail: fiverrMode ? "Fiverr account/login and exact gig fields must be reviewed before publishing." : "Local draft destination is available." },
       { label: "Compliance", status: "needs_review", detail: "No guarantees, fake reviews, spam, paid promotion, or unsupported claims." },
       { label: "Approval", status: "needs_review", detail: "Business approval starts internal work only; external execution needs a separate approval." },
@@ -1157,6 +1287,7 @@ function buildOpportunityHuntState(
     validationScore: fiverrMode ? winningScorecard?.totalScore ?? 76 : winningScorecard?.totalScore ?? 74,
     nextActions: [
       `Review the Top 3 + Winner comparison from the ${depthLabel(depth)} public research pass.`,
+      "Inspect the browser evidence receipts and screenshot paths before approving any business.",
       "Inspect citations, scorecards, risks, and budget guard in Mission Briefs.",
       "Approve as Business only if the validation test and boundaries make sense.",
     ],
@@ -2391,6 +2522,17 @@ function updateMcpCapabilities(current: AppDataState, servers: OpenClawMcpServer
           : capability.description,
       };
     }
+    if (capability.id === "cap-mcp-browser") {
+      const server = byId.get("mcp-puppeteer-deferred");
+      return {
+        ...capability,
+        status: server?.configured ? "available" as const : "needs_install" as const,
+        approvalRequired: false,
+        description: server?.configured
+          ? "Browser MCP is installed but brokered by Mission Control for safe public reads and screenshots only; direct agent control remains disabled."
+          : "Browser MCP can be installed for brokered safe public reads and screenshots only.",
+      };
+    }
     return capability;
   });
 }
@@ -3607,6 +3749,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         opportunityHunts: [built.hunt, ...current.opportunityHunts],
         publicResearchRuns: [publicResearch.run, ...current.publicResearchRuns],
         publicResearchFetches: [...publicResearch.fetches, ...current.publicResearchFetches],
+        browserResearchRuns: [publicResearch.browserResearch.run, ...current.browserResearchRuns],
+        browserResearchFetches: [...publicResearch.browserResearch.fetches, ...current.browserResearchFetches],
+        browserResearchArtifacts: [...publicResearch.browserResearch.artifacts, ...current.browserResearchArtifacts],
+        browserSafetyReceipts: [...publicResearch.browserResearch.safetyReceipts, ...current.browserSafetyReceipts],
         evidenceCitations: [...publicResearch.citations, ...current.evidenceCitations],
         candidateBusinessIdeas: [...publicResearch.candidates, ...current.candidateBusinessIdeas],
         candidateScorecards: [...publicResearch.scorecards, ...current.candidateScorecards],
@@ -3633,7 +3779,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("tl-chat-opportunity"),
             role: "teamleader",
             content:
-              `I started a ${depthLabel(selectedDepth).toLowerCase()} public opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. They know the budget cap, remaining capital, platform boundaries, and public source-pack evidence. I compared the Top 3 candidates and will show one winner before anything external happens.`,
+              `I started a ${depthLabel(selectedDepth).toLowerCase()} public opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. They know the budget cap, remaining capital, platform boundaries, public source-pack evidence, and safe browser-read receipts. I compared the Top 3 candidates and will show one winner before anything external happens.`,
             createdAt: now,
             mode: "local",
             relatedOpportunityHuntId: built.hunt.id,
@@ -3645,7 +3791,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("log-opportunity-hunt"),
             category: "agent",
             title: "TeamLeader1A started opportunity hunt",
-            detail: `${depthLabel(selectedDepth)} curated public research created ${publicResearch.citations.length} citations and ${publicResearch.candidates.length} candidate ideas. No publishing, messaging, spending, launch, login automation, or external connector action ran.`,
+            detail: `${depthLabel(selectedDepth)} curated public research created ${publicResearch.citations.length} citations, ${publicResearch.browserResearch.artifacts.length} brokered browser artifacts, and ${publicResearch.candidates.length} candidate ideas. No publishing, messaging, spending, launch, login automation, form submission, or external connector action ran.`,
             severity: "success",
             createdAt: now,
           } satisfies ActivityLog,
@@ -3706,6 +3852,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const proposalIds = new Set(current.businessProposals.filter((proposal) => testHuntIds.has(proposal.huntId)).map((proposal) => proposal.id));
     const businessIds = new Set(current.approvedBusinesses.filter((business) => proposalIds.has(business.proposalId)).map((business) => business.id));
     const researchRunIds = new Set(current.publicResearchRuns.filter((run) => testHuntIds.has(run.huntId)).map((run) => run.id));
+    const browserRunIds = new Set(current.browserResearchRuns.filter((run) => testHuntIds.has(run.huntId)).map((run) => run.id));
     const now = new Date().toISOString();
     await persistOptimistic({
       ...current,
@@ -3716,6 +3863,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       agentWorkSessions: current.agentWorkSessions.filter((session) => !session.huntId || !testHuntIds.has(session.huntId)),
       publicResearchRuns: current.publicResearchRuns.filter((run) => !researchRunIds.has(run.id)),
       publicResearchFetches: current.publicResearchFetches.filter((fetch) => !researchRunIds.has(fetch.runId)),
+      browserResearchRuns: current.browserResearchRuns.filter((run) => !browserRunIds.has(run.id)),
+      browserResearchFetches: current.browserResearchFetches.filter((fetch) => !browserRunIds.has(fetch.runId)),
+      browserResearchArtifacts: current.browserResearchArtifacts.filter((artifact) => !browserRunIds.has(artifact.runId)),
+      browserSafetyReceipts: current.browserSafetyReceipts.filter((receipt) => !browserRunIds.has(receipt.runId)),
       evidenceCitations: current.evidenceCitations.filter((citation) => !testHuntIds.has(citation.huntId)),
       candidateBusinessIdeas: current.candidateBusinessIdeas.filter((candidate) => !testHuntIds.has(candidate.huntId)),
       candidateScorecards: current.candidateScorecards.filter((scorecard) => !testHuntIds.has(scorecard.huntId)),

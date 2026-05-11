@@ -16,6 +16,10 @@ import type {
   BusinessProposal,
   BusinessIdea,
   BusinessTask,
+  BrowserResearchArtifact,
+  BrowserResearchFetch,
+  BrowserResearchRun,
+  BrowserSafetyReceipt,
   ContentInventoryItem,
   DashboardSummary,
   DecisionLog,
@@ -1483,6 +1487,10 @@ export const publicResearchFetches: PublicResearchFetch[] = [];
 export const evidenceCitations: EvidenceCitation[] = [];
 export const candidateBusinessIdeas: CandidateBusinessIdea[] = [];
 export const candidateScorecards: CandidateScorecard[] = [];
+export const browserResearchRuns: BrowserResearchRun[] = [];
+export const browserResearchFetches: BrowserResearchFetch[] = [];
+export const browserResearchArtifacts: BrowserResearchArtifact[] = [];
+export const browserSafetyReceipts: BrowserSafetyReceipt[] = [];
 export const businessTasks: BusinessTask[] = [];
 export const agentWorkSessions: AgentWorkSession[] = [];
 export const researchEvidence: ResearchEvidence[] = [];
@@ -2107,13 +2115,14 @@ export const openClawMcpServers: OpenClawMcpServer[] = [
     packageName: "@modelcontextprotocol/server-puppeteer",
     packageVersion: "2025.5.12",
     args: [],
-    allowedAgentIds: [],
+    env: { OPENCLAW_MISSION_CONTROL_BROKER_REQUIRED: "true", OPENCLAW_MISSION_CONTROL_BROWSER_MODE: "safe-public-read" },
+    allowedAgentIds: ["teamleader1a", "agent-researcher", "agent-seo"],
     status: "needs_install",
-    safetyMode: "deferred",
+    safetyMode: "brokered",
     enabled: false,
     configured: false,
     installed: false,
-    notes: "Deferred until Mission Control has a browser automation approval wrapper.",
+    notes: "Brokered by Mission Control for safe public read-and-screenshot research only; direct agent control remains disabled.",
     createdAt: now,
     updatedAt: now,
   },
@@ -2129,7 +2138,7 @@ export const openClawCapabilities: OpenClawCapability[] = [
   { id: "cap-mcp-filesystem", name: "Scoped filesystem MCP", status: "available", description: "Free local MCP installed for approved workspace and vault folders only.", approvalRequired: false, connectedTo: "@modelcontextprotocol/server-filesystem" },
   { id: "cap-mcp-memory", name: "Local memory MCP", status: "available", description: "Free local knowledge graph memory MCP for agent notes and lessons.", approvalRequired: false, connectedTo: "@modelcontextprotocol/server-memory" },
   { id: "cap-mcp-fetch", name: "Approval-gated fetch MCP", status: "blocked", description: "Fetch MCP is installed but disabled for general agent use; approved URL research remains per-action gated.", approvalRequired: true, connectedTo: "mcp-fetch-server" },
-  { id: "cap-mcp-browser", name: "Browser automation MCP", status: "blocked", description: "Puppeteer/browser MCP is deferred until a dedicated approval wrapper exists.", approvalRequired: true },
+  { id: "cap-mcp-browser", name: "Browser automation MCP", status: "available", description: "Puppeteer/browser MCP is brokered by Mission Control for safe public reads and screenshots only; direct agent control remains disabled.", approvalRequired: false, connectedTo: "@modelcontextprotocol/server-puppeteer" },
   { id: "cap-analytics", name: "Analytics parser", status: "needs_install", description: "Future adapter for approved experiment metrics.", approvalRequired: true },
 ];
 

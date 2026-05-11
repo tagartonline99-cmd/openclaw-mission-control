@@ -60,8 +60,8 @@ export type ApprovalRequestType =
 export type OpenClawActionKind = "gateway_start" | "agent_turn" | "mission_start" | "url_research" | "channel_message";
 export type OpenClawExecutionMode = "mock" | "real_local" | "dry_run";
 export type OpenClawMcpServerKind = "filesystem" | "memory" | "fetch" | "browser";
-export type OpenClawMcpServerStatus = "configured" | "installed" | "needs_install" | "disabled" | "error";
-export type OpenClawMcpSafetyMode = "direct_local" | "approval_gated" | "deferred";
+export type OpenClawMcpServerStatus = "configured" | "installed" | "needs_install" | "disabled" | "error" | "safe_public_read";
+export type OpenClawMcpSafetyMode = "direct_local" | "approval_gated" | "deferred" | "brokered";
 export type SafetyRiskFlag =
   | "requires_approval"
   | "external_action"
@@ -189,6 +189,8 @@ export type ReadinessStatus = "passed" | "missing" | "needs_review" | "blocked";
 export type OpportunityHuntDepth = "quick" | "fast" | "deep";
 export type PublicResearchRunStatus = "queued" | "running" | "completed" | "failed" | "blocked";
 export type PublicResearchFetchStatus = "queued" | "fetched" | "failed" | "blocked" | "skipped";
+export type BrowserResearchStatus = "queued" | "captured" | "failed" | "blocked" | "skipped";
+export type BrowserResearchArtifactType = "page_summary" | "screenshot";
 export type CandidateBusinessStatus = "candidate" | "winner" | "rejected" | "archived";
 export type MissionBriefSectionKind =
   | "overview"
@@ -290,6 +292,7 @@ export interface PublicResearchRun {
   status: PublicResearchRunStatus;
   sourcePackIds: string[];
   fetchIds: string[];
+  browserResearchRunId?: string;
   evidenceCitationIds: string[];
   candidateIdeaIds: string[];
   startedAt: string;
@@ -308,8 +311,67 @@ export interface PublicResearchFetch {
   title?: string;
   excerpt?: string;
   error?: string;
+  browserResearchFetchId?: string;
   startedAt: string;
   completedAt?: string;
+}
+
+export interface BrowserSafetyReceipt {
+  id: string;
+  runId: string;
+  url: string;
+  allowed: boolean;
+  blockedReasons: string[];
+  safetyChecklist: string[];
+  receipt: string;
+  createdAt: string;
+}
+
+export interface BrowserResearchRun {
+  id: string;
+  huntId: string;
+  publicResearchRunId: string;
+  depth: OpportunityHuntDepth;
+  status: PublicResearchRunStatus;
+  fetchIds: string[];
+  artifactIds: string[];
+  safetyReceiptIds: string[];
+  startedAt: string;
+  completedAt?: string;
+  summary: string;
+  executionReceipt: string;
+}
+
+export interface BrowserResearchFetch {
+  id: string;
+  runId: string;
+  sourcePackId?: string;
+  url: string;
+  status: BrowserResearchStatus;
+  title?: string;
+  excerpt?: string;
+  screenshotPath?: string;
+  screenshotCaptured: boolean;
+  basicLinks: string[];
+  error?: string;
+  safetyReceiptId?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface BrowserResearchArtifact {
+  id: string;
+  runId: string;
+  fetchId: string;
+  huntId: string;
+  proposalId?: string;
+  type: BrowserResearchArtifactType;
+  url: string;
+  title: string;
+  summary: string;
+  screenshotPath?: string;
+  safetyReceiptId?: string;
+  createdAt: string;
 }
 
 export interface EvidenceCitation {
@@ -324,6 +386,7 @@ export interface EvidenceCitation {
   sourceType: ResearchEvidence["sourceType"];
   summary: string;
   excerpt?: string;
+  browserArtifactIds?: string[];
   confidence: number;
   capturedAt: string;
 }

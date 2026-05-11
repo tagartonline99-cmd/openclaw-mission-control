@@ -80,6 +80,36 @@ struct PublicResearchFetchResult {
     fetched_at: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserPublicReadRequest {
+    url: String,
+    purpose: String,
+    source_pack_id: Option<String>,
+    hunt_id: Option<String>,
+    timeout_seconds: Option<u64>,
+    capture_screenshot: Option<bool>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserPublicReadResult {
+    ok: bool,
+    url: String,
+    source_pack_id: Option<String>,
+    hunt_id: Option<String>,
+    status_code: Option<u16>,
+    title: Option<String>,
+    excerpt: Option<String>,
+    content_type: Option<String>,
+    screenshot_path: Option<String>,
+    screenshot_captured: bool,
+    basic_links: Vec<String>,
+    safety_receipt: String,
+    error: Option<String>,
+    captured_at: String,
+}
+
 fn openclaw_program() -> &'static str {
     if cfg!(windows) {
         "openclaw.cmd"
@@ -308,6 +338,126 @@ fn validate_url(value: &str) -> Result<(), String> {
     reject_control_chars(trimmed, "Approved URL")
 }
 
+fn reject_blocked_browser_url(value: &str) -> Result<(), String> {
+    let lower = value.to_lowercase();
+    let blocked = [
+        "/login",
+        "/log-in",
+        "/signin",
+        "/sign-in",
+        "/auth",
+        "/account",
+        "/checkout",
+        "/cart",
+        "/payment",
+        "/purchase",
+        "/captcha",
+    ];
+
+    if let Some(term) = blocked.iter().find(|term| lower.contains(**term)) {
+        return Err(format!("Browser public read blocked account/action URL segment: {term}"));
+    }
+    reject_blocked_intent(value)
+}
+
+fn browser_artifact_dir() -> Result<PathBuf, String> {
+    let dir = user_home_dir()?
+        .join(".openclaw")
+        .join("mission-control-browser-artifacts");
+    fs::create_dir_all(&dir).map_err(|error| format!("Could not create browser artifact directory: {error}"))?;
+    Ok(dir)
+}
+
+fn filename_safe(value: &str) -> String {
+    let mut output = value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '-' })
+        .collect::<String>();
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let trimmed = output.trim_matches('-').chars().take(80).collect::<String>();
+    if trimmed.is_empty() {
+        "browser-read".into()
+    } else {
+        trimmed
+    }
+}
+
+fn find_browser_program() -> String {
+    if let Some(path) = env::var_os("OPENCLAW_BROWSER_PATH") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return path.to_string_lossy().to_string();
+        }
+    }
+
+    let candidates = [
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+    ];
+
+    candidates
+        .iter()
+        .map(PathBuf::from)
+        .find(|path| path.is_file())
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| "msedge.exe".into())
+}
+
+fn capture_public_browser_screenshot(url: &str, timeout_seconds: u64) -> Result<Option<String>, String> {
+    let host = url_host(url)?;
+    let path = browser_artifact_dir()?.join(format!("{}-{}.png", filename_safe(&host), now_rfc3339()));
+    let output_path = path.to_string_lossy().to_string();
+    let args = vec![
+        "--headless=new".into(),
+        "--disable-gpu".into(),
+        "--disable-extensions".into(),
+        "--disable-background-networking".into(),
+        "--hide-scrollbars".into(),
+        "--no-first-run".into(),
+        "--no-default-browser-check".into(),
+        "--window-size=1365,900".into(),
+        format!("--screenshot={output_path}"),
+        url.to_string(),
+    ];
+    let result = run_program(&find_browser_program(), args, timeout_seconds)?;
+    if result.ok && path.is_file() && path.metadata().map(|item| item.len()).unwrap_or(0) > 0 {
+        return Ok(Some(output_path));
+    }
+    Ok(None)
+}
+
+fn extract_basic_links(html: &str) -> Vec<String> {
+    let mut links = Vec::new();
+    let mut rest = html;
+    while let Some(index) = rest.to_lowercase().find("href=") {
+        rest = &rest[index + 5..];
+        let quote = rest.chars().next().unwrap_or(' ');
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+        rest = &rest[1..];
+        if let Some(end) = rest.find(quote) {
+            let candidate = rest[..end].trim();
+            if candidate.starts_with("http://") || candidate.starts_with("https://") {
+                if validate_url(candidate).is_ok() && reject_blocked_browser_url(candidate).is_ok() && !links.iter().any(|item| item == candidate) {
+                    links.push(candidate.chars().take(260).collect());
+                }
+            }
+            rest = &rest[end + 1..];
+        } else {
+            break;
+        }
+        if links.len() >= 8 {
+            break;
+        }
+    }
+    links
+}
+
 fn validate_channel(value: &str) -> Result<(), String> {
     let allowed = [
         "telegram",
@@ -493,6 +643,7 @@ fn openclaw_mcp_install_local_kit(request: McpInstallRequest) -> Result<OpenClaw
             "@modelcontextprotocol/server-filesystem@2026.1.14".into(),
             "@modelcontextprotocol/server-memory@2026.1.26".into(),
             "mcp-fetch-server@1.1.2".into(),
+            "@modelcontextprotocol/server-puppeteer@2025.5.12".into(),
         ],
         300,
     )?;
@@ -514,6 +665,12 @@ fn openclaw_mcp_install_local_kit(request: McpInstallRequest) -> Result<OpenClaw
     let fetch_entry = mcp_dir
         .join("node_modules")
         .join("mcp-fetch-server")
+        .join("dist")
+        .join("index.js");
+    let browser_entry = mcp_dir
+        .join("node_modules")
+        .join("@modelcontextprotocol")
+        .join("server-puppeteer")
         .join("dist")
         .join("index.js");
 
@@ -552,11 +709,22 @@ fn openclaw_mcp_install_local_kit(request: McpInstallRequest) -> Result<OpenClaw
         "disabled": true,
         "note": "approved-url-research-only"
     });
+    let browser_config = json!({
+        "command": "node",
+        "args": [browser_entry.to_string_lossy().to_string()],
+        "env": {
+            "OPENCLAW_MISSION_CONTROL_BROKER_REQUIRED": "true",
+            "OPENCLAW_MISSION_CONTROL_BROWSER_MODE": "safe-public-read"
+        },
+        "disabled": true,
+        "note": "safe-public-browser-read-brokered"
+    });
 
     for (name, config) in [
         ("filesystem", filesystem_config),
         ("memory", memory_config),
         ("fetch_approved_url_research", fetch_config),
+        ("browser_safe_public_read", browser_config),
     ] {
         let result = run_openclaw(vec!["mcp".into(), "set".into(), name.into(), json_arg(config)], 60)?;
         append_result(&format!("openclaw mcp set {name}"), &result, &mut stdout, &mut stderr);
@@ -660,6 +828,125 @@ async fn public_research_fetch(request: PublicResearchFetchRequest) -> Result<Pu
             content_type: None,
             error: Some(format!("Public research fetch failed safely: {error}")),
             fetched_at,
+        }),
+    }
+}
+
+#[tauri::command]
+async fn browser_public_read(request: BrowserPublicReadRequest) -> Result<BrowserPublicReadResult, String> {
+    let url = request.url.trim().to_string();
+    let purpose = request.purpose.trim().to_string();
+    validate_url(&url)?;
+    reject_blocked_browser_url(&url)?;
+    reject_control_chars(&purpose, "Browser read purpose")?;
+    reject_blocked_intent(&purpose)?;
+
+    let timeout_seconds = clamp_timeout(request.timeout_seconds, 15, 35);
+    let timeout = Duration::from_secs(timeout_seconds);
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent("OpenClaw-Mission-Control/0.1 safe-public-browser-read")
+        .redirect(reqwest::redirect::Policy::limited(4))
+        .build()
+        .map_err(|error| format!("Could not create browser read client: {error}"))?;
+
+    let captured_at = now_rfc3339();
+    let safety_receipt = format!(
+        "safe-browser-public-read:{}:GET-only:read-text:screenshot:{}:no-login:no-forms:no-spend:no-publish:no-messaging",
+        url_host(&url)?,
+        request.capture_screenshot.unwrap_or(true)
+    );
+
+    match client.get(&url).send().await {
+        Ok(response) => {
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.to_string());
+            if !status.is_success() {
+                return Ok(BrowserPublicReadResult {
+                    ok: false,
+                    url,
+                    source_pack_id: request.source_pack_id,
+                    hunt_id: request.hunt_id,
+                    status_code: Some(status.as_u16()),
+                    title: None,
+                    excerpt: None,
+                    content_type,
+                    screenshot_path: None,
+                    screenshot_captured: false,
+                    basic_links: vec![],
+                    safety_receipt,
+                    error: Some(format!("Public browser read returned HTTP {}", status.as_u16())),
+                    captured_at,
+                });
+            }
+
+            let body = response
+                .text()
+                .await
+                .map_err(|error| format!("Could not read public browser response: {error}"))?;
+            let lower = body.to_lowercase();
+            if lower.contains("captcha") || lower.contains("sign in to continue") || lower.contains("log in to continue") {
+                return Ok(BrowserPublicReadResult {
+                    ok: false,
+                    url,
+                    source_pack_id: request.source_pack_id,
+                    hunt_id: request.hunt_id,
+                    status_code: Some(status.as_u16()),
+                    title: extract_title(&body),
+                    excerpt: None,
+                    content_type,
+                    screenshot_path: None,
+                    screenshot_captured: false,
+                    basic_links: vec![],
+                    safety_receipt,
+                    error: Some("Browser read blocked interactive login/CAPTCHA style page.".into()),
+                    captured_at,
+                });
+            }
+
+            let screenshot_path = if request.capture_screenshot.unwrap_or(true) {
+                capture_public_browser_screenshot(&url, timeout_seconds).unwrap_or(None)
+            } else {
+                None
+            };
+            let screenshot_captured = screenshot_path.is_some();
+
+            Ok(BrowserPublicReadResult {
+                ok: true,
+                url,
+                source_pack_id: request.source_pack_id,
+                hunt_id: request.hunt_id,
+                status_code: Some(status.as_u16()),
+                title: extract_title(&body),
+                excerpt: Some(excerpt_from_body(&body)),
+                content_type,
+                screenshot_path,
+                screenshot_captured,
+                basic_links: extract_basic_links(&body),
+                safety_receipt,
+                error: None,
+                captured_at,
+            })
+        }
+        Err(error) => Ok(BrowserPublicReadResult {
+            ok: false,
+            url,
+            source_pack_id: request.source_pack_id,
+            hunt_id: request.hunt_id,
+            status_code: None,
+            title: None,
+            excerpt: None,
+            content_type: None,
+            screenshot_path: None,
+            screenshot_captured: false,
+            basic_links: vec![],
+            safety_receipt,
+            error: Some(format!("Public browser read failed safely: {error}")),
+            captured_at,
         }),
     }
 }
@@ -799,6 +1086,7 @@ pub fn run() {
             openclaw_mcp_install_local_kit,
             openclaw_gateway_start,
             public_research_fetch,
+            browser_public_read,
             openclaw_agent_turn,
             openclaw_url_research,
             openclaw_channel_send

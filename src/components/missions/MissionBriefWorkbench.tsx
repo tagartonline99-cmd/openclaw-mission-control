@@ -56,6 +56,9 @@ export function MissionBriefWorkbench() {
     : [];
   const selectedResearchRun = selectedProposal?.publicResearchRunId ? data.publicResearchRuns.find((run) => run.id === selectedProposal.publicResearchRunId) : undefined;
   const selectedResearchFetches = selectedResearchRun ? data.publicResearchFetches.filter((fetch) => selectedResearchRun.fetchIds.includes(fetch.id)) : [];
+  const selectedBrowserRun = selectedResearchRun?.browserResearchRunId ? data.browserResearchRuns.find((run) => run.id === selectedResearchRun.browserResearchRunId) : undefined;
+  const selectedBrowserArtifacts = selectedBrowserRun ? data.browserResearchArtifacts.filter((artifact) => selectedBrowserRun.artifactIds.includes(artifact.id)) : [];
+  const selectedBrowserReceipts = selectedBrowserRun ? data.browserSafetyReceipts.filter((receipt) => selectedBrowserRun.safetyReceiptIds.includes(receipt.id)) : [];
   const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
   const firstRun = data.missionRuns[0];
   const firstDraft = data.missionDrafts[0];
@@ -225,6 +228,38 @@ export function MissionBriefWorkbench() {
                           <p className="mt-1 text-xs leading-5 text-slate-300">
                             {candidate.status === "winner" ? candidate.whyItMightWin.join(" ") : candidate.whyItMightLose.join(" ")}
                           </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
+              {selectedBrowserRun ? (
+                <div className="rounded-lg border border-cyan-300/20 bg-cyan-400/8 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-cyan-100">Safe browser evidence</p>
+                      <p className="mt-1 text-sm text-slate-300">{selectedBrowserRun.summary}</p>
+                    </div>
+                    <Badge tone="teal">{selectedBrowserRun.executionReceipt}</Badge>
+                  </div>
+                  <div className="mt-4 grid gap-3 xl:grid-cols-2">
+                    {selectedBrowserArtifacts.map((artifact) => {
+                      const receipt = selectedBrowserReceipts.find((item) => item.id === artifact.safetyReceiptId);
+                      return (
+                        <div key={artifact.id} className="rounded-md border border-cyan-300/15 bg-black/25 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-semibold text-stone-100">{artifact.title}</p>
+                            <Badge tone={artifact.screenshotPath ? "teal" : "amber"}>{artifact.screenshotPath ? "screenshot saved" : "text captured"}</Badge>
+                          </div>
+                          <p className="mt-2 text-sm leading-6 text-slate-300">{artifact.summary}</p>
+                          <a className="mt-2 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50" href={artifact.url}>{artifact.url}</a>
+                          {artifact.screenshotPath ? (
+                            <code className="mt-2 block truncate rounded border border-white/10 bg-black/35 p-2 text-xs text-cyan-100">{artifact.screenshotPath}</code>
+                          ) : null}
+                          {receipt ? (
+                            <p className="mt-2 text-xs leading-5 text-slate-400">{receipt.receipt}</p>
+                          ) : null}
                         </div>
                       );
                     })}

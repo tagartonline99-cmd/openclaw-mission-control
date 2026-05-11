@@ -5,7 +5,11 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByRole("heading", { name: "Tell TeamLeader1A what to build" })).toBeVisible();
   await expect(page.getByText("TeamLeader1A Chat")).toBeVisible();
   await expect(page.getByText("Research depth")).toBeVisible();
-  await expect(page.getByRole("combobox").filter({ hasText: /Fast public research/i })).toBeVisible();
+  await expect(page.getByRole("combobox")).toHaveCount(1);
+  await expect(page.getByText("Optional quest attachment")).toBeVisible();
+  await page.getByRole("button", { name: /Advanced/i }).click();
+  await expect(page.getByText("Attach this command to an existing quest")).toBeVisible();
+  await page.getByRole("button", { name: /Advanced/i }).click();
 
   await page
     .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
@@ -30,6 +34,8 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Business Proposal Review")).toBeVisible();
   await expect(page.getByRole("heading", { name: /Business Proposal:/i })).toBeVisible();
   await expect(page.getByText("Top 3 + Winner")).toBeVisible();
+  await expect(page.getByText("Safe browser evidence")).toBeVisible();
+  await expect(page.getByText(/safe-browser-public-read/i).first()).toBeVisible();
   await expect(page.getByText(/Practical AI Workflow Template Kit|Local Service Lead-Gen|Client Operations Notion/i).first()).toBeVisible();
   await expect(page.getByText(/safe-public-research/i)).toBeVisible();
   await expect(page.getByText("Budget plan")).toBeVisible();
@@ -61,11 +67,11 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Filesystem MCP", { exact: true })).toBeVisible();
   await expect(page.getByText("Knowledge Graph Memory MCP", { exact: true })).toBeVisible();
   await expect(page.getByText("Approved URL Fetch MCP", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Browser\/Puppeteer MCP is intentionally deferred/i)).toBeVisible();
+  await expect(page.getByText(/Browser\/Puppeteer MCP is not direct agent control/i)).toBeVisible();
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Public research opportunity release/i)).toBeVisible();
+  await expect(page.getByText(/Safe browser research release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {
@@ -83,11 +89,11 @@ test("Fiverr prompt still creates a locked local platform package", async ({ pag
   await expect(page.getByText(/Prepare Fiverr Publish Approval/i)).toBeVisible();
 });
 
-test("MCP refresh does not expose browser automation in browser fallback", async ({ page }) => {
+test("MCP refresh keeps browser automation brokered in browser fallback", async ({ page }) => {
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: /Refresh MCP status/i }).click();
   await expect(page.getByText("Browser Automation MCP", { exact: true })).toBeVisible();
-  await expect(page.getByText("deferred").first()).toBeVisible();
+  await expect(page.getByText(/brokered safe read|needs install/i).first()).toBeVisible();
   await expect(page.getByText(/Fetch MCP is installed but disabled|approved URL research only/i).first()).toBeVisible();
 });
 

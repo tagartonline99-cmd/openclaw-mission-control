@@ -305,8 +305,9 @@ The OpenClaw System page includes an MCP Manager for safe local agent tools:
 - `@modelcontextprotocol/server-filesystem`, scoped only to approved OpenClaw workspace and vault folders.
 - `@modelcontextprotocol/server-memory`, storing local memory at `C:\Users\User\.openclaw\memory\openclaw-mcp-memory.jsonl`.
 - `mcp-fetch-server`, installed but disabled for general agent access and reserved for Mission Control approval-gated URL research.
+- `@modelcontextprotocol/server-puppeteer`, installed for Mission Control brokered safe public reads only. Direct agent browser control remains disabled.
 
-The Puppeteer/browser MCP is intentionally deferred until Mission Control has a dedicated approval wrapper for browser automation. MCP installation does not enable spending, publishing, messaging, login automation, form submission, purchases, or uncontrolled scraping.
+Browser research in Phase 11E can open exact public HTTP/HTTPS URLs, read visible page text, capture a local screenshot artifact when Edge/Chrome is available, and save a safety receipt into SQLite. It blocks private/local hosts, credential URLs, wildcards, login/account pages, forms, purchases, CAPTCHA bypass, publishing, messaging, spending, and uncontrolled crawling.
 
 ## Future Integration Notes
 

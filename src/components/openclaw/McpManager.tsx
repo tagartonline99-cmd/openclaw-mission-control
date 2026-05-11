@@ -13,7 +13,7 @@ function iconFor(server: OpenClawMcpServer) {
 }
 
 function statusTone(server: OpenClawMcpServer): "emerald" | "amber" | "red" | "slate" {
-  if (server.status === "configured") return "emerald";
+  if (server.status === "configured" || server.status === "safe_public_read") return "emerald";
   if (server.status === "disabled") return "amber";
   if (server.status === "error") return "red";
   return "slate";
@@ -22,6 +22,7 @@ function statusTone(server: OpenClawMcpServer): "emerald" | "amber" | "red" | "s
 function safetyLabel(server: OpenClawMcpServer) {
   if (server.safetyMode === "direct_local") return "local scoped";
   if (server.safetyMode === "approval_gated") return "approval gated";
+  if (server.safetyMode === "brokered") return "brokered safe read";
   return "deferred";
 }
 
@@ -37,7 +38,7 @@ export function McpManager() {
           Free Local MCP Kit
         </CardTitle>
         <p className="mt-1 text-sm text-slate-400">
-          MCP access is local-first. Filesystem is scoped to approved folders, memory is local, and fetch remains disabled unless an approved URL research action uses it.
+          MCP access is local-first. Filesystem is scoped, memory is local, fetch stays approval-gated, and browser automation is brokered for safe public reads only.
         </p>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -100,7 +101,7 @@ export function McpManager() {
         </div>
         <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-3 text-sm leading-6 text-teal-100">
           <ShieldCheck className="mb-2 h-4 w-4" />
-          Browser/Puppeteer MCP is intentionally deferred. Agents cannot use unrestricted browser automation from this kit.
+          Browser/Puppeteer MCP is not direct agent control. Mission Control brokers safe public reads, screenshots, and receipts; login, forms, purchases, publishing, messaging, and unrestricted crawling stay blocked.
         </div>
       </CardContent>
     </Card>

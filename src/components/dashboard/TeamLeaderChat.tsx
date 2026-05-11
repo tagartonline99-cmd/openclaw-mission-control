@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { BriefcaseBusiness, Crown, Eye, HelpCircle, Send, ShieldAlert, Sparkles, WalletCards } from "lucide-react";
+import { BriefcaseBusiness, Crown, Eye, HelpCircle, Send, ShieldAlert, SlidersHorizontal, Sparkles, WalletCards } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
@@ -15,6 +15,7 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
   const [message, setMessage] = useState("");
   const [questId, setQuestId] = useState(quests[0]?.id ?? "");
   const [depth, setDepth] = useState<OpportunityHuntDepth>(data.userSettings.defaultOpportunityHuntDepth ?? "fast");
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const riskyPending = approvalRequests.filter((request) => request.status === "pending").length;
   const latestHunt = opportunityHunts[0];
@@ -36,7 +37,7 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
     if (!trimmed || isSending) return;
     setIsSending(true);
     try {
-      await sendTeamLeaderChatMessage(trimmed, { questId, opportunityHuntDepth: depth });
+      await sendTeamLeaderChatMessage(trimmed, { questId: showAdvanced ? questId : undefined, opportunityHuntDepth: depth });
       setMessage("");
     } finally {
       setIsSending(false);
@@ -199,11 +200,6 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
         </div>
 
         <div className="space-y-3">
-          <Select value={questId} onChange={(event) => setQuestId(event.target.value)}>
-            {quests.map((quest) => (
-              <option key={quest.id} value={quest.id}>{quest.title}</option>
-            ))}
-          </Select>
           <Select
             value={depth}
             onChange={(event) => {
@@ -216,6 +212,31 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
             <option value="fast">Fast public research</option>
             <option value="deep">Deep public research</option>
           </Select>
+          <div className="rounded-md border border-white/10 bg-black/20 p-3">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 text-left text-sm font-semibold text-slate-200"
+              onClick={() => setShowAdvanced((value) => !value)}
+            >
+              <span className="inline-flex items-center gap-2">
+                <SlidersHorizontal className="h-4 w-4 text-amber-100" />
+                Advanced
+              </span>
+              <span className="text-xs text-slate-500">{showAdvanced ? "Hide legacy quest attachment" : "Optional quest attachment"}</span>
+            </button>
+            {showAdvanced ? (
+              <div className="mt-3 space-y-2">
+                <p className="text-xs leading-5 text-slate-500">
+                  Attach this command to an existing quest only for legacy quest work. New business searches create a fresh Opportunity Hunt automatically.
+                </p>
+                <Select value={questId} onChange={(event) => setQuestId(event.target.value)}>
+                  {quests.map((quest) => (
+                    <option key={quest.id} value={quest.id}>{quest.title}</option>
+                  ))}
+                </Select>
+              </div>
+            ) : null}
+          </div>
           <textarea
             value={message}
             onChange={(event) => setMessage(event.target.value)}

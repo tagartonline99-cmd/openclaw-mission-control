@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "Public research opportunity release 0.1.11";
+const UPDATER_VERIFICATION_MARKER = "Safe browser research release 0.1.12";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;
