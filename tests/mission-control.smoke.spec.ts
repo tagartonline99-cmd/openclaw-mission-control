@@ -45,8 +45,11 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Agent Evidence Trail").first()).toBeVisible();
   await expect(page.getByText("Assigned prompt").first()).toBeVisible();
   await expect(page.getByText("Output artifact").first()).toBeVisible();
+  await expect(page.getByText("Research Confidence Report").first()).toBeVisible();
+  await expect(page.getByText("Query plan preview").first()).toBeVisible();
+  await expect(page.getByText("Weak claim detection").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: /Business Proposal:/i })).toBeVisible();
-  await expect(page.getByText("Top 3 + Winner")).toBeVisible();
+  await expect(page.getByText("Top 3 + Winner", { exact: true })).toBeVisible();
   await expect(page.getByText("Safe browser evidence")).toBeVisible();
   await expect(page.getByText(/safe-browser-public-read/i).first()).toBeVisible();
   await expect(page.getByText(/Practical AI Workflow Template Kit|Local Service Lead-Gen|Client Operations Notion/i).first()).toBeVisible();
@@ -120,7 +123,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Business Operating Cockpit v2 release/i)).toBeVisible();
+  await expect(page.getByText(/Research Engine Confidence release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

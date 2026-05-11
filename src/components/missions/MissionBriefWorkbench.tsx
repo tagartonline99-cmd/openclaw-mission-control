@@ -57,7 +57,11 @@ export function MissionBriefWorkbench() {
   const selectedApprovedBusiness = selectedProposal?.approvedBusinessId ? data.approvedBusinesses.find((item) => item.id === selectedProposal.approvedBusinessId) : undefined;
   const selectedAgentArtifacts = selectedApprovedBusiness ? data.agentArtifacts.filter((artifact) => data.approvedBusinessCockpits.find((cockpit) => cockpit.businessId === selectedApprovedBusiness.id)?.agentArtifactIds.includes(artifact.id)) : [];
   const selectedReceipts = selectedApprovedBusiness ? data.executionReceipts.filter((receipt) => receipt.businessId === selectedApprovedBusiness.id) : [];
-  const selectedEvidenceQuality = selectedProposal ? data.evidenceQualityScores.filter((score) => selectedProposal.evidenceIds.includes(score.evidenceId ?? "")) : [];
+  const selectedEvidenceQuality = selectedProposal
+    ? data.evidenceQualityScores.filter(
+        (score) => selectedProposal.evidenceIds.includes(score.evidenceId ?? "") || selectedProposal.evidenceCitationIds?.includes(score.citationId ?? ""),
+      )
+    : [];
   const selectedCandidates = selectedProposal?.candidateIdeaIds?.length
     ? data.candidateBusinessIdeas
         .filter((item) => selectedProposal.candidateIdeaIds?.includes(item.id))
@@ -72,6 +76,20 @@ export function MissionBriefWorkbench() {
   const selectedBrowserRun = selectedResearchRun?.browserResearchRunId ? data.browserResearchRuns.find((run) => run.id === selectedResearchRun.browserResearchRunId) : undefined;
   const selectedBrowserArtifacts = selectedBrowserRun ? data.browserResearchArtifacts.filter((artifact) => selectedBrowserRun.artifactIds.includes(artifact.id)) : [];
   const selectedBrowserReceipts = selectedBrowserRun ? data.browserSafetyReceipts.filter((receipt) => selectedBrowserRun.safetyReceiptIds.includes(receipt.id)) : [];
+  const selectedQueryPlan = selectedProposal
+    ? data.researchQueryPlans.find((plan) => plan.huntId === selectedProposal.huntId || plan.businessId === selectedApprovedBusiness?.id)
+    : undefined;
+  const uniqueSourceUrls = new Set(selectedCitations.map((citation) => citation.url));
+  const duplicateCount = Math.max(0, selectedCitations.length - uniqueSourceUrls.size);
+  const averageConfidence = selectedCitations.length
+    ? Math.round(selectedCitations.reduce((sum, citation) => sum + citation.confidence, 0) / selectedCitations.length)
+    : selectedEvidenceQuality.length
+      ? Math.round(selectedEvidenceQuality.reduce((sum, score) => sum + score.confidence, 0) / selectedEvidenceQuality.length)
+      : 0;
+  const weakClaims = [
+    ...(selectedEvidenceQuality.filter((score) => score.grade === "weak" || score.grade === "unsupported").map((score) => score.notes.join(" "))),
+    ...((selectedProposal?.risks.filter((risk) => /assumption|weak|validate|manual|platform/i.test(risk))) ?? []),
+  ].filter(Boolean);
   const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
   const firstRun = data.missionRuns[0];
   const firstDraft = data.missionDrafts[0];
@@ -216,6 +234,53 @@ export function MissionBriefWorkbench() {
                 huntId={selectedProposal.huntId}
                 compact
               />
+              <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/8 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-emerald-100">Research Confidence Report</p>
+                    <h3 className="mt-2 font-display text-xl font-semibold text-stone-50">{averageConfidence}/100 evidence confidence</h3>
+                  </div>
+                  <Badge tone="emerald">safe public reads only</Badge>
+                </div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Query plan preview</p>
+                    <div className="mt-2 space-y-1 text-sm text-slate-300">
+                      {(selectedQueryPlan?.queries ?? ["zero budget online business validation", "low cost SEO content opportunity"]).slice(0, 4).map((query) => (
+                        <p key={query}>- {query}</p>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Source quality and freshness</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      {selectedCitations.length} citations, {uniqueSourceUrls.size} unique URLs, {duplicateCount} duplicates filtered. Average confidence {averageConfidence}/100.
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="text-xs font-semibold uppercase text-slate-500">Weak claim detection</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-300">
+                      {weakClaims.length ? `${weakClaims.length} claims/risks need validation before launch.` : "No unsupported income or platform claims were accepted as proof."}
+                    </p>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                  <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-teal-100">Why the winner won</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-200">
+                      {selectedCandidates.find((candidate) => candidate.status === "winner")?.whyItMightWin.join(" ") ?? selectedProposal.whyMightWork.join(" ")}
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-amber-100">What must be validated next</p>
+                    <div className="mt-2 space-y-1 text-sm text-slate-200">
+                      {(weakClaims.length ? weakClaims : selectedProposal.nextActions).slice(0, 4).map((item) => (
+                        <p key={item}>- {item}</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
               {selectedCandidates.length > 0 ? (
                 <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
