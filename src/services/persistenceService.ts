@@ -1412,6 +1412,55 @@ function ensureRealityReceipts(state: AppDataState) {
   }
 }
 
+function ensureAgentEvidenceTrails(state: AppDataState) {
+  state.agentEvidenceTrails ??= [];
+  state.agentEvidenceItems ??= [];
+  for (const task of state.businessTasks) {
+    const trailId = task.evidenceTrailId ?? `evidence-trail-${task.id}`;
+    const itemId = `evidence-item-${task.id}`;
+    const proposal = task.proposalId ? state.businessProposals.find((item) => item.id === task.proposalId) : undefined;
+    const realityMode =
+      task.approvalRequired
+        ? "pending_external_approval"
+        : task.currentSource?.startsWith("http")
+          ? "real_public_read"
+          : task.status === "blocked"
+            ? "external_action_blocked"
+            : "real_local";
+    if (!state.agentEvidenceItems.some((item) => item.id === itemId)) {
+      state.agentEvidenceItems.push({
+        id: itemId,
+        trailId,
+        agentId: task.agentId,
+        inputPrompt: task.objective,
+        outputArtifact: task.currentArtifact || task.expectedOutput,
+        citationIds: proposal?.evidenceCitationIds ?? [],
+        logRefs: task.logs,
+        nextHandoffAgent: task.status === "done" ? "TeamLeader1A" : undefined,
+        realityMode,
+        createdAt: task.startedAt ?? task.updatedAt,
+      });
+    }
+    if (!state.agentEvidenceTrails.some((trail) => trail.id === trailId)) {
+      state.agentEvidenceTrails.push({
+        id: trailId,
+        businessId: task.businessId,
+        proposalId: task.proposalId,
+        huntId: task.huntId,
+        agentId: task.agentId,
+        title: task.title,
+        summary: task.expectedOutput,
+        itemIds: [itemId],
+        status: task.status === "blocked" ? "failed" : task.status === "done" ? "complete" : "running",
+        realityMode,
+        createdAt: task.startedAt ?? task.updatedAt,
+        updatedAt: task.completedAt ?? task.updatedAt,
+      });
+    }
+    task.evidenceTrailId = trailId;
+  }
+}
+
 function normalizePhase6BState(state: AppDataState) {
   state.missionDrafts ??= [];
   state.missionRuns ??= [];
@@ -1523,6 +1572,7 @@ function normalizePhase6BState(state: AppDataState) {
   });
   ensureProductPreviewRecords(state);
   ensureRenderedProductPreviewRecords(state);
+  ensureAgentEvidenceTrails(state);
   ensureRealityReceipts(state);
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;

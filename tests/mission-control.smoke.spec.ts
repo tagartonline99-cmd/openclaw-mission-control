@@ -36,10 +36,15 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByRole("heading", { name: "Watch the agents work" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Research Library/i })).toBeVisible();
   await expect(page.getByText(/research beam|pulse|forge/i).first()).toBeVisible();
+  await page.getByRole("button", { name: /Research Library/i }).click();
+  await expect(page.getByText("Agent Evidence Trail").first()).toBeVisible();
 
   await page.goto("/#/mission-briefs", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
   await expect(page.getByText("Business Proposal Review")).toBeVisible();
+  await expect(page.getByText("Agent Evidence Trail").first()).toBeVisible();
+  await expect(page.getByText("Assigned prompt").first()).toBeVisible();
+  await expect(page.getByText("Output artifact").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: /Business Proposal:/i })).toBeVisible();
   await expect(page.getByText("Top 3 + Winner")).toBeVisible();
   await expect(page.getByText("Safe browser evidence")).toBeVisible();
@@ -108,7 +113,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Product Preview Renderer release/i)).toBeVisible();
+  await expect(page.getByText(/Agent Evidence Trails release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

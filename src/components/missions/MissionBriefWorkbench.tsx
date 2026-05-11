@@ -8,6 +8,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Progress } from "../ui/progress";
+import { AgentEvidenceTrailPanel } from "../evidence/AgentEvidenceTrailPanel";
 
 function label(value: string) {
   return value.replace(/_/g, " ");
@@ -209,6 +210,12 @@ export function MissionBriefWorkbench() {
                 <p className="text-xs font-semibold uppercase text-slate-500">TeamLeader1A recommendation</p>
                 <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.teamLeaderRecommendation}</p>
               </div>
+              <AgentEvidenceTrailPanel
+                proposalId={selectedProposal.id}
+                businessId={selectedApprovedBusiness?.id}
+                huntId={selectedProposal.huntId}
+                compact
+              />
               {selectedCandidates.length > 0 ? (
                 <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">

@@ -7,6 +7,7 @@ import { formatDateTime } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Progress } from "../ui/progress";
+import { AgentEvidenceTrailPanel } from "../evidence/AgentEvidenceTrailPanel";
 
 const stationIcons: Record<string, React.ReactNode> = {
   "station-teamleader": <Crown className="h-5 w-5 text-amber-100" />,
@@ -140,6 +141,9 @@ export function GuildOffice() {
                     No active task is attached to this station yet.
                   </div>
                 )}
+                {selectedTask ? (
+                  <AgentEvidenceTrailPanel trailId={selectedTask.evidenceTrailId} taskId={selectedTask.id} compact embedded />
+                ) : null}
                 <p className="text-xs text-slate-500">Updated {formatDateTime(selectedStation.updatedAt)}</p>
               </>
             ) : null}
