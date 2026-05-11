@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, BriefcaseBusiness, CheckCircle2, ExternalLink, FileText, Lock, PackageCheck, Play, RotateCcw, ShieldCheck, SkipForward, Sparkles, WalletCards, Workflow, XCircle } from "lucide-react";
+import { AlertTriangle, BriefcaseBusiness, CheckCircle2, ExternalLink, FileText, Lock, PackageCheck, Play, RotateCcw, Search, ShieldCheck, SkipForward, Sparkles, WalletCards, Workflow, Wrench, XCircle } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
 import type { MissionAgentStep, MissionDraftStepPlan } from "../../types";
 import { formatCurrency, formatDateTime, statusTone } from "../../utils/formatting";
@@ -43,6 +43,7 @@ export function MissionBriefWorkbench() {
     preparePlatformPublishApproval,
     exportObsidianNote,
     revealExportedPath,
+    sendTeamLeaderChatMessage,
   } = useAppData();
   const [params, setParams] = useSearchParams();
   const requestedRunId = params.get("run");
@@ -81,6 +82,7 @@ export function MissionBriefWorkbench() {
   const selectedProposalGate = selectedProposal ? data.proposalSubmissionGates.find((gate) => gate.proposalId === selectedProposal.id) : undefined;
   const selectedResearchFetches = selectedResearchRun ? data.publicResearchFetches.filter((fetch) => selectedResearchRun.fetchIds.includes(fetch.id)) : [];
   const selectedBrowserRun = selectedResearchRun?.browserResearchRunId ? data.browserResearchRuns.find((run) => run.id === selectedResearchRun.browserResearchRunId) : undefined;
+  const selectedBrowserFetches = selectedBrowserRun ? data.browserResearchFetches.filter((fetch) => selectedBrowserRun.fetchIds.includes(fetch.id)) : [];
   const selectedBrowserArtifacts = selectedBrowserRun ? data.browserResearchArtifacts.filter((artifact) => selectedBrowserRun.artifactIds.includes(artifact.id)) : [];
   const selectedBrowserReceipts = selectedBrowserRun ? data.browserSafetyReceipts.filter((receipt) => selectedBrowserRun.safetyReceiptIds.includes(receipt.id)) : [];
   const selectedQueryPlan = selectedProposal
@@ -98,8 +100,65 @@ export function MissionBriefWorkbench() {
     ...((selectedProposal?.risks.filter((risk) => /assumption|weak|validate|manual|platform/i.test(risk))) ?? []),
   ].filter(Boolean);
   const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
-  const factCheckBlocks = selectedProposalGate && selectedProposalGate.status !== "proposal_ready" ? selectedProposalGate.missingRequirements : [];
-  const canApproveBusiness = selectedProposal?.status === "ready_for_review" && (selectedProposalGate?.status === "proposal_ready" || !selectedProposalGate) && budgetBlockers.length === 0;
+  const selectedProposalTasks = selectedProposal ? data.businessTasks.filter((task) => task.huntId === selectedProposal.huntId) : [];
+  const proposalWorkComplete = selectedProposalTasks.length > 0 && selectedProposalTasks.every((task) => task.status === "done");
+  const rawFactCheckBlocks = selectedProposalGate && selectedProposalGate.status !== "proposal_ready" ? selectedProposalGate.missingRequirements : [];
+  const excludedEvidenceOnlyBlocks = rawFactCheckBlocks.filter((reason) => /fiverr produced|challenge-style page|cannot be used as proof by itself/i.test(reason));
+  const factCheckBlocks = rawFactCheckBlocks.filter((reason) => !excludedEvidenceOnlyBlocks.includes(reason));
+  const legacyExcludedEvidenceReady =
+    excludedEvidenceOnlyBlocks.length > 0 &&
+    factCheckBlocks.length === 0 &&
+    !!selectedFactCheckRun &&
+    selectedFactCheckRun.validEvidenceCount >= selectedFactCheckRun.requiredValidSources &&
+    selectedFactCheckRun.uniqueDomainCount >= selectedFactCheckRun.requiredDomains;
+  const effectiveProposalGateReady = selectedProposalGate?.status === "proposal_ready" || !selectedProposalGate || legacyExcludedEvidenceReady;
+  const proposalReviewReady = selectedProposal?.status === "ready_for_review" || (selectedProposal?.status === "drafting" && proposalWorkComplete && effectiveProposalGateReady);
+  const canApproveBusiness = !!proposalReviewReady && effectiveProposalGateReady && budgetBlockers.length === 0;
+  const approvalReadinessLabel =
+    canApproveBusiness
+      ? "Approval Ready"
+      : selectedProposalGate?.status === "blocked"
+        ? "Blocked"
+        : selectedProposal
+          ? "Draft Needs Evidence Repair"
+          : "No Draft";
+  const approvalReadinessTone = canApproveBusiness ? "emerald" : selectedProposalGate?.status === "blocked" ? "red" : "amber";
+  const invalidEvidenceRecords = [
+    ...selectedTavilyResults
+      .filter((result) => result.status !== "valid")
+      .map((result) => ({
+        id: result.id,
+        title: result.title,
+        url: result.url,
+        reason: result.invalidReason ?? `Tavily marked this source as ${result.status}.`,
+        claimImpact: result.url.includes("fiverr.com")
+          ? "Excluded from Fiverr/platform claim support. Replace it with readable Fiverr help, policy, category, or competitor evidence if needed."
+          : "Excluded from claim support until a readable replacement source is found.",
+        replacementQuery: result.url.includes("fiverr.com")
+          ? "Fiverr help gig requirements AI services marketplace policy"
+          : `replacement evidence for ${result.title}`,
+      })),
+    ...selectedResearchFetches
+      .filter((fetch) => fetch.status !== "fetched")
+      .map((fetch) => ({
+        id: fetch.id,
+        title: fetch.title ?? fetch.url,
+        url: fetch.url,
+        reason: fetch.error ?? `Public research fetch ended as ${fetch.status}.`,
+        claimImpact: "Excluded from claim support because the public read did not return usable text.",
+        replacementQuery: `readable public source for ${fetch.title ?? fetch.url}`,
+      })),
+    ...selectedBrowserFetches
+      .filter((fetch) => fetch.status !== "captured")
+      .map((fetch) => ({
+        id: fetch.id,
+        title: fetch.title ?? fetch.url,
+        url: fetch.url,
+        reason: fetch.error ?? `Browser broker ended as ${fetch.status}.`,
+        claimImpact: "Excluded from screenshot/browser evidence. Text-only evidence can still support claims if it is readable.",
+        replacementQuery: `browser readable replacement for ${fetch.title ?? fetch.url}`,
+      })),
+  ].slice(0, 12);
   const primaryDestination = selectedProposalDestinations[0];
   const primaryPlatformPackage = selectedPlatformPackages[0];
   const primaryPlatformRequirement = selectedPlatformRequirements[0];
@@ -109,6 +168,7 @@ export function MissionBriefWorkbench() {
   const firstDraft = data.missionDrafts[0];
   const initialId = requestedRunId ?? requestedDraftId ?? firstRun?.id ?? firstDraft?.id ?? "";
   const [selectedId, setSelectedId] = useState(initialId);
+  const [repairNotice, setRepairNotice] = useState("");
 
   const draftFromSelection = useMemo(
     () => data.missionDrafts.find((draft) => draft.id === (requestedDraftId ?? selectedId)) ?? data.missionDrafts.find((draft) => draft.id === selectedId),
@@ -191,6 +251,18 @@ export function MissionBriefWorkbench() {
     });
   }
 
+  function requestEvidenceRepair(kind: "replacement" | "retry" | "no_fiverr", recordTitle?: string) {
+    if (!selectedProposal) return;
+    const instruction =
+      kind === "no_fiverr"
+        ? `Retry safe Tavily public research for "${selectedProposal.recommendedIdea}" without Fiverr marketplace/challenge pages. Prefer readable Fiverr help or policy pages only if needed, plus competitor examples, buyer-pain forums, platform policy docs, and SEO demand evidence.`
+        : kind === "retry"
+          ? `Retry Tavily research for "${selectedProposal.recommendedIdea}" and replace excluded or invalid evidence. Keep it public read-only and do not publish, spend, log in, message, submit forms, or use connector automation.`
+          : `Find replacement evidence for "${selectedProposal.recommendedIdea}" to repair this source: ${recordTitle ?? "invalid source"}. Use safe public Tavily research and provide citations before changing approval readiness.`;
+    setRepairNotice("TeamLeader1A is starting a safe public evidence repair pass. No external action will run.");
+    void sendTeamLeaderChatMessage(instruction, { opportunityHuntDepth: selectedResearchRun?.depth ?? "fast" });
+  }
+
   return (
     <div className="space-y-5">
       <Card>
@@ -242,10 +314,46 @@ export function MissionBriefWorkbench() {
                 <p className="text-xs font-semibold uppercase text-slate-500">TeamLeader1A recommendation</p>
                 <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.teamLeaderRecommendation}</p>
               </div>
+              <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase text-slate-500">Proposal Draft Status</p>
+                    <h3 className="mt-2 font-display text-xl font-semibold text-stone-50">Here is the proposal draft</h3>
+                    <p className="mt-2 max-w-5xl text-sm leading-6 text-slate-300">
+                      The draft stays visible even when FactCheck needs repair. Approval is enabled only when required claims, budget, and platform boundaries pass.
+                    </p>
+                  </div>
+                  <Badge tone={approvalReadinessTone}>{approvalReadinessLabel}</Badge>
+                </div>
+                <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                  <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-emerald-100">Ready</p>
+                    <p className="mt-2 text-sm leading-6 text-slate-200">
+                      Product draft, zero-budget path, TeamLeader summary, and local-only approval boundary are visible for review.
+                    </p>
+                  </div>
+                  <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-amber-100">Not ready</p>
+                    <div className="mt-2 space-y-1 text-sm leading-6 text-slate-200">
+                      {[...factCheckBlocks, ...budgetBlockers].length > 0 ? (
+                        [...factCheckBlocks, ...budgetBlockers].slice(0, 3).map((reason) => <p key={reason}>- {reason}</p>)
+                      ) : (
+                        <p>No blocking gaps are active. You can review and approve the business if the proposal makes sense.</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-red-100">External boundary</p>
+                    <p className="mt-2 text-sm leading-6 text-red-100">
+                      Approving this business still will not publish, spend, log in, send messages, submit forms, purchase, or execute connectors.
+                    </p>
+                  </div>
+                </div>
+              </div>
               <div className="rounded-lg border border-teal-300/25 bg-teal-400/8 p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <p className="text-xs font-semibold uppercase text-teal-100">Full Proposal</p>
+                    <p className="text-xs font-semibold uppercase text-teal-100">Proposal Draft / Full Proposal</p>
                     <h3 className="mt-2 font-display text-2xl font-semibold text-stone-50">{selectedProposal.recommendedIdea}</h3>
                     <p className="mt-2 max-w-5xl text-sm leading-6 text-slate-200">{selectedProposal.summary}</p>
                   </div>
@@ -363,17 +471,17 @@ export function MissionBriefWorkbench() {
                 </div>
               </div>
               {selectedFactCheckRun ? (
-                <div className={`rounded-lg border p-4 ${selectedProposalGate?.status === "proposal_ready" ? "border-emerald-300/20 bg-emerald-400/8" : "border-red-300/25 bg-red-500/8"}`}>
+                <div className={`rounded-lg border p-4 ${effectiveProposalGateReady ? "border-emerald-300/20 bg-emerald-400/8" : selectedProposalGate?.status === "blocked" ? "border-red-300/25 bg-red-500/8" : "border-amber-300/25 bg-amber-400/8"}`}>
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
                       <p className="text-xs font-semibold uppercase text-slate-500">FactCheck Station</p>
                       <h3 className="mt-2 font-display text-xl font-semibold text-stone-50">
-                        {selectedProposalGate?.status === "proposal_ready" ? "Proposal gate passed" : "No proposal yet"}
+                        {effectiveProposalGateReady ? "Proposal gate passed" : selectedProposalGate?.status === "blocked" ? "Proposal blocked" : "Draft needs evidence repair"}
                       </h3>
                       <p className="mt-2 text-sm leading-6 text-slate-200">{selectedFactCheckRun.summary}</p>
                     </div>
-                    <Badge tone={selectedProposalGate?.status === "proposal_ready" ? "emerald" : "red"}>
-                      {selectedProposalGate?.status.replace(/_/g, " ") ?? selectedFactCheckRun.status.replace(/_/g, " ")}
+                    <Badge tone={effectiveProposalGateReady ? "emerald" : selectedProposalGate?.status === "blocked" ? "red" : "amber"}>
+                      {effectiveProposalGateReady ? "proposal ready" : selectedProposalGate?.status.replace(/_/g, " ") ?? selectedFactCheckRun.status.replace(/_/g, " ")}
                     </Badge>
                   </div>
                   <div className="mt-4 grid gap-3 md:grid-cols-4">
@@ -395,8 +503,8 @@ export function MissionBriefWorkbench() {
                     </div>
                   </div>
                   {factCheckBlocks.length > 0 ? (
-                    <div className="mt-4 rounded-md border border-red-300/25 bg-red-500/10 p-3 text-sm leading-6 text-red-100">
-                      <p className="font-semibold">Why no approval-ready proposal yet</p>
+                    <div className="mt-4 rounded-md border border-amber-300/25 bg-amber-500/10 p-3 text-sm leading-6 text-amber-100">
+                      <p className="font-semibold">What must be fixed before approval</p>
                       {factCheckBlocks.map((reason) => <p key={reason}>- {reason}</p>)}
                     </div>
                   ) : null}
@@ -410,6 +518,79 @@ export function MissionBriefWorkbench() {
                         <p className="mt-2 text-xs leading-5 text-slate-400">{claim.notes}</p>
                       </div>
                     ))}
+                  </div>
+                </div>
+              ) : null}
+              {(invalidEvidenceRecords.length > 0 || factCheckBlocks.length > 0 || excludedEvidenceOnlyBlocks.length > 0) ? (
+                <div className="rounded-lg border border-amber-300/25 bg-amber-400/8 p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-amber-100">Fix Evidence</p>
+                      <h3 className="mt-2 font-display text-xl font-semibold text-stone-50">Excluded / Invalid Evidence</h3>
+                      <p className="mt-2 max-w-5xl text-sm leading-6 text-slate-300">
+                        Bad pages are excluded from claims instead of hiding the proposal. Repair only the sources or claims that are required for approval.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" variant="secondary" onClick={() => requestEvidenceRepair("retry")}>
+                        <Search className="h-4 w-4" />
+                        Retry Tavily Search
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => requestEvidenceRepair("no_fiverr")}>
+                        <Wrench className="h-4 w-4" />
+                        Retry Without Fiverr Sources
+                      </Button>
+                    </div>
+                  </div>
+                  {repairNotice ? (
+                    <div className="mt-3 rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">{repairNotice}</div>
+                  ) : null}
+                  {factCheckBlocks.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-amber-300/20 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Required repair before approval</p>
+                      <div className="mt-2 space-y-1 text-sm leading-6 text-amber-100">
+                        {factCheckBlocks.map((reason) => <p key={reason}>- {reason}</p>)}
+                      </div>
+                    </div>
+                  ) : null}
+                  {excludedEvidenceOnlyBlocks.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm leading-6 text-teal-100">
+                      <p className="font-semibold">Excluded evidence warning</p>
+                      {excludedEvidenceOnlyBlocks.map((reason) => <p key={reason}>- {reason} It has been excluded from claim support and is no longer a full proposal blocker.</p>)}
+                    </div>
+                  ) : null}
+                  <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                    {invalidEvidenceRecords.length > 0 ? (
+                      invalidEvidenceRecords.map((record) => (
+                        <div key={record.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                          <div className="flex flex-wrap items-start justify-between gap-2">
+                            <div>
+                              <p className="text-sm font-semibold text-stone-100">{record.title}</p>
+                              <a className="mt-1 block break-all text-xs text-teal-100 hover:text-teal-50" href={record.url}>{record.url}</a>
+                            </div>
+                            <Badge tone="red">excluded</Badge>
+                          </div>
+                          <p className="mt-3 text-xs font-semibold uppercase text-slate-500">Reason invalid</p>
+                          <p className="mt-1 text-sm leading-6 text-red-100">{record.reason}</p>
+                          <p className="mt-3 text-xs font-semibold uppercase text-slate-500">Claim impact</p>
+                          <p className="mt-1 text-sm leading-6 text-slate-300">{record.claimImpact}</p>
+                          <p className="mt-3 text-xs font-semibold uppercase text-slate-500">Suggested replacement query</p>
+                          <p className="mt-1 text-sm leading-6 text-amber-100">{record.replacementQuery}</p>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setRepairNotice("This source is already excluded from FactCheck claim support. It will not be used as proof.")}>
+                              Exclude This Source
+                            </Button>
+                            <Button size="sm" variant="secondary" onClick={() => requestEvidenceRepair("replacement", record.title)}>
+                              Find Replacement Evidence
+                            </Button>
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="rounded-md border border-white/10 bg-black/25 p-3 text-sm leading-6 text-slate-300">
+                        No invalid source records are attached. Repair the required claim or budget gap above.
+                      </div>
+                    )}
                   </div>
                 </div>
               ) : null}

@@ -20,7 +20,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
     .fill("find me the best online business idea with zero budget");
   await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
   await expect(page.getByText(/I started a fast Tavily-backed opportunity hunt/i)).toBeVisible();
-  await expect(page.getByText(/FactCheck cleared proposal submission|FactCheck is blocking proposal submission/i)).toBeVisible();
+  await expect(page.getByText(/FactCheck cleared proposal submission|I still created a proposal draft/i)).toBeVisible();
   await expect(page.getByText(/View Work/i).first()).toBeVisible();
 
   await page.goto("/#/tasks", { waitUntil: "domcontentloaded" });
@@ -47,6 +47,8 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Output artifact").first()).toBeVisible();
   await expect(page.getByText("Research Confidence Report").first()).toBeVisible();
   await expect(page.getByText("FactCheck Station").first()).toBeVisible();
+  await expect(page.getByText("Proposal Draft Status")).toBeVisible();
+  await expect(page.getByText("Here is the proposal draft")).toBeVisible();
   await expect(page.getByText("Full Proposal")).toBeVisible();
   await expect(page.getByText("Who it is for")).toBeVisible();
   await expect(page.getByText("What the product is")).toBeVisible();
@@ -142,7 +144,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Release And Updater Checklist")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Full proposal visibility release/i)).toBeVisible();
+  await expect(page.getByText(/FactCheck evidence triage release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {
@@ -154,6 +156,10 @@ test("Fiverr prompt still creates a locked local platform package", async ({ pag
   await expect(page.getByText(/I started a fast Tavily-backed opportunity hunt/i)).toBeVisible();
   await page.goto("/#/mission-briefs", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: /Business Proposal: Fiverr AI Workflow Gig/i })).toBeVisible();
+  await expect(page.getByText("Proposal Draft Status")).toBeVisible();
+  await expect(page.getByText("Here is the proposal draft")).toBeVisible();
+  await expect(page.getByText("Excluded / Invalid Evidence")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Find Replacement Evidence/i }).first()).toBeVisible();
   await expect(page.getByText("External platform/account needs")).toBeVisible();
   await expect(page.getByText(/User login required: yes/i)).toBeVisible();
   await expect(page.getByText(/Credentials stored: no/i)).toBeVisible();

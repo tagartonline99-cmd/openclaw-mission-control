@@ -145,7 +145,7 @@ export const tavilyService = {
           ...source,
           score:
             source.score +
-            (lower.includes("fiverr") && source.url.includes("fiverr") ? 0.08 : 0) +
+            (lower.includes("fiverr") && source.url.includes("fiverr") ? 0.2 : 0) +
             (lower.includes("template") && source.url.includes("notion") ? 0.08 : 0) +
             (lower.includes("freelancer") && source.title.toLowerCase().includes("freelancer") ? 0.08 : 0),
         }))
@@ -175,7 +175,7 @@ export const tavilyService = {
             url,
             title: source?.title ?? "Public source",
             rawContent: isFiverr
-              ? "Fiverr marketplace category context. If a browser challenge appears, the page must be invalidated by FactCheck."
+              ? "Fiverr marketplace category context. It needs a human touch. Loading challenge. This browser-preview source simulates an anti-bot challenge so FactCheck can exclude it instead of using it as proof."
               : `${source?.content ?? "Readable public source content."} Evidence should be cited and checked for weak claims.`,
             content: source?.content ?? "Readable public source content.",
             excerpt: source?.content ?? "Readable public source content.",

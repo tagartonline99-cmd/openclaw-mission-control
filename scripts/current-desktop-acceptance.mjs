@@ -228,7 +228,7 @@ async function main() {
     await click(client, "Send to TeamLeader1A");
     await waitFor(
       client,
-      `document.body.innerText.includes(${JSON.stringify(stamp)}) && document.body.innerText.includes('I started a quick Tavily-backed opportunity hunt') && (document.body.innerText.includes('FactCheck cleared proposal submission') || document.body.innerText.includes('FactCheck is blocking proposal submission'))`,
+      `document.body.innerText.includes(${JSON.stringify(stamp)}) && document.body.innerText.includes('I started a quick Tavily-backed opportunity hunt') && (document.body.innerText.includes('FactCheck cleared proposal submission') || document.body.innerText.includes('I still created a proposal draft'))`,
       "quick opportunity hunt result",
       180_000,
     );
@@ -245,7 +245,7 @@ async function main() {
     await route(client, "/mission-briefs", "Business Proposal Review");
     await waitFor(
       client,
-      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('factcheck station') && text.includes('tavily api research') && text.includes('top 3 + winner') && text.includes('safe browser evidence') && text.includes('safe-browser-public-read'); })()",
+      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('proposal draft status') && text.includes('factcheck station') && text.includes('tavily api research') && text.includes('top 3 + winner') && text.includes('safe browser evidence') && text.includes('safe-browser-public-read'); })()",
       "mission brief browser evidence",
     );
 
@@ -313,7 +313,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('full proposal visibility release')", `${expectedVersion} updater marker`);
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('factcheck evidence triage release')", `${expectedVersion} updater marker`);
     evidence.appVersion = await waitFor(
       client,
       `(async () => {

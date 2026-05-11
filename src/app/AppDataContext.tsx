@@ -1994,20 +1994,30 @@ function buildOpportunityHuntState(
     (publicResearch?.browserResearch?.fetches.filter((fetch) => fetch.status !== "captured").length ?? 0);
   const evidenceCountForGate = Math.max(validTavilyResults.length, validCitationCount);
   const sourceQualityScore = clampScore(Math.round((evidenceCountForGate / Math.max(requiredEvidence.validSources, 1)) * 55 + (uniqueDomains.size / Math.max(requiredEvidence.domains, 1)) * 35 + (winningScorecard?.evidenceScore ?? 60) * 0.1));
-  const factCheckBlockingReasons = [
+  const invalidFiverrResults = invalidTavilyResults.filter((result) => result.url.includes("fiverr.com"));
+  const validFiverrResults = validTavilyResults.filter((result) => result.url.includes("fiverr.com"));
+  const validNonFiverrResults = validTavilyResults.filter((result) => !result.url.includes("fiverr.com"));
+  const sourceBlockingReasons = [
     evidenceCountForGate < requiredEvidence.validSources
       ? `${depthLabel(depth)} research needs at least ${requiredEvidence.validSources} valid readable sources; found ${evidenceCountForGate}.`
       : "",
     uniqueDomains.size < requiredEvidence.domains
       ? `${depthLabel(depth)} research needs at least ${requiredEvidence.domains} unique domains; found ${uniqueDomains.size}.`
       : "",
-    budgetPlan.approvalBlockers.length ? budgetPlan.approvalBlockers.join(" ") : "",
-    validTavilyResults.some((result) => result.url.includes("fiverr.com")) && invalidTavilyResults.some((result) => result.url.includes("fiverr.com"))
-      ? "Fiverr produced at least one invalid or challenge-style page; it cannot be used as proof by itself."
+  ].filter(Boolean);
+  const criticalClaimBlockingReasons = [
+    fiverrMode && invalidFiverrResults.length > 0 && validFiverrResults.length === 0 && validNonFiverrResults.length === 0 && validCitationCount === 0
+      ? "The Fiverr/platform claim depends only on invalid or challenge-style evidence. Replace it with readable sources before approval."
       : "",
+  ].filter(Boolean);
+  const factCheckBlockingReasons = [
+    ...sourceBlockingReasons,
+    budgetPlan.approvalBlockers.length ? budgetPlan.approvalBlockers.join(" ") : "",
+    ...criticalClaimBlockingReasons,
   ].filter(Boolean);
   const factCheckWarningReasons = [
     invalidEvidenceCount > 0 ? `${invalidEvidenceCount} source(s) failed, duplicated, or were blocked and cannot support claims.` : "",
+    invalidFiverrResults.length > 0 ? `${invalidFiverrResults.length} Fiverr challenge/source(s) were excluded from claim support. They are repair items, not proof.` : "",
     fiverrMode ? "Fiverr requires manual account login and exact publishing approval; marketplace visibility is not guaranteed." : "",
   ].filter(Boolean);
   const factCheckStatus: FactCheckRun["status"] =
@@ -2022,10 +2032,10 @@ function buildOpportunityHuntState(
       id: id("fact-check-claim"),
       factCheckRunId,
       claim: "There is enough public demand evidence to submit a proposal.",
-      status: factCheckBlockingReasons.some((reason) => reason.includes("valid readable sources") || reason.includes("unique domains")) ? "unsupported" : "supported",
+      status: sourceBlockingReasons.length > 0 ? "unsupported" : "supported",
       supportedByCitationIds: (publicResearch?.citations ?? []).slice(0, 5).map((citation) => citation.id),
       rejectedBySourceIds: invalidTavilyResults.map((result) => result.id),
-      notes: factCheckBlockingReasons.length ? "Demand evidence is still too thin for a proposal-ready decision." : "Demand evidence clears the minimum source/domain gate for a proposal review.",
+      notes: sourceBlockingReasons.length ? "Demand evidence is still too thin for an approval-ready decision." : "Demand evidence clears the minimum source/domain gate for a proposal review.",
       createdAt: now,
     },
     {
@@ -2069,7 +2079,7 @@ function buildOpportunityHuntState(
     claimIds: factCheckClaims.map((claim) => claim.id),
     summary:
       factCheckStatus === "failed"
-        ? `No proposal yet. FactCheck found ${factCheckBlockingReasons.length} blocking issue(s).`
+        ? `Proposal draft needs evidence repair. FactCheck found ${factCheckBlockingReasons.length} blocking issue(s).`
         : `FactCheck ${factCheckStatus === "passed_with_warnings" ? "passed with warnings" : "passed"} with ${evidenceCountForGate} valid sources across ${uniqueDomains.size} domains.`,
     startedAt: now,
     completedAt: now,
@@ -2475,7 +2485,7 @@ function syncGuildStations(state: AppDataState) {
         ...station,
         status: latest.status === "failed" || latest.status === "blocked" ? "blocked" as const : "review" as const,
         motion: latest.status === "failed" || latest.status === "blocked" ? "blocked" as const : "review" as const,
-        currentTask: latest.status === "failed" ? "FactCheck blocked proposal submission." : "FactCheck verified proposal evidence.",
+        currentTask: latest.status === "failed" ? "FactCheck marked the draft for evidence repair." : "FactCheck verified proposal evidence.",
         lastOutput: latest.summary,
         progress: latest.status === "failed" ? Math.min(latest.sourceQualityScore, 69) : Math.max(latest.sourceQualityScore, 80),
         updatedAt: latest.completedAt ?? latest.startedAt,
@@ -2586,7 +2596,7 @@ function advanceOpportunityWorkState(current: AppDataState): AppDataState | null
             currentPhase: allDone
               ? proposalReady
                 ? "FactCheck passed. TeamLeader1A finished the proposal. Review it in Mission Briefs."
-                : "FactCheck blocked proposal submission. Review Mission Briefs for why no proposal yet."
+                : "A proposal draft exists, but FactCheck needs evidence repair before approval."
               : `${doneCount}/${huntTasks.length} agent tasks complete. Agents are still working.`,
             updatedAt: now,
           }
@@ -2601,11 +2611,11 @@ function advanceOpportunityWorkState(current: AppDataState): AppDataState | null
       {
         id: id("log-opportunity-tick"),
         category: "agent",
-        title: allDone && !proposalReady ? "FactCheck blocked proposal submission" : allDone ? "Business proposal ready" : "Agents advanced opportunity hunt",
+        title: allDone && !proposalReady ? "Proposal draft needs evidence repair" : allDone ? "Business proposal ready" : "Agents advanced opportunity hunt",
         detail: allDone
           ? proposalReady
             ? "TeamLeader1A has a complete FactCheck-cleared business proposal ready for review. No external action ran."
-            : `${gate?.reason ?? "FactCheck blocked proposal submission."} No external action ran.`
+            : `${gate?.reason ?? "FactCheck marked the proposal draft for evidence repair."} No external action ran.`
           : `${doneCount}/${huntTasks.length} tasks complete in the active TeamLeader work session.`,
         severity: allDone && !proposalReady ? "warning" : allDone ? "success" : "info",
         createdAt: now,
@@ -5172,7 +5182,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             content:
               built.proposalSubmissionGate.status === "proposal_ready"
                 ? `I started a ${depthLabel(selectedDepth).toLowerCase()} Tavily-backed opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. FactCheck cleared proposal submission with ${built.factCheckRun.validEvidenceCount} valid source(s) across ${built.factCheckRun.uniqueDomainCount} domain(s), so I will show the Top 3 + Winner before anything external happens.`
-                : `I started a ${depthLabel(selectedDepth).toLowerCase()} Tavily-backed opportunity hunt for "${trimmed}", but FactCheck is blocking proposal submission for now: ${built.factCheckRun.blockingReasons.join(" ")} Check Mission Briefs for "No proposal yet" and the exact evidence gaps.`,
+                : `I started a ${depthLabel(selectedDepth).toLowerCase()} Tavily-backed opportunity hunt for "${trimmed}". I still created a proposal draft, but FactCheck marked it as needing evidence repair before approval: ${built.factCheckRun.blockingReasons.join(" ")} Check Mission Briefs for the proposal draft and repair steps.`,
             createdAt: now,
             mode: "local",
             relatedOpportunityHuntId: built.hunt.id,
@@ -5183,7 +5193,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             id: id("log-opportunity-hunt"),
             category: "agent",
-            title: built.proposalSubmissionGate.status === "proposal_ready" ? "TeamLeader1A started opportunity hunt" : "FactCheck blocked proposal submission",
+            title: built.proposalSubmissionGate.status === "proposal_ready" ? "TeamLeader1A started opportunity hunt" : "Proposal draft needs evidence repair",
             detail: `${depthLabel(selectedDepth)} Tavily/public research created ${publicResearch.tavily.results.length} Tavily results, ${publicResearch.citations.length} citations, ${publicResearch.browserResearch.artifacts.length} brokered browser artifacts, and ${publicResearch.candidates.length} candidate ideas. FactCheck: ${built.factCheckRun.summary}. No publishing, messaging, spending, launch, login automation, form submission, or external connector action ran.`,
             severity: built.proposalSubmissionGate.status === "proposal_ready" ? "success" : "warning",
             createdAt: now,
