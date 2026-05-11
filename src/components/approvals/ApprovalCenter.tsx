@@ -127,7 +127,7 @@ function PayloadCard({ request, publishPayloadPreview }: { request: ApprovalRequ
 
 export function ApprovalCenter() {
   const { data, updateApprovalStatus } = useAppData();
-  const { approvalRequests, approvalDecisionRecords, openClawCommands, quests, publishPayloadPreviews, approvalGateStates, approvedBusinesses } = data;
+  const { approvalRequests, approvalDecisionRecords, openClawCommands, quests, publishPayloadPreviews, approvalGateStates, approvedBusinesses, approvalActionHints } = data;
   const [selected, setSelected] = useState<ApprovalRequest | null>(null);
   const [statusFilter, setStatusFilter] = useState("all");
   const [actionFilter, setActionFilter] = useState("all");
@@ -144,7 +144,16 @@ export function ApprovalCenter() {
 
   const pendingRequests = filteredRequests.filter((request) => request.status === "pending");
   const nonPendingRequests = filteredRequests.filter((request) => request.status !== "pending");
-  const lockedGateStates = approvalGateStates.filter((gate) => ["locked", "needs_product_review", "ready_to_request_approval", "blocked"].includes(gate.status));
+  const readyGateStates = approvalGateStates.filter((gate) => gate.status === "ready_to_request_approval");
+  const lockedGateStates = approvalGateStates.filter((gate) => ["locked", "needs_product_review"].includes(gate.status));
+  const blockedGateStates = approvalGateStates.filter((gate) => gate.status === "blocked");
+  const blockedRequests = filteredRequests.filter((request) => request.status === "blocked");
+  const laneCounts = {
+    pending: approvalRequests.filter((request) => request.status === "pending").length,
+    ready: readyGateStates.length,
+    locked: lockedGateStates.length,
+    blocked: blockedGateStates.length + blockedRequests.length,
+  };
 
   function publishPreviewFor(request: ApprovalRequest) {
     return request.publishPayloadPreviewId ? publishPayloadPreviews.find((item) => item.id === request.publishPayloadPreviewId) : undefined;
@@ -160,10 +169,24 @@ export function ApprovalCenter() {
         <CardHeader>
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <CardTitle>Pending Requests</CardTitle>
-              <p className="mt-1 text-sm text-slate-400">Only real approval records appear here. If something is locked but not requested, it is shown in the lane below without approve buttons.</p>
+              <CardTitle>Approval Inbox 2.0</CardTitle>
+              <p className="mt-1 text-sm text-slate-400">Pending cards are real approvals. Ready, locked, and blocked cards explain what to do next without pretending there is an approval button.</p>
             </div>
-            <Badge tone="red">{approvalRequests.filter((request) => request.status === "pending").length} pending approval</Badge>
+            <Badge tone="red">{laneCounts.pending} pending approval</Badge>
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-4">
+            {[
+              ["Pending Approval", laneCounts.pending, "Exact requests you can approve or reject.", "amber"],
+              ["Ready To Request", laneCounts.ready, "Product/action can create a pending approval.", "emerald"],
+              ["Locked", laneCounts.locked, "Missing review steps or fields.", "slate"],
+              ["Blocked", laneCounts.blocked, "Unsafe or policy-blocked actions.", "red"],
+            ].map(([title, count, detail, tone]) => (
+              <div key={String(title)} className="rounded-md border border-white/10 bg-black/25 p-3">
+                <Badge tone={tone as "amber" | "emerald" | "slate" | "red"}>{title}</Badge>
+                <p className="mt-2 text-2xl font-semibold text-stone-50">{count}</p>
+                <p className="mt-1 text-xs leading-5 text-slate-400">{detail}</p>
+              </div>
+            ))}
           </div>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             <Select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
@@ -279,34 +302,66 @@ export function ApprovalCenter() {
       </Card>
       <Card className="mt-5">
         <CardHeader>
-          <CardTitle>Locked / Not Requested Yet</CardTitle>
-          <p className="mt-1 text-sm text-slate-400">These are gates that explain why an action cannot be approved from here yet. Use the linked Product Studio step first.</p>
+          <CardTitle>Ready, Locked, And Blocked</CardTitle>
+          <p className="mt-1 text-sm text-slate-400">These cards are action hints. They link you to the place to fix or request the approval, but only pending requests above can be approved here.</p>
         </CardHeader>
-        <CardContent className="grid gap-3 lg:grid-cols-2">
-          {lockedGateStates.length === 0 ? (
-            <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">No locked product gates are waiting for review.</p>
-          ) : null}
-          {lockedGateStates.map((gate) => {
-            const business = gateBusiness(gate);
-            return (
-              <div key={gate.id} className="rounded-lg border border-white/10 bg-black/25 p-4">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <Badge tone={gate.status === "blocked" ? "red" : gate.status === "ready_to_request_approval" ? "emerald" : "amber"}>{gate.label}</Badge>
-                    <div className="mt-2">
-                      <RealityPill mode={gate.status === "blocked" ? "external_action_blocked" : gate.status === "pending_approval" ? "pending_external_approval" : "local_draft"} />
-                    </div>
-                    <h3 className="mt-3 font-display text-lg font-semibold text-stone-100">{business?.name ?? "Product gate"}</h3>
-                  </div>
-                  <Badge tone="slate">{gate.gate}</Badge>
-                </div>
-                <p className="mt-3 text-sm leading-6 text-slate-300">{gate.reason}</p>
-                <a className="mt-3 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href={gate.linkedPath}>
-                  {gate.actionLabel}
-                </a>
+        <CardContent className="grid gap-4 xl:grid-cols-3">
+          {[
+            { title: "Ready To Request", gates: readyGateStates, tone: "emerald" as const, empty: "No actions are ready to request approval yet." },
+            { title: "Locked", gates: lockedGateStates, tone: "amber" as const, empty: "No locked product gates are waiting for review." },
+            { title: "Blocked", gates: blockedGateStates, tone: "red" as const, empty: "No blocked gates are active." },
+          ].map((lane) => (
+            <div key={lane.title} className="rounded-lg border border-white/10 bg-black/20 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <Badge tone={lane.tone}>{lane.title}</Badge>
+                <span className="text-xs font-semibold text-slate-500">{lane.gates.length}</span>
               </div>
-            );
-          })}
+              <div className="mt-3 space-y-3">
+                {lane.gates.length === 0 ? (
+                  <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-400">{lane.empty}</p>
+                ) : null}
+                {lane.gates.map((gate) => {
+                  const business = gateBusiness(gate);
+                  const hint = approvalActionHints.find((item) => item.gateId === gate.id);
+                  return (
+                    <div key={gate.id} className="rounded-md border border-white/10 bg-black/30 p-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <RealityPill mode={gate.status === "blocked" ? "external_action_blocked" : gate.status === "ready_to_request_approval" ? "local_draft" : "external_action_blocked"} />
+                          <h3 className="mt-3 font-semibold text-stone-100">{business?.name ?? "Product gate"}</h3>
+                        </div>
+                        <Badge tone="slate">{gate.gate}</Badge>
+                      </div>
+                      <p className="mt-3 text-sm leading-6 text-slate-300">{hint?.why ?? gate.reason}</p>
+                      {hint?.missing.length ? (
+                        <div className="mt-3 rounded-md border border-amber-300/20 bg-amber-400/8 p-2 text-xs leading-5 text-amber-100">
+                          {hint.missing.map((item) => <p key={item}>- {item}</p>)}
+                        </div>
+                      ) : null}
+                      <p className="mt-2 text-xs leading-5 text-slate-500">{hint?.expectedAfterFix}</p>
+                      <a className="mt-3 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href={hint?.fixPath ?? gate.linkedPath}>
+                        {gate.actionLabel}
+                      </a>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+          {blockedRequests.length ? (
+            <div className="rounded-lg border border-red-300/20 bg-red-500/8 p-3 xl:col-span-3">
+              <Badge tone="red">Blocked Approval Records</Badge>
+              <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                {blockedRequests.map((request) => (
+                  <div key={request.id} className="rounded-md border border-red-300/20 bg-black/30 p-3">
+                    <h3 className="font-semibold text-stone-100">{request.title}</h3>
+                    <p className="mt-2 text-sm leading-6 text-red-100">{request.blockedExplanation ?? request.safetyEvaluation?.blockedReasons.join(" ") ?? request.reason}</p>
+                    <p className="mt-2 text-xs text-slate-500">Revise the request safely before creating a new approval.</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
       {nonPendingRequests.length > 0 ? (

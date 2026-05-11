@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "Agent Evidence Trails release 0.1.24";
+const UPDATER_VERIFICATION_MARKER = "Approval Inbox 2.0 release 0.1.25";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;

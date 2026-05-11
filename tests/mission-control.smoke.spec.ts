@@ -93,9 +93,12 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await page.goto("/#/approvals", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Approval gates for risky actions" })).toBeVisible();
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Pending Requests" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Approval Inbox 2.0" })).toBeVisible();
+  await expect(page.getByText("Ready To Request").first()).toBeVisible();
+  await expect(page.getByText("Locked").first()).toBeVisible();
+  await expect(page.getByText("Blocked").first()).toBeVisible();
   await expect(page.getByText(/Product publish|Publish externally/i).first()).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Locked / Not Requested Yet" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Ready, Locked, And Blocked" })).toBeVisible();
 
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
@@ -113,7 +116,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Agent Evidence Trails release/i)).toBeVisible();
+  await expect(page.getByText(/Approval Inbox 2.0 release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

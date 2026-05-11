@@ -1461,6 +1461,75 @@ function ensureAgentEvidenceTrails(state: AppDataState) {
   }
 }
 
+function ensureApprovalActionHints(state: AppDataState) {
+  state.approvalActionHints ??= [];
+  const now = nowIso();
+  for (const request of state.approvalRequests) {
+    const lane = request.status === "blocked" ? "blocked" : request.status === "pending" ? "pending" : undefined;
+    if (!lane) continue;
+    const hintId = `approval-hint-${request.id}`;
+    if (state.approvalActionHints.some((hint) => hint.id === hintId)) continue;
+    state.approvalActionHints.push({
+      id: hintId,
+      approvalId: request.id,
+      businessId: request.productPreviewId ? state.productPreviews.find((preview) => preview.id === request.productPreviewId)?.businessId : undefined,
+      previewId: request.productPreviewId,
+      lane,
+      title: request.title,
+      why: request.reason,
+      missing: request.status === "blocked" ? request.safetyEvaluation?.blockedReasons ?? ["Blocked by safety policy."] : [],
+      fixPath: request.status === "blocked" ? "/#/system" : "/#/approvals",
+      expectedAfterFix: request.status === "blocked" ? "Revise the request into a safe, exact action before creating a new approval." : "Approve or reject the exact payload.",
+      realityMode: request.status === "blocked" ? "external_action_blocked" : "pending_external_approval",
+      createdAt: request.createdAt,
+      updatedAt: now,
+    });
+  }
+
+  for (const gate of state.approvalGateStates) {
+    const lane =
+      gate.status === "ready_to_request_approval"
+        ? "ready_to_request"
+        : gate.status === "blocked"
+          ? "blocked"
+          : gate.status === "locked" || gate.status === "needs_product_review"
+            ? "locked"
+            : undefined;
+    if (!lane) continue;
+    const hintId = `approval-hint-${gate.id}`;
+    if (state.approvalActionHints.some((hint) => hint.id === hintId)) continue;
+    state.approvalActionHints.push({
+      id: hintId,
+      gateId: gate.id,
+      approvalId: gate.approvalId,
+      businessId: gate.businessId,
+      previewId: gate.previewId,
+      lane,
+      title: gate.label,
+      why: gate.reason,
+      missing:
+        gate.status === "needs_product_review"
+          ? ["Review the product in Product Studio.", "Approve the local draft before requesting external approval."]
+          : gate.status === "blocked"
+            ? ["Safety or product requirements block this action."]
+            : [],
+      fixPath: gate.linkedPath,
+      expectedAfterFix:
+        lane === "ready_to_request"
+          ? "A real pending approval will be created for the exact payload."
+          : lane === "locked"
+            ? "The action can move to ready-to-request once the missing product review steps are complete."
+            : "Revise the product/request until the safety policy allows it.",
+      realityMode: lane === "blocked" ? "external_action_blocked" : lane === "ready_to_request" ? "local_draft" : "external_action_blocked",
+      createdAt: now,
+      updatedAt: gate.updatedAt,
+    });
+    if (!gate.actionHintIds?.includes(hintId)) {
+      gate.actionHintIds = [...(gate.actionHintIds ?? []), hintId];
+    }
+  }
+}
+
 function normalizePhase6BState(state: AppDataState) {
   state.missionDrafts ??= [];
   state.missionRuns ??= [];
@@ -1573,6 +1642,7 @@ function normalizePhase6BState(state: AppDataState) {
   ensureProductPreviewRecords(state);
   ensureRenderedProductPreviewRecords(state);
   ensureAgentEvidenceTrails(state);
+  ensureApprovalActionHints(state);
   ensureRealityReceipts(state);
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;

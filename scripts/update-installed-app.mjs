@@ -130,7 +130,7 @@ async function main() {
     const { client } = app;
     await client.evaluate("location.hash = '/settings'");
     await waitFor(client, "document.body.innerText.includes('Auto Updates')", "Auto Updates panel");
-    const marker = `Agent Evidence Trails release ${expectedVersion}`.toLowerCase();
+    const marker = `Approval Inbox 2.0 release ${expectedVersion}`.toLowerCase();
     if (await client.evaluate(`document.body.innerText.toLowerCase().includes(${JSON.stringify(marker)})`)) {
       console.log(JSON.stringify({ alreadyCurrent: true, version: expectedVersion }, null, 2));
       return;
