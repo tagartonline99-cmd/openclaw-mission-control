@@ -55,6 +55,25 @@ function domainAllowed(host: string, allowedDomains: string[]) {
   return allowedDomains.some((domain) => host === domain || host.endsWith(`.${domain}`));
 }
 
+function blockedUrlSegment(url: string) {
+  const lower = url.toLowerCase();
+  return [
+    "/login",
+    "/log-in",
+    "/signin",
+    "/sign-in",
+    "/auth",
+    "/account",
+    "/checkout",
+    "/cart",
+    "/payment",
+    "/purchase",
+    "/captcha",
+    "submit-form",
+    "submit_form",
+  ].find((term) => lower.includes(term));
+}
+
 function targetAllowed(target: string, allowedTargets: string[]) {
   if (allowedTargets.length === 0) return true;
   const normalized = normalizeTarget(target).toLowerCase();
@@ -122,6 +141,11 @@ function evaluateUrls(payload: Extract<OpenClawApprovalPayload, { actionKind: "u
     if (url.includes("@")) {
       evaluation.riskFlags.push("credential_url");
       evaluation.blockedReasons.push(`Credential-style URLs are blocked: ${url}`);
+    }
+    const blockedSegment = blockedUrlSegment(url);
+    if (blockedSegment) {
+      evaluation.riskFlags.push("blocked_intent");
+      evaluation.blockedReasons.push(`Login, account, checkout, payment, form, and CAPTCHA URL paths are blocked: ${blockedSegment}`);
     }
 
     try {

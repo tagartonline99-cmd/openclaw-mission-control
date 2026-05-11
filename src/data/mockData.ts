@@ -2110,7 +2110,7 @@ export const openClawMcpServers: OpenClawMcpServer[] = [
   },
   {
     id: "mcp-puppeteer-deferred",
-    name: "Browser Automation MCP",
+    name: "Puppeteer MCP Compatibility",
     kind: "browser",
     packageName: "@modelcontextprotocol/server-puppeteer",
     packageVersion: "2025.5.12",
@@ -2122,7 +2122,7 @@ export const openClawMcpServers: OpenClawMcpServer[] = [
     enabled: false,
     configured: false,
     installed: false,
-    notes: "Brokered by Mission Control for safe public read-and-screenshot research only; direct agent control remains disabled.",
+    notes: "Optional deprecated MCP compatibility. Direct agent control is disabled; the native Browser Research Broker is the supported safe public read path.",
     createdAt: now,
     updatedAt: now,
   },
@@ -2138,7 +2138,7 @@ export const openClawCapabilities: OpenClawCapability[] = [
   { id: "cap-mcp-filesystem", name: "Scoped filesystem MCP", status: "available", description: "Free local MCP installed for approved workspace and vault folders only.", approvalRequired: false, connectedTo: "@modelcontextprotocol/server-filesystem" },
   { id: "cap-mcp-memory", name: "Local memory MCP", status: "available", description: "Free local knowledge graph memory MCP for agent notes and lessons.", approvalRequired: false, connectedTo: "@modelcontextprotocol/server-memory" },
   { id: "cap-mcp-fetch", name: "Approval-gated fetch MCP", status: "blocked", description: "Fetch MCP is installed but disabled for general agent use; approved URL research remains per-action gated.", approvalRequired: true, connectedTo: "mcp-fetch-server" },
-  { id: "cap-mcp-browser", name: "Browser automation MCP", status: "available", description: "Puppeteer/browser MCP is brokered by Mission Control for safe public reads and screenshots only; direct agent control remains disabled.", approvalRequired: false, connectedTo: "@modelcontextprotocol/server-puppeteer" },
+  { id: "cap-mcp-browser", name: "Browser Research Broker", status: "available", description: "Native broker performs safe public reads and screenshots. Puppeteer MCP compatibility remains disabled for direct agent control.", approvalRequired: false, connectedTo: "native-tauri-browser-broker" },
   { id: "cap-analytics", name: "Analytics parser", status: "needs_install", description: "Future adapter for approved experiment metrics.", approvalRequired: true },
 ];
 

@@ -110,6 +110,21 @@ struct BrowserPublicReadResult {
     captured_at: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BrowserBrokerStatusResult {
+    ok: bool,
+    status: String,
+    browser_program: String,
+    browser_found: bool,
+    artifact_dir: String,
+    artifact_dir_writable: bool,
+    safety_mode: String,
+    direct_control_disabled: bool,
+    last_checked_at: String,
+    notes: String,
+}
+
 fn openclaw_program() -> &'static str {
     if cfg!(windows) {
         "openclaw.cmd"
@@ -384,11 +399,11 @@ fn filename_safe(value: &str) -> String {
     }
 }
 
-fn find_browser_program() -> String {
+fn find_browser_program_path() -> Option<String> {
     if let Some(path) = env::var_os("OPENCLAW_BROWSER_PATH") {
         let path = PathBuf::from(path);
         if path.is_file() {
-            return path.to_string_lossy().to_string();
+            return Some(path.to_string_lossy().to_string());
         }
     }
 
@@ -404,7 +419,10 @@ fn find_browser_program() -> String {
         .map(PathBuf::from)
         .find(|path| path.is_file())
         .map(|path| path.to_string_lossy().to_string())
-        .unwrap_or_else(|| "msedge.exe".into())
+}
+
+fn find_browser_program() -> String {
+    find_browser_program_path().unwrap_or_else(|| "msedge.exe".into())
 }
 
 fn capture_public_browser_screenshot(url: &str, timeout_seconds: u64) -> Result<Option<String>, String> {
@@ -428,6 +446,39 @@ fn capture_public_browser_screenshot(url: &str, timeout_seconds: u64) -> Result<
         return Ok(Some(output_path));
     }
     Ok(None)
+}
+
+#[tauri::command]
+fn browser_broker_status() -> Result<BrowserBrokerStatusResult, String> {
+    let browser_program = find_browser_program_path();
+    let artifact_dir = browser_artifact_dir()?;
+    let artifact_dir_writable = artifact_dir.is_dir();
+    let browser_found = browser_program.is_some();
+    let status = if browser_found && artifact_dir_writable {
+        "active"
+    } else if artifact_dir_writable {
+        "text_only"
+    } else {
+        "degraded"
+    };
+    let notes = if browser_found {
+        "Native Mission Control broker is ready for safe public browser reads and screenshots. Puppeteer MCP direct control remains disabled."
+    } else {
+        "Native broker can still do guarded text reads, but screenshot capture needs Microsoft Edge or Chrome on PATH or OPENCLAW_BROWSER_PATH."
+    };
+
+    Ok(BrowserBrokerStatusResult {
+        ok: status == "active",
+        status: status.into(),
+        browser_program: browser_program.unwrap_or_else(|| "msedge.exe fallback".into()),
+        browser_found,
+        artifact_dir: artifact_dir.to_string_lossy().to_string(),
+        artifact_dir_writable,
+        safety_mode: "safe-public-read-only".into(),
+        direct_control_disabled: true,
+        last_checked_at: now_rfc3339(),
+        notes: notes.into(),
+    })
 }
 
 fn extract_basic_links(html: &str) -> Vec<String> {
@@ -757,6 +808,7 @@ fn openclaw_gateway_start() -> Result<OpenClawBridgeResult, String> {
 async fn public_research_fetch(request: PublicResearchFetchRequest) -> Result<PublicResearchFetchResult, String> {
     let url = request.url.trim().to_string();
     validate_url(&url)?;
+    reject_blocked_browser_url(&url)?;
     reject_blocked_intent(&url)?;
     let timeout = Duration::from_secs(clamp_timeout(request.timeout_seconds, 12, 20));
     let client = reqwest::Client::builder()
@@ -995,6 +1047,7 @@ fn openclaw_url_research(request: UrlResearchRequest) -> Result<OpenClawBridgeRe
     }
     for url in &request.urls {
         validate_url(url)?;
+        reject_blocked_browser_url(url)?;
     }
     reject_control_chars(&request.purpose, "Purpose")?;
     reject_control_chars(&request.extraction_goal, "Extraction goal")?;
@@ -1087,6 +1140,7 @@ pub fn run() {
             openclaw_gateway_start,
             public_research_fetch,
             browser_public_read,
+            browser_broker_status,
             openclaw_agent_turn,
             openclaw_url_research,
             openclaw_channel_send

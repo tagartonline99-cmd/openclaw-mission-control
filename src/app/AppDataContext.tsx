@@ -154,6 +154,7 @@ type AppDataContextValue = {
   syncOpenClawAgents: () => Promise<void>;
   refreshOpenClawMcpStatus: () => Promise<void>;
   installOpenClawMcpLocalKit: () => Promise<void>;
+  runBrowserBrokerDiagnostic: () => Promise<void>;
   requestGatewayStart: () => Promise<void>;
   requestTeamLeaderTurn: (message: string) => Promise<void>;
   sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string; opportunityHuntDepth?: OpportunityHuntDepth }) => Promise<void>;
@@ -2996,6 +2997,135 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
     await persist(next);
   }, [persist]);
+
+  const runBrowserBrokerDiagnostic = useCallback(async () => {
+    const current = dataRef.current;
+    const now = new Date().toISOString();
+    const diagnosticHuntId = "browser-broker-diagnostic";
+    const runId = id("public-research-diagnostic");
+    const browserRunId = id("browser-research-diagnostic");
+    const browserFetchId = id("browser-research-fetch");
+    const receiptId = id("browser-safety-receipt");
+    const artifactId = id("browser-research-artifact");
+    const result = await openclawService.readPublicBrowserSource({
+      url: "https://example.com",
+      purpose: "Browser broker diagnostic: fetch public title/text and capture screenshot safely.",
+      sourcePackId: "diagnostic",
+      huntId: diagnosticHuntId,
+      timeoutSeconds: 18,
+      captureScreenshot: true,
+    });
+    const completedAt = new Date().toISOString();
+    const receipt: BrowserSafetyReceipt = {
+      id: receiptId,
+      runId: browserRunId,
+      url: result.url,
+      allowed: result.ok,
+      blockedReasons: result.ok ? [] : [result.error || "Browser broker diagnostic failed safely."],
+      safetyChecklist: [
+        "Exact public URL only",
+        "GET/read-only page access",
+        "No login or credentials",
+        "No form submission",
+        "No purchase or spend",
+        "No publishing, messaging, or connector execution",
+      ],
+      receipt: result.safetyReceipt,
+      createdAt: completedAt,
+    };
+    const browserFetch: BrowserResearchFetch = {
+      id: browserFetchId,
+      runId: browserRunId,
+      sourcePackId: "diagnostic",
+      url: result.url,
+      status: result.ok ? "captured" : "failed",
+      title: result.title ?? "Example Domain",
+      excerpt: result.excerpt ?? undefined,
+      screenshotPath: result.screenshotPath ?? undefined,
+      screenshotCaptured: result.screenshotCaptured,
+      basicLinks: result.basicLinks,
+      error: result.error ?? undefined,
+      safetyReceiptId: receiptId,
+      startedAt: now,
+      completedAt,
+    };
+    const artifact: BrowserResearchArtifact = {
+      id: artifactId,
+      runId: browserRunId,
+      fetchId: browserFetchId,
+      huntId: diagnosticHuntId,
+      type: "page_summary",
+      url: result.url,
+      title: result.title ?? "Example Domain",
+      summary: safeBrowserSummary(result),
+      screenshotPath: result.screenshotPath ?? undefined,
+      safetyReceiptId: receiptId,
+      createdAt: completedAt,
+    };
+    const browserRun: BrowserResearchRun = {
+      id: browserRunId,
+      huntId: diagnosticHuntId,
+      publicResearchRunId: runId,
+      depth: "quick",
+      status: result.ok ? "completed" : "failed",
+      fetchIds: [browserFetchId],
+      artifactIds: [artifactId],
+      safetyReceiptIds: [receiptId],
+      startedAt: now,
+      completedAt,
+      summary: result.ok
+        ? "Browser Research Broker diagnostic captured example.com with a safe public read."
+        : "Browser Research Broker diagnostic failed safely before any risky action.",
+      executionReceipt: `browser-broker-diagnostic:${result.ok ? "captured" : "failed"}:example.com:no-login:no-forms:no-spend:no-publish`,
+    };
+    const publicRun: PublicResearchRun = {
+      id: runId,
+      huntId: diagnosticHuntId,
+      depth: "quick",
+      status: result.ok ? "completed" : "failed",
+      sourcePackIds: ["diagnostic"],
+      fetchIds: [],
+      browserResearchRunId: browserRunId,
+      evidenceCitationIds: [],
+      candidateIdeaIds: [],
+      startedAt: now,
+      completedAt,
+      summary: "One-page safe browser broker diagnostic against example.com.",
+      executionReceipt: browserRun.executionReceipt,
+    };
+    await persistOptimistic({
+      ...current,
+      publicResearchRuns: [publicRun, ...current.publicResearchRuns],
+      browserResearchRuns: [browserRun, ...current.browserResearchRuns],
+      browserResearchFetches: [browserFetch, ...current.browserResearchFetches],
+      browserResearchArtifacts: [artifact, ...current.browserResearchArtifacts],
+      browserSafetyReceipts: [receipt, ...current.browserSafetyReceipts],
+      openClawEvents: [
+        {
+          id: id("event-browser-broker-diagnostic"),
+          type: "command",
+          title: result.ok ? "Browser Research Broker diagnostic completed" : "Browser Research Broker diagnostic failed safely",
+          detail: result.ok
+            ? `Read ${result.url}. Screenshot: ${result.screenshotCaptured ? "captured" : "not available"}.`
+            : result.error || "The broker blocked or failed the diagnostic safely.",
+          createdAt: completedAt,
+          severity: result.ok ? "success" : "warning",
+        },
+        ...current.openClawEvents,
+      ],
+      activityLogs: [
+        {
+          id: id("log-browser-broker-diagnostic"),
+          category: "openclaw",
+          title: result.ok ? "Browser broker diagnostic completed" : "Browser broker diagnostic failed safely",
+          detail: `${artifact.summary} ${receipt.receipt}`,
+          severity: result.ok ? "success" : "warning",
+          createdAt: completedAt,
+        } satisfies ActivityLog,
+        ...current.activityLogs,
+      ].slice(0, 80),
+    });
+  }, [persistOptimistic]);
 
   const createOpenClawApproval = useCallback(
     async (
@@ -6384,6 +6514,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       syncOpenClawAgents,
       refreshOpenClawMcpStatus,
       installOpenClawMcpLocalKit,
+      runBrowserBrokerDiagnostic,
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
@@ -6449,6 +6580,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       syncOpenClawAgents,
       refreshOpenClawMcpStatus,
       installOpenClawMcpLocalKit,
+      runBrowserBrokerDiagnostic,
       requestGatewayStart,
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,

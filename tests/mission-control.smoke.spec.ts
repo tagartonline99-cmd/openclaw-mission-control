@@ -64,14 +64,19 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("OpenClaw System Health")).toBeVisible();
   await expect(page.getByText("Free Local MCP Kit")).toBeVisible();
+  await expect(page.getByText("Browser Research Broker").first()).toBeVisible();
+  await expect(page.getByText("native safe public read")).toBeVisible();
+  await page.getByRole("button", { name: /Test browser read with example.com/i }).click();
+  await expect(page.getByText(/Last artifact: Browser preview safe read|Last artifact: Example Domain/i)).toBeVisible();
   await expect(page.getByText("Filesystem MCP", { exact: true })).toBeVisible();
   await expect(page.getByText("Knowledge Graph Memory MCP", { exact: true })).toBeVisible();
   await expect(page.getByText("Approved URL Fetch MCP", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Browser\/Puppeteer MCP is not direct agent control/i)).toBeVisible();
+  await expect(page.getByText("Puppeteer MCP Compatibility", { exact: true })).toBeVisible();
+  await expect(page.getByText(/Browser Research Broker is not direct agent control/i)).toBeVisible();
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Safe browser research release/i)).toBeVisible();
+  await expect(page.getByText(/Browser broker hardening release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {
@@ -92,13 +97,32 @@ test("Fiverr prompt still creates a locked local platform package", async ({ pag
 test("MCP refresh keeps browser automation brokered in browser fallback", async ({ page }) => {
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await page.getByRole("button", { name: /Refresh MCP status/i }).click();
-  await expect(page.getByText("Browser Automation MCP", { exact: true })).toBeVisible();
+  await expect(page.getByText("Browser Research Broker", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Puppeteer MCP Compatibility", { exact: true })).toBeVisible();
   await expect(page.getByText(/brokered safe read|needs install/i).first()).toBeVisible();
   await expect(page.getByText(/Fetch MCP is installed but disabled|approved URL research only/i).first()).toBeVisible();
 });
 
-test("approval-gated URL research blocks private hosts", async ({ page }) => {
+test("approval-gated research and messaging block unsafe targets", async ({ page }) => {
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await page.getByPlaceholder("Approved URLs, comma separated").fill("http://localhost:3000/private");
   await expect(page.getByText(/Private or local hosts are blocked/i)).toBeVisible();
+  await page.getByPlaceholder("Approved URLs, comma separated").fill("http://127.0.0.1:3000/private");
+  await expect(page.getByText(/Private or local hosts are blocked/i)).toBeVisible();
+  await page.getByPlaceholder("Approved URLs, comma separated").fill("http://10.0.0.2/private");
+  await expect(page.getByText(/Private or local hosts are blocked/i)).toBeVisible();
+  await page.getByPlaceholder("Approved URLs, comma separated").fill("https://*.example.com");
+  await expect(page.getByText(/Wildcard URL patterns are blocked/i)).toBeVisible();
+  await page.getByPlaceholder("Approved URLs, comma separated").fill("https://user:pass@example.com/private");
+  await expect(page.getByText(/Credential-style URLs are blocked/i)).toBeVisible();
+  await page.getByPlaceholder("Approved URLs, comma separated").fill("ftp://example.com/file");
+  await expect(page.getByText(/Only http and https URLs are allowed|Malformed URL/i)).toBeVisible();
+  await page.getByPlaceholder("Approved URLs, comma separated").fill("https://example.com/login");
+  await expect(page.getByText(/Login, account, checkout, payment, form, and CAPTCHA URL paths are blocked/i)).toBeVisible();
+
+  await page.getByPlaceholder("Explicit channel target").fill("@everyone");
+  await page.getByPlaceholder("Message text").fill("hello from dry-run");
+  await expect(page.getByText(/Broadcast-style channel targets are blocked/i)).toBeVisible();
+  await page.getByPlaceholder("Explicit channel target").fill("channel:one,channel:two");
+  await expect(page.getByText(/Batch, wildcard, or comma-separated channel targets are blocked/i)).toBeVisible();
 });

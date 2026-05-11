@@ -1,6 +1,7 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type {
   Agent,
+  BrowserBrokerStatus,
   OpenClawMcpServer,
   OpenClawRuntimeStatus,
   UserSettings,
@@ -218,6 +219,7 @@ export function mcpServersFromResult(result: OpenClawBridgeResult, existing: Ope
     const brokeredBrowser = server.kind === "browser" && config.note === "safe-public-browser-read-brokered";
     return {
       ...server,
+      name: server.kind === "browser" ? "Puppeteer MCP Compatibility" : server.name,
       command: config.command,
       args: config.args ?? [],
       env: config.env,
@@ -228,7 +230,9 @@ export function mcpServersFromResult(result: OpenClawBridgeResult, existing: Ope
       installed,
       lastCheckedAt: now,
       updatedAt: now,
-      notes: config.note ?? server.notes,
+      notes: brokeredBrowser
+        ? "Optional deprecated MCP compatibility. Direct agent control is disabled; the native Browser Research Broker is the supported safe public read path."
+        : config.note ?? server.notes,
     };
   });
 }
@@ -430,6 +434,38 @@ export const openclawService = {
         safetyReceipt: "safe-browser-public-read:failed-before-execution",
         error: error instanceof Error ? error.message : String(error),
         capturedAt: new Date().toISOString(),
+      };
+    }
+  },
+  async getBrowserBrokerStatus(): Promise<BrowserBrokerStatus> {
+    if (!isTauriRuntime()) {
+      return {
+        ok: true,
+        status: "browser_preview",
+        browserProgram: "browser preview",
+        browserFound: false,
+        artifactDir: "desktop-only",
+        artifactDirWritable: false,
+        safetyMode: "safe-public-read-only-preview",
+        directControlDisabled: true,
+        lastCheckedAt: new Date().toISOString(),
+        notes: "Vite/browser preview simulates the broker. The installed Tauri app probes Edge/Chrome and writes screenshots under .openclaw.",
+      };
+    }
+    try {
+      return await invoke<BrowserBrokerStatus>("browser_broker_status");
+    } catch (error) {
+      return {
+        ok: false,
+        status: "degraded",
+        browserProgram: "unknown",
+        browserFound: false,
+        artifactDir: "unknown",
+        artifactDirWritable: false,
+        safetyMode: "safe-public-read-only",
+        directControlDisabled: true,
+        lastCheckedAt: new Date().toISOString(),
+        notes: error instanceof Error ? error.message : String(error),
       };
     }
   },

@@ -81,14 +81,14 @@ function connectCdp(wsUrl) {
   });
 }
 
-async function waitFor(client, expression, label, timeoutMs = 30_000) {
+async function waitFor(client, expression, label, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const value = await client.evaluate(expression);
     if (value) return value;
     await delay(300);
   }
-  const body = await client.evaluate("document.body.innerText.slice(0, 2600)").catch(() => "");
+  const body = await client.evaluate("document.body.innerText.slice(0, 3000)").catch(() => "");
   const errors = await client.evaluate("JSON.stringify(window.__acceptanceErrors || [])").catch(() => "[]");
   throw new Error(`Timed out waiting for ${label}. Errors: ${errors}. Body: ${body}`);
 }
@@ -105,6 +105,7 @@ async function click(client, text, index = 0) {
         .filter((button) => button.innerText.includes(${JSON.stringify(text)}) && !button.disabled);
       const button = buttons[${index}];
       if (!button) return false;
+      button.scrollIntoView({ block: "center" });
       button.click();
       return true;
     })()
@@ -112,16 +113,17 @@ async function click(client, text, index = 0) {
   assert(clicked, `Could not click ${text}`);
 }
 
-async function waitForEnabledButton(client, text, timeoutMs = 120_000) {
-  await waitFor(
-    client,
-    `
-      [...document.querySelectorAll("button")]
-        .some((button) => button.innerText.includes(${JSON.stringify(text)}) && !button.disabled)
-    `,
-    `enabled ${text} button`,
-    timeoutMs,
-  );
+async function setFirstSelect(client, value) {
+  const ok = await client.evaluate(`
+    (() => {
+      const select = document.querySelector("select");
+      if (!select) return false;
+      select.value = ${JSON.stringify(value)};
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return select.value === ${JSON.stringify(value)};
+    })()
+  `);
+  assert(ok, `Could not set first select to ${value}`);
 }
 
 async function setTextArea(client, value) {
@@ -134,7 +136,7 @@ async function setTextArea(client, value) {
       return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
     })()
   `);
-  assert(box, "Missing TeamLeader chat textarea");
+  assert(box, "Missing TeamLeader textarea");
   await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
   await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
   await client.send("Input.dispatchKeyEvent", { type: "keyDown", key: "Control", code: "ControlLeft", windowsVirtualKeyCode: 17, modifiers: 2 });
@@ -153,7 +155,7 @@ async function setTextArea(client, value) {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     })()
   `);
-  await waitFor(client, `document.querySelector("textarea")?.value === ${JSON.stringify(value)}`, "typed TeamLeader chat value");
+  await waitFor(client, `document.querySelector("textarea")?.value === ${JSON.stringify(value)}`, "typed TeamLeader command");
 }
 
 async function launch() {
@@ -190,15 +192,16 @@ async function closeApp(app) {
 
 async function main() {
   const stamp = new Date().toISOString();
+  const command = `Acceptance test ${stamp}: find me the best online business idea with zero budget`;
   const app = await launch();
   const evidence = {
     storage: "",
-    chatLocalReply: false,
-    liveApprovalCreated: false,
-    launchControlVisible: false,
     appVersion: "",
-    persistedChatRows: 0,
-    safetyCopyVisible: false,
+    commandScreenClean: false,
+    opportunityHuntRows: 0,
+    browserArtifactRows: 0,
+    brokerVisible: false,
+    noApprovalSpam: false,
   };
 
   try {
@@ -208,49 +211,76 @@ async function main() {
     await waitFor(client, "document.body.innerText.includes('Storage: tauri-sqlite')", "tauri-sqlite storage adapter");
     evidence.storage = await client.evaluate("document.body.innerText.match(/Storage: [^\\n]+/)?.[0] ?? ''");
 
-    await route(client, "/teamleader-chat", "Talk to TeamLeader1A");
-    await waitFor(client, "document.body.innerText.includes('TeamLeader1A Chat')", "TeamLeader1A chat title");
-    await setTextArea(client, `Acceptance local chat ${stamp}: what should I verify next?`);
-    await waitForEnabledButton(client, "Send local chat");
-    await click(client, "Send local chat");
-    await waitFor(client, "document.body.innerText.includes('TeamLeader1A local reply')", "local TeamLeader1A reply");
-    evidence.chatLocalReply = true;
+    await route(client, "/", "Tell TeamLeader1A what to build");
+    await waitFor(client, "document.querySelectorAll('select').length === 1 && document.body.innerText.includes('Optional quest attachment')", "clean command screen");
+    evidence.commandScreenClean = true;
+    await setFirstSelect(client, "quick");
+    await setTextArea(client, command);
+    await click(client, "Send to TeamLeader1A");
+    await waitFor(
+      client,
+      "document.body.innerText.includes('I started a quick public opportunity hunt') && document.body.innerText.includes('Top 3')",
+      "quick opportunity hunt result",
+      180_000,
+    );
 
-    await route(client, "/settings", "Capital, risk, storage, and permissions");
-    await route(client, "/teamleader-chat", "Talk to TeamLeader1A");
-    await setTextArea(client, `Acceptance live approval ${stamp}: summarize next verification. Do not browse, publish, send, spend, launch, or use --deliver.`);
-    await waitForEnabledButton(client, "Request live turn approval");
-    await click(client, "Request live turn approval");
-    await waitFor(client, "document.body.innerText.includes('created a live TeamLeader1A approval request') || document.body.innerText.includes('I blocked that live turn request')", "live approval request response");
-    evidence.liveApprovalCreated = await client.evaluate("document.body.innerText.includes('created a live TeamLeader1A approval request')");
+    await route(client, "/tasks", "Every agent task in one place");
+    await waitFor(client, "document.body.innerText.includes('Research zero-budget demand')", "agent task board populated");
 
-    evidence.persistedChatRows = await waitFor(
+    await route(client, "/guild-office", "Watch the agents work");
+    await waitFor(client, "document.body.innerText.includes('Research Library') && document.body.innerText.includes('What is happening now')", "guild office active");
+
+    await route(client, "/mission-briefs", "Business Proposal Review");
+    await waitFor(
+      client,
+      "document.body.innerText.includes('Top 3 + Winner') && document.body.innerText.includes('Safe browser evidence') && document.body.innerText.includes('safe-browser-public-read')",
+      "mission brief browser evidence",
+    );
+
+    const dbProof = await waitFor(
       client,
       `(async () => {
         const invoke = window.__TAURI_INTERNALS__?.invoke;
         if (!invoke) return false;
         const db = await invoke("plugin:sql|load", { db: "sqlite:openclaw-mission-control.db" });
-        const rows = await invoke("plugin:sql|select", {
+        const hunts = await invoke("plugin:sql|select", {
           db,
-          query: "SELECT payload FROM teamleader_chat_messages WHERE payload LIKE ?",
-          values: [${JSON.stringify(`%Acceptance local chat ${stamp}%`)}],
+          query: "SELECT payload FROM opportunity_hunts WHERE payload LIKE ?",
+          values: [${JSON.stringify(`%${stamp}%`)}],
         });
-        return rows.length;
+        const artifacts = await invoke("plugin:sql|select", {
+          db,
+          query: "SELECT payload FROM browser_research_artifacts WHERE payload LIKE ?",
+          values: ["%safe%"],
+        });
+        return { hunts: hunts.length, artifacts: artifacts.length };
       })()`,
-      "persisted TeamLeader chat rows",
+      "SQLite opportunity and browser evidence rows",
     );
-    assert(evidence.persistedChatRows > 0, "TeamLeader chat did not persist to SQLite");
+    evidence.opportunityHuntRows = dbProof.hunts;
+    evidence.browserArtifactRows = dbProof.artifacts;
+    assert(evidence.opportunityHuntRows > 0, "Opportunity hunt did not persist to SQLite");
+    assert(evidence.browserArtifactRows > 0, "Browser research artifacts did not persist to SQLite");
+
+    await route(client, "/openclaw-system", "OpenClaw System Health");
+    await waitFor(
+      client,
+      "document.body.innerText.includes('Browser Research Broker') && document.body.innerText.includes('Puppeteer MCP Compatibility') && document.body.innerText.includes('direct agent control')",
+      "browser broker system status",
+    );
+    evidence.brokerVisible = true;
+    await click(client, "Test browser read with example.com");
+    await waitFor(client, "document.body.innerText.includes('Last artifact:') && document.body.innerText.includes('example.com')", "browser broker diagnostic artifact", 120_000);
 
     await route(client, "/approvals", "Approval gates for risky actions");
-    await waitFor(client, `document.body.innerText.includes(${JSON.stringify(`Acceptance live approval ${stamp}`)})`, "live turn approval in approval center");
-
-    await route(client, "/launch-control", "Launch, budget, runner, and portfolio control");
-    await waitFor(client, "document.body.innerText.includes('Approved Publishing And Outreach') && document.body.innerText.includes('Budget Ledger And Spend Controls') && document.body.innerText.includes('Portfolio Optimization')", "Launch Control panels");
-    await waitFor(client, "document.body.innerText.includes('Phase 17 Operating Core') && document.body.innerText.includes('MISSION TASKS') && document.body.innerText.includes('COMMAND/RESULT LEDGER')", "Business OS Launch Control panels");
-    evidence.launchControlVisible = true;
-    evidence.safetyCopyVisible = await client.evaluate("document.body.innerText.includes('Publishing, live messaging, outreach, and scaling require one approval per action')");
+    evidence.noApprovalSpam = await client.evaluate(`
+      !document.body.innerText.includes(${JSON.stringify(command)}) &&
+      !document.body.innerText.includes('Run approved URL research')
+    `);
+    assert(evidence.noApprovalSpam, "Safe opportunity hunt created approval spam");
 
     await route(client, "/settings", "Auto Updates");
+    await waitFor(client, "document.body.innerText.includes('Browser broker hardening release')", "0.1.13 updater marker");
     evidence.appVersion = await waitFor(
       client,
       `(async () => {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, BriefcaseBusiness, CheckCircle2, FileText, Lock, PackageCheck, Play, RotateCcw, ShieldCheck, SkipForward, Sparkles, WalletCards, Workflow, XCircle } from "lucide-react";
+import { AlertTriangle, BriefcaseBusiness, CheckCircle2, ExternalLink, FileText, Lock, PackageCheck, Play, RotateCcw, ShieldCheck, SkipForward, Sparkles, WalletCards, Workflow, XCircle } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
 import type { MissionAgentStep, MissionDraftStepPlan } from "../../types";
 import { formatCurrency, formatDateTime, statusTone } from "../../utils/formatting";
@@ -34,6 +34,7 @@ export function MissionBriefWorkbench() {
     updateBusinessProposalStatus,
     preparePlatformPublishApproval,
     exportObsidianNote,
+    revealExportedPath,
   } = useAppData();
   const [params, setParams] = useSearchParams();
   const requestedRunId = params.get("run");
@@ -246,19 +247,41 @@ export function MissionBriefWorkbench() {
                   <div className="mt-4 grid gap-3 xl:grid-cols-2">
                     {selectedBrowserArtifacts.map((artifact) => {
                       const receipt = selectedBrowserReceipts.find((item) => item.id === artifact.safetyReceiptId);
+                      const fetch = data.browserResearchFetches.find((item) => item.id === artifact.fetchId);
                       return (
                         <div key={artifact.id} className="rounded-md border border-cyan-300/15 bg-black/25 p-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="font-semibold text-stone-100">{artifact.title}</p>
-                            <Badge tone={artifact.screenshotPath ? "teal" : "amber"}>{artifact.screenshotPath ? "screenshot saved" : "text captured"}</Badge>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge tone={fetch?.status === "captured" ? "teal" : fetch?.status === "failed" ? "red" : "amber"}>
+                                {fetch?.status.replace(/_/g, " ") ?? "recorded"}
+                              </Badge>
+                              <Badge tone={artifact.screenshotPath ? "teal" : "amber"}>{artifact.screenshotPath ? "screenshot saved" : "text captured"}</Badge>
+                            </div>
                           </div>
                           <p className="mt-2 text-sm leading-6 text-slate-300">{artifact.summary}</p>
                           <a className="mt-2 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50" href={artifact.url}>{artifact.url}</a>
                           {artifact.screenshotPath ? (
                             <code className="mt-2 block truncate rounded border border-white/10 bg-black/35 p-2 text-xs text-cyan-100">{artifact.screenshotPath}</code>
                           ) : null}
+                          {fetch?.error ? (
+                            <div className="mt-2 rounded-md border border-red-300/20 bg-red-500/8 p-2 text-xs leading-5 text-red-100">
+                              Blocked or failed safely: {fetch.error}. Use an exact public HTTP/HTTPS page that does not require login, checkout, forms, CAPTCHA, or account access.
+                            </div>
+                          ) : null}
                           {receipt ? (
-                            <p className="mt-2 text-xs leading-5 text-slate-400">{receipt.receipt}</p>
+                            <div className="mt-2 text-xs leading-5 text-slate-400">
+                              <p>{receipt.receipt}</p>
+                              {receipt.blockedReasons.length ? (
+                                <p className="mt-1 text-red-100">Blocked reasons: {receipt.blockedReasons.join(" ")}</p>
+                              ) : null}
+                            </div>
+                          ) : null}
+                          {artifact.screenshotPath ? (
+                            <Button className="mt-3" variant="outline" size="sm" onClick={() => void revealExportedPath(artifact.screenshotPath!)}>
+                              <ExternalLink className="h-4 w-4" />
+                              Open screenshot location
+                            </Button>
                           ) : null}
                         </div>
                       );

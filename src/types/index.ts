@@ -374,6 +374,19 @@ export interface BrowserResearchArtifact {
   createdAt: string;
 }
 
+export interface BrowserBrokerStatus {
+  ok: boolean;
+  status: "active" | "text_only" | "degraded" | "browser_preview";
+  browserProgram: string;
+  browserFound: boolean;
+  artifactDir: string;
+  artifactDirWritable: boolean;
+  safetyMode: string;
+  directControlDisabled: boolean;
+  lastCheckedAt: string;
+  notes: string;
+}
+
 export interface EvidenceCitation {
   id: string;
   huntId: string;
