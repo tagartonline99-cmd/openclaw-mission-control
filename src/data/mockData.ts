@@ -26,6 +26,7 @@ import type {
   DemandProofReport,
   ExternalActionLock,
   ExperimentDecision,
+  ExternalPlatformRequirement,
   ImprovementProposal,
   JobRun,
   JobSchedule,
@@ -44,6 +45,7 @@ import type {
   ProductionAsset,
   ProductionPack,
   ProductionDestination,
+  PlatformExecutionPackage,
   PublishingDiff,
   PublishingConnector,
   PortfolioScore,
@@ -1417,6 +1419,8 @@ export const agentWorkSessions: AgentWorkSession[] = [];
 export const researchEvidence: ResearchEvidence[] = [];
 export const productionDestinations: ProductionDestination[] = [];
 export const contentInventoryItems: ContentInventoryItem[] = [];
+export const externalPlatformRequirements: ExternalPlatformRequirement[] = [];
+export const platformExecutionPackages: PlatformExecutionPackage[] = [];
 export const autonomousImprovementRuns: AutonomousImprovementRun[] = [];
 
 export const guildOfficeStations: GuildOfficeStation[] = [

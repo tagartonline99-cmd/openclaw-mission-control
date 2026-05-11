@@ -7,7 +7,7 @@ test("TeamLeader command creates visible agent work, proposal, business, and pro
 
   await page
     .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
-    .fill("research newsletter angles for freelancers");
+    .fill("create a Fiverr gig business idea with zero budget");
   await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
   await expect(page.getByText(/I started a live opportunity hunt/i)).toBeVisible();
   await expect(page.getByText(/View Work/i).first()).toBeVisible();
@@ -24,18 +24,28 @@ test("TeamLeader command creates visible agent work, proposal, business, and pro
 
   await page.goto("/#/mission-briefs", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Business Proposal Review")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Business Proposal: Practical AI Workflow Kit/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Business Proposal: Fiverr AI Workflow Gig/i })).toBeVisible();
+  await expect(page.getByText("Budget plan")).toBeVisible();
+  await expect(page.getByText(/within hard cap/i)).toBeVisible();
+  await expect(page.getByText("External platform/account needs")).toBeVisible();
+  await expect(page.getByText(/User login required: yes/i)).toBeVisible();
+  await expect(page.getByText(/Credentials stored: no/i)).toBeVisible();
+  await expect(page.getByText(/Prepare Fiverr Publish Approval/i)).toBeVisible();
   await expect(page.getByText("Evidence and links")).toBeVisible();
   await page.getByRole("button", { name: /Approve Business/i }).click();
 
   await page.goto("/#/businesses", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Business proposals you approved" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Practical AI Workflow Kit/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Fiverr AI Workflow Gig/i })).toBeVisible();
+  await expect(page.getByText("Budget guard")).toBeVisible();
+  await expect(page.getByText("External platform requirements")).toBeVisible();
   await expect(page.getByText("Autonomous improvement", { exact: true }).last()).toBeVisible();
 
   await page.goto("/#/production", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Business Production And Publishing Map")).toBeVisible();
   await expect(page.getByText(/Publishing destinations are visible/i).first()).toBeVisible();
+  await expect(page.getByText(/Fiverr Gig Draft/i).first()).toBeVisible();
+  await expect(page.getByText(/credentials stored no/i).first()).toBeVisible();
   await expect(page.getByText(/approval required/i).first()).toBeVisible();
 
   await page.goto("/#/approvals", { waitUntil: "domcontentloaded" });
@@ -53,7 +63,7 @@ test("TeamLeader command creates visible agent work, proposal, business, and pro
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/TeamLeader command center release/i)).toBeVisible();
+  await expect(page.getByText(/Budget-aware platform release/i)).toBeVisible();
 });
 
 test("MCP refresh does not expose browser automation in browser fallback", async ({ page }) => {

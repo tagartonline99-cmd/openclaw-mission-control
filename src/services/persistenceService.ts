@@ -28,6 +28,7 @@ import {
   experimentDecisions,
   commandLedgerEntries,
   externalActionLock,
+  externalPlatformRequirements,
   improvementProposals,
   improvementQueue,
   guildOfficeStations,
@@ -52,6 +53,7 @@ import {
   productionAssets,
   productionPacks,
   productionDestinations,
+  platformExecutionPackages,
   publishingDiffs,
   publishingConnectors,
   portfolioScores,
@@ -103,6 +105,7 @@ import type {
   ContentItem,
   ContentInventoryItem,
   ExternalActionLock,
+  ExternalPlatformRequirement,
   GuildOfficeStation,
   ImprovementProposal,
   JobRun,
@@ -129,6 +132,7 @@ import type {
   ProductionAsset,
   ProductionPack,
   ProductionDestination,
+  PlatformExecutionPackage,
   PublishingDiff,
   PublishingConnector,
   PortfolioScore,
@@ -194,6 +198,8 @@ export interface AppDataState {
   researchEvidence: ResearchEvidence[];
   productionDestinations: ProductionDestination[];
   contentInventoryItems: ContentInventoryItem[];
+  externalPlatformRequirements: ExternalPlatformRequirement[];
+  platformExecutionPackages: PlatformExecutionPackage[];
   autonomousImprovementRuns: AutonomousImprovementRun[];
   missionDrafts: MissionDraft[];
   missionRuns: MissionRun[];
@@ -283,6 +289,8 @@ type EntityKey =
   | "researchEvidence"
   | "productionDestinations"
   | "contentInventoryItems"
+  | "externalPlatformRequirements"
+  | "platformExecutionPackages"
   | "autonomousImprovementRuns"
   | "missionDrafts"
   | "missionRuns"
@@ -382,6 +390,8 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "researchEvidence", tableName: "research_evidence" },
   { stateKey: "productionDestinations", tableName: "production_destinations" },
   { stateKey: "contentInventoryItems", tableName: "content_inventory_items" },
+  { stateKey: "externalPlatformRequirements", tableName: "external_platform_requirements" },
+  { stateKey: "platformExecutionPackages", tableName: "platform_execution_packages" },
   { stateKey: "autonomousImprovementRuns", tableName: "autonomous_improvement_runs" },
   { stateKey: "missionDrafts", tableName: "mission_drafts" },
   { stateKey: "missionRuns", tableName: "mission_runs" },
@@ -465,6 +475,8 @@ export const initialAppDataState: AppDataState = {
   researchEvidence,
   productionDestinations,
   contentInventoryItems,
+  externalPlatformRequirements,
+  platformExecutionPackages,
   autonomousImprovementRuns,
   missionDrafts: [],
   missionRuns: [],
@@ -755,6 +767,25 @@ function markInterruptedCommands(state: AppDataState) {
   return changed;
 }
 
+function defaultBudgetPlan(state: AppDataState, proposalId: string) {
+  const remaining = state.dashboardSummary?.remainingCapital ?? state.userSettings?.totalStartingCapital ?? 0;
+  return {
+    id: `budget-plan-${proposalId}`,
+    currency: "USD" as const,
+    portfolioStartingCapital: state.dashboardSummary?.totalStartingCapital ?? state.userSettings?.totalStartingCapital ?? 0,
+    portfolioRemainingCapital: remaining,
+    businessBudgetCap: 0,
+    requiredSpend: 0,
+    recommendedSpend: 0,
+    zeroBudgetPath: "Use local drafts, free research, and manual review before any paid action.",
+    breakEvenEstimate: "No paid break-even required for the zero-spend validation path.",
+    spendApprovalRequired: false,
+    budgetRisk: "within_cap" as const,
+    approvalBlockers: [],
+    assumptions: ["Migrated from an older proposal record that did not include Phase 11C budget fields."],
+  };
+}
+
 function normalizePhase6BState(state: AppDataState) {
   state.missionDrafts ??= [];
   state.missionRuns ??= [];
@@ -792,7 +823,32 @@ function normalizePhase6BState(state: AppDataState) {
   state.researchEvidence ??= [];
   state.productionDestinations ??= [];
   state.contentInventoryItems ??= [];
+  state.externalPlatformRequirements ??= [];
+  state.platformExecutionPackages ??= [];
   state.autonomousImprovementRuns ??= [];
+  state.businessProposals = state.businessProposals.map((proposal) => ({
+    ...proposal,
+    budgetPlan: proposal.budgetPlan ?? defaultBudgetPlan(state, proposal.id),
+    externalPlatformRequirementIds: proposal.externalPlatformRequirementIds ?? [],
+    platformExecutionPackageIds: proposal.platformExecutionPackageIds ?? [],
+    readinessChecklist: proposal.readinessChecklist ?? [
+      { label: "Budget", status: "passed", detail: "Zero-spend path is available." },
+      { label: "Evidence", status: proposal.evidenceIds?.length ? "passed" : "missing", detail: "Demand evidence is required before launch." },
+      { label: "Approval", status: "needs_review", detail: "External actions require separate approval." },
+    ],
+    qualityScore: proposal.qualityScore ?? proposal.validationScore ?? 0,
+    missingRequirements: proposal.missingRequirements ?? [],
+  }));
+  state.approvedBusinesses = state.approvedBusinesses.map((business) => {
+    const proposal = state.businessProposals.find((item) => item.id === business.proposalId);
+    return {
+      ...business,
+      budgetPlan: business.budgetPlan ?? proposal?.budgetPlan ?? defaultBudgetPlan(state, business.proposalId),
+      externalPlatformRequirementIds: business.externalPlatformRequirementIds ?? proposal?.externalPlatformRequirementIds ?? [],
+      platformExecutionPackageIds: business.platformExecutionPackageIds ?? proposal?.platformExecutionPackageIds ?? [],
+      readinessChecklist: business.readinessChecklist ?? proposal?.readinessChecklist ?? [],
+    };
+  });
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;
   state.publishingConnectors ??= cloneState(initialAppDataState).publishingConnectors;

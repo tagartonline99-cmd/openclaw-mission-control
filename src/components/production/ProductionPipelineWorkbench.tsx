@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { CheckCircle2, FileText, Hammer, Lock, PackageCheck, ShieldAlert, Sparkles } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
-import { formatDateTime, statusTone } from "../../utils/formatting";
+import { formatCurrency, formatDateTime, statusTone } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -33,7 +33,9 @@ export function ProductionPipelineWorkbench() {
   const businessProduction = data.approvedBusinesses.flatMap((business) => {
     const destinations = data.productionDestinations.filter((destination) => business.publishingDestinationIds.includes(destination.id));
     const content = data.contentInventoryItems.filter((item) => business.contentInventoryIds.includes(item.id));
-    return destinations.map((destination) => ({ business, destination, content: content.filter((item) => !item.destinationId || item.destinationId === destination.id) }));
+    const platformRequirements = data.externalPlatformRequirements.filter((item) => business.externalPlatformRequirementIds.includes(item.id));
+    const platformPackages = data.platformExecutionPackages.filter((item) => business.platformExecutionPackageIds.includes(item.id));
+    return destinations.map((destination) => ({ business, destination, content: content.filter((item) => !item.destinationId || item.destinationId === destination.id), platformRequirements, platformPackages }));
   });
 
   async function createPack() {
@@ -84,7 +86,7 @@ export function ProductionPipelineWorkbench() {
             </p>
           ) : (
             <div className="grid gap-4 xl:grid-cols-2">
-              {businessProduction.map(({ business, destination, content }) => (
+              {businessProduction.map(({ business, destination, content, platformRequirements, platformPackages }) => (
                 <div key={`${business.id}-${destination.id}`} className="rounded-lg border border-white/10 bg-black/25 p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
@@ -94,6 +96,9 @@ export function ProductionPipelineWorkbench() {
                     <Badge tone={destination.approvalRequired ? "red" : "emerald"}>{destination.approvalRequired ? "approval required" : "local only"}</Badge>
                   </div>
                   <p className="mt-3 text-sm leading-6 text-slate-300">{destination.description}</p>
+                  <div className="mt-3 rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3 text-sm text-emerald-50">
+                    Budget: cap {formatCurrency(business.budgetPlan.businessBudgetCap)}, required spend {formatCurrency(business.budgetPlan.requiredSpend)}, recommended spend {formatCurrency(business.budgetPlan.recommendedSpend)}. No spend runs from production work.
+                  </div>
                   <div className="mt-4 grid gap-3 md:grid-cols-2">
                     <div className="rounded-md border border-white/10 bg-black/25 p-3">
                       <p className="text-xs font-semibold uppercase text-slate-500">Content created</p>
@@ -108,6 +113,23 @@ export function ProductionPipelineWorkbench() {
                       </div>
                     </div>
                   </div>
+                  {platformRequirements.length > 0 || platformPackages.length > 0 ? (
+                    <div className="mt-3 rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                      <p className="text-xs font-semibold uppercase text-amber-100">Platform package visibility</p>
+                      {platformRequirements.map((item) => (
+                        <p key={item.id} className="mt-2 text-sm leading-6 text-slate-300">
+                          {item.platform}: user login {item.userLoginRequired ? "required" : "not required"}, credentials stored {item.credentialsStored ? "yes" : "no"}, publish status {label(item.publishStatus)}.
+                        </p>
+                      ))}
+                      {platformPackages.map((item) => (
+                        <div key={item.id} className="mt-2 rounded-md border border-white/10 bg-black/25 p-2">
+                          <p className="font-semibold text-stone-100">{item.title}</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-400">{item.approvalBoundary}</p>
+                          <p className="mt-1 text-xs text-slate-500">Fields ready: {Object.keys(item.exactFields).join(", ")}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

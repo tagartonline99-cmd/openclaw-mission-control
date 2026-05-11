@@ -3,7 +3,7 @@ import type React from "react";
 import { useMemo, useState } from "react";
 import { useAppData } from "../../app/AppDataContext";
 import type { BusinessTaskStatus } from "../../types";
-import { formatDateTime } from "../../utils/formatting";
+import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Progress } from "../ui/progress";
@@ -78,6 +78,7 @@ export function BusinessTasksBoard() {
                 {tasks.map((task) => {
                   const proposal = data.businessProposals.find((item) => item.id === task.proposalId);
                   const business = data.approvedBusinesses.find((item) => item.id === task.businessId);
+                  const budgetPlan = proposal?.budgetPlan ?? business?.budgetPlan;
                   return (
                     <button
                       key={task.id}
@@ -108,6 +109,11 @@ export function BusinessTasksBoard() {
                           {task.currentSource}
                         </p>
                       ) : null}
+                      {budgetPlan ? (
+                        <p className="mt-2 text-xs text-emerald-100">
+                          Budget known: cap {formatCurrency(budgetPlan.businessBudgetCap)}, required {formatCurrency(budgetPlan.requiredSpend)}, remaining {formatCurrency(budgetPlan.portfolioRemainingCapital)}
+                        </p>
+                      ) : null}
                     </button>
                   );
                 })}
@@ -124,6 +130,31 @@ export function BusinessTasksBoard() {
         <CardContent className="space-y-4">
           {selectedTask ? (
             <>
+              {(() => {
+                const proposal = data.businessProposals.find((item) => item.id === selectedTask.proposalId);
+                const business = data.approvedBusinesses.find((item) => item.id === selectedTask.businessId);
+                const budgetPlan = proposal?.budgetPlan ?? business?.budgetPlan;
+                const platformRequirements = proposal
+                  ? data.externalPlatformRequirements.filter((item) => proposal.externalPlatformRequirementIds.includes(item.id))
+                  : business
+                    ? data.externalPlatformRequirements.filter((item) => business.externalPlatformRequirementIds.includes(item.id))
+                    : [];
+                return (
+                  <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-emerald-100">What this agent knows</p>
+                    <p className="mt-1 text-sm leading-6 text-emerald-50">
+                      {budgetPlan
+                        ? `Budget cap ${formatCurrency(budgetPlan.businessBudgetCap)}, required spend ${formatCurrency(budgetPlan.requiredSpend)}, remaining capital ${formatCurrency(budgetPlan.portfolioRemainingCapital)}.`
+                        : "No proposal budget is attached yet."}
+                    </p>
+                    {platformRequirements.length > 0 ? (
+                      <p className="mt-1 text-xs text-slate-300">
+                        Platform boundary: {platformRequirements.map((item) => `${item.platform} requires ${item.userLoginRequired ? "manual user login" : "no login"} and ${item.approvalRequiredBeforePublish ? "separate publish approval" : "no publish approval"}`).join("; ")}.
+                      </p>
+                    ) : null}
+                  </div>
+                );
+              })()}
               <div>
                 <Badge tone={selectedTask.approvalRequired ? "red" : "teal"}>
                   {selectedTask.approvalRequired ? "requires approval" : "safe autonomous"}

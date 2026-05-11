@@ -183,6 +183,9 @@ export type ProductionDestinationType = "static_website" | "newsletter" | "blog_
 export type ProductionDestinationStatus = "local_draft" | "ready_for_review" | "needs_approval" | "blocked";
 export type ContentInventoryStatus = "brief" | "draft" | "ready_for_review" | "approved_local" | "blocked";
 export type AutonomousImprovementRunStatus = "running" | "paused" | "blocked" | "complete";
+export type BudgetRisk = "within_cap" | "needs_spend_approval" | "over_cap" | "over_remaining" | "missing";
+export type PlatformPublishStatus = "local_draft" | "ready_for_approval" | "approval_requested" | "approved" | "blocked";
+export type ReadinessStatus = "passed" | "missing" | "needs_review" | "blocked";
 export type MissionBriefSectionKind =
   | "overview"
   | "research"
@@ -283,6 +286,57 @@ export interface ProductionDestination {
   updatedAt: string;
 }
 
+export interface BudgetPlan {
+  id: string;
+  currency: "USD";
+  portfolioStartingCapital: number;
+  portfolioRemainingCapital: number;
+  businessBudgetCap: number;
+  requiredSpend: number;
+  recommendedSpend: number;
+  zeroBudgetPath: string;
+  breakEvenEstimate: string;
+  spendApprovalRequired: boolean;
+  budgetRisk: BudgetRisk;
+  approvalBlockers: string[];
+  assumptions: string[];
+}
+
+export interface ExternalPlatformRequirement {
+  id: string;
+  proposalId?: string;
+  businessId?: string;
+  platform: string;
+  accountNeeded: boolean;
+  userLoginRequired: boolean;
+  credentialsStored: boolean;
+  requiredAssets: string[];
+  publishStatus: PlatformPublishStatus;
+  approvalRequiredBeforePublish: boolean;
+  blockedActions: string[];
+  notes: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PlatformExecutionPackage {
+  id: string;
+  proposalId?: string;
+  businessId?: string;
+  platform: string;
+  title: string;
+  status: PlatformPublishStatus;
+  actionLabel: string;
+  userLoginRequired: boolean;
+  exactFields: Record<string, string>;
+  requiredAssets: string[];
+  policyChecks: string[];
+  approvalBoundary: string;
+  approvalId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ContentInventoryItem {
   id: string;
   proposalId?: string;
@@ -314,6 +368,12 @@ export interface BusinessProposal {
   productionPlan: string[];
   publishingDestinationIds: string[];
   contentInventoryIds: string[];
+  budgetPlan: BudgetPlan;
+  externalPlatformRequirementIds: string[];
+  platformExecutionPackageIds: string[];
+  readinessChecklist: Array<{ label: string; status: ReadinessStatus; detail: string }>;
+  qualityScore: number;
+  missingRequirements: string[];
   zeroBudgetValidationTest: string;
   successMetrics: string[];
   failureMetrics: string[];
@@ -343,6 +403,10 @@ export interface ApprovedBusiness {
   publishingDestinationIds: string[];
   contentInventoryIds: string[];
   researchEvidenceIds: string[];
+  budgetPlan: BudgetPlan;
+  externalPlatformRequirementIds: string[];
+  platformExecutionPackageIds: string[];
+  readinessChecklist: Array<{ label: string; status: ReadinessStatus; detail: string }>;
   risks: string[];
   nextAction: string;
   createdAt: string;

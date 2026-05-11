@@ -1,13 +1,13 @@
-import { Archive, BriefcaseBusiness, ExternalLink, FileText, Pause, Play, ShieldAlert, Sparkles } from "lucide-react";
+import { Archive, BriefcaseBusiness, ExternalLink, FileText, PackageCheck, Pause, Play, ShieldAlert, Sparkles, WalletCards } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
-import { formatDateTime } from "../../utils/formatting";
+import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Progress } from "../ui/progress";
 
 export function BusinessesWorkbench() {
-  const { data } = useAppData();
+  const { data, preparePlatformPublishApproval } = useAppData();
   const activeBusinesses = data.approvedBusinesses.filter((business) => business.status !== "archived");
 
   if (activeBusinesses.length === 0) {
@@ -70,6 +70,8 @@ export function BusinessesWorkbench() {
           const destinations = data.productionDestinations.filter((item) => business.publishingDestinationIds.includes(item.id));
           const content = data.contentInventoryItems.filter((item) => business.contentInventoryIds.includes(item.id));
           const evidence = data.researchEvidence.filter((item) => business.researchEvidenceIds.includes(item.id));
+          const platformRequirements = data.externalPlatformRequirements.filter((item) => business.externalPlatformRequirementIds.includes(item.id));
+          const platformPackages = data.platformExecutionPackages.filter((item) => business.platformExecutionPackageIds.includes(item.id));
           const tasks = data.businessTasks.filter((task) => business.activeTaskIds.includes(task.id) || task.businessId === business.id);
           const run = data.autonomousImprovementRuns.find((item) => item.businessId === business.id);
           return (
@@ -88,6 +90,18 @@ export function BusinessesWorkbench() {
               </CardHeader>
               <CardContent className="space-y-4">
                 <p className="text-sm leading-6 text-slate-300">{business.teamLeaderRecommendation}</p>
+                <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase text-emerald-100">
+                    <WalletCards className="h-3.5 w-3.5" />
+                    Budget guard
+                  </p>
+                  <div className="mt-2 grid gap-2 text-sm text-slate-200 md:grid-cols-3">
+                    <span>Remaining: <strong className="text-emerald-100">{formatCurrency(business.budgetPlan.portfolioRemainingCapital)}</strong></span>
+                    <span>Cap: <strong className="text-stone-50">{formatCurrency(business.budgetPlan.businessBudgetCap)}</strong></span>
+                    <span>Required: <strong className="text-stone-50">{formatCurrency(business.budgetPlan.requiredSpend)}</strong></span>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-emerald-50">{business.budgetPlan.zeroBudgetPath}</p>
+                </div>
                 <div>
                   <div className="mb-1 flex justify-between text-xs uppercase text-slate-500">
                     <span>Business stage</span>
@@ -122,6 +136,46 @@ export function BusinessesWorkbench() {
                     ))}
                   </div>
                 </div>
+                {platformRequirements.length > 0 ? (
+                  <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                    <p className="text-xs font-semibold uppercase text-amber-100">External platform requirements</p>
+                    <div className="mt-2 space-y-2">
+                      {platformRequirements.map((item) => (
+                        <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-stone-100">{item.platform}</span>
+                            <Badge tone="red">{item.publishStatus.replace(/_/g, " ")}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs text-slate-400">
+                            Account needed: {item.accountNeeded ? "yes" : "no"} / User login: {item.userLoginRequired ? "yes" : "no"} / Credentials stored: {item.credentialsStored ? "yes" : "no"}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {platformPackages.length > 0 ? (
+                  <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                    <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+                      <PackageCheck className="h-3.5 w-3.5" />
+                      Execution packages
+                    </p>
+                    <div className="mt-2 space-y-2">
+                      {platformPackages.map((item) => (
+                        <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <span className="text-sm font-semibold text-stone-100">{item.title}</span>
+                            <Badge tone={item.status === "approval_requested" ? "red" : "amber"}>{item.status.replace(/_/g, " ")}</Badge>
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-slate-400">{item.approvalBoundary}</p>
+                          <Button className="mt-2" variant="outline" size="sm" disabled={item.status === "approval_requested"} onClick={() => void preparePlatformPublishApproval(item.id)}>
+                            Prepare Fiverr Publish Approval
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="rounded-md border border-white/10 bg-black/25 p-3">
                     <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">

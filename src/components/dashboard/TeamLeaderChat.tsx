@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { BriefcaseBusiness, Crown, Eye, Send, ShieldAlert, Sparkles } from "lucide-react";
+import { BriefcaseBusiness, Crown, Eye, HelpCircle, Send, ShieldAlert, Sparkles, WalletCards } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Select } from "../ui/select";
-import { formatDateTime } from "../../utils/formatting";
+import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { cn } from "../../utils/cn";
 import { useAppData } from "../../app/AppDataContext";
 
@@ -17,6 +17,7 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
   const riskyPending = approvalRequests.filter((request) => request.status === "pending").length;
   const latestHunt = opportunityHunts[0];
   const latestProposal = latestHunt ? businessProposals.find((proposal) => proposal.id === latestHunt.businessProposalId) : businessProposals[0];
+  const latestPlatformRequirements = latestProposal ? data.externalPlatformRequirements.filter((item) => latestProposal.externalPlatformRequirementIds.includes(item.id)) : [];
   const activeTasks = latestHunt ? businessTasks.filter((task) => task.huntId === latestHunt.id && task.status !== "done") : [];
   const doneTasks = latestHunt ? businessTasks.filter((task) => task.huntId === latestHunt.id && task.status === "done") : [];
   const messages = useMemo(
@@ -92,6 +93,35 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
                 </div>
               ))}
             </div>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-slate-200">
+              <HelpCircle className="h-4 w-4 text-amber-100" />
+              Why nothing may be happening
+            </div>
+            <p className="mt-2 text-sm leading-6 text-slate-400">
+              Status/help questions stay as chat replies. Work commands such as "create a Fiverr gig business idea with zero budget" create visible Tasks, Guild Office movement, and a Mission Brief.
+            </p>
+          </div>
+        )}
+
+        {latestProposal?.budgetPlan ? (
+          <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/8 p-4">
+            <div className="flex items-center gap-2 text-sm font-semibold text-emerald-100">
+              <WalletCards className="h-4 w-4" />
+              What agents know
+            </div>
+            <div className="mt-2 grid gap-2 text-sm text-slate-200 md:grid-cols-3">
+              <span>Budget cap: <strong>{formatCurrency(latestProposal.budgetPlan.businessBudgetCap)}</strong></span>
+              <span>Required spend: <strong>{formatCurrency(latestProposal.budgetPlan.requiredSpend)}</strong></span>
+              <span>Remaining: <strong>{formatCurrency(latestProposal.budgetPlan.portfolioRemainingCapital)}</strong></span>
+            </div>
+            {latestPlatformRequirements.length > 0 ? (
+              <p className="mt-2 text-xs leading-5 text-slate-300">
+                Platform boundaries: {latestPlatformRequirements.map((item) => `${item.platform} ${item.userLoginRequired ? "requires manual login" : "does not require login"}; credentials stored: ${item.credentialsStored ? "yes" : "no"}; publish approval: ${item.approvalRequiredBeforePublish ? "required" : "not required"}`).join(" / ")}.
+              </p>
+            ) : null}
           </div>
         ) : null}
 

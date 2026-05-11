@@ -32,6 +32,7 @@ import type {
   ExperimentDecision,
   ExperimentAnalysis,
   ExternalActionLockMode,
+  ExternalPlatformRequirement,
   JobRun,
   GuildOfficeStation,
   MarketIntelligenceReport,
@@ -55,6 +56,7 @@ import type {
   ProductionAsset,
   ProductionPack,
   ProductionDestination,
+  PlatformExecutionPackage,
   PublishingDiff,
   Quest,
   ResearchEvidence,
@@ -146,6 +148,7 @@ type AppDataContextValue = {
   createOpportunityHuntFromMessage: (message: string) => Promise<string>;
   approveBusinessProposal: (proposalId: string) => Promise<string>;
   updateBusinessProposalStatus: (proposalId: string, status: BusinessProposal["status"]) => Promise<void>;
+  preparePlatformPublishApproval: (packageId: string) => Promise<string>;
   createMissionDraftFromMessage: (input: { message: string; questId: string }) => Promise<string>;
   requestMissionStart: (draftId: string) => Promise<string>;
   retryMissionStep: (stepId: string) => Promise<void>;
@@ -413,6 +416,59 @@ function shouldStartOpportunityHunt(message: string) {
   );
 }
 
+function money(value: number) {
+  return `$${Math.max(0, value).toLocaleString()}`;
+}
+
+function isFiverrPrompt(message: string) {
+  const lower = message.toLowerCase();
+  return lower.includes("fiverr") || lower.includes("gig") || lower.includes("marketplace service");
+}
+
+function buildBudgetPlan(current: AppDataState, proposalId: string, options: { requiredSpend: number; recommendedSpend: number; businessBudgetCap: number; zeroBudgetPath: string; assumptions: string[] }) {
+  const starting = current.dashboardSummary.totalStartingCapital || current.userSettings.totalStartingCapital || 0;
+  const remaining = current.dashboardSummary.remainingCapital ?? Math.max(starting - current.dashboardSummary.allocatedCapital, 0);
+  const approvalBlockers = [
+    options.requiredSpend > remaining ? `Required spend ${money(options.requiredSpend)} exceeds remaining capital ${money(remaining)}.` : "",
+    options.requiredSpend > options.businessBudgetCap ? `Required spend ${money(options.requiredSpend)} exceeds proposal cap ${money(options.businessBudgetCap)}.` : "",
+  ].filter(Boolean);
+  return {
+    id: `budget-plan-${proposalId}`,
+    currency: "USD" as const,
+    portfolioStartingCapital: starting,
+    portfolioRemainingCapital: remaining,
+    businessBudgetCap: options.businessBudgetCap,
+    requiredSpend: options.requiredSpend,
+    recommendedSpend: options.recommendedSpend,
+    zeroBudgetPath: options.zeroBudgetPath,
+    breakEvenEstimate:
+      options.requiredSpend === 0
+        ? "No paid break-even is required for the first validation pass because required spend is $0."
+        : `Recover ${money(options.requiredSpend)} before any scale recommendation; spend still needs separate approval.`,
+    spendApprovalRequired: options.requiredSpend > 0 || options.recommendedSpend > 0,
+    budgetRisk:
+      approvalBlockers.length > 0
+        ? options.requiredSpend > remaining
+          ? "over_remaining" as const
+          : "over_cap" as const
+        : options.requiredSpend > 0
+          ? "needs_spend_approval" as const
+          : "within_cap" as const,
+    approvalBlockers,
+    assumptions: options.assumptions,
+  };
+}
+
+function proposalBudgetBlockers(proposal: BusinessProposal) {
+  const plan = proposal.budgetPlan;
+  if (!plan) return ["Budget plan is missing."];
+  return [
+    ...plan.approvalBlockers,
+    plan.requiredSpend > plan.portfolioRemainingCapital ? `Required spend ${money(plan.requiredSpend)} exceeds remaining capital ${money(plan.portfolioRemainingCapital)}.` : "",
+    plan.requiredSpend > plan.businessBudgetCap ? `Required spend ${money(plan.requiredSpend)} exceeds proposal cap ${money(plan.businessBudgetCap)}.` : "",
+  ].filter(Boolean);
+}
+
 function buildProposalMarkdown(proposal: BusinessProposal, evidence: ResearchEvidence[], destinations: ProductionDestination[], contents: ContentInventoryItem[]) {
   return [
     `# ${proposal.title}`,
@@ -438,6 +494,13 @@ function buildProposalMarkdown(proposal: BusinessProposal, evidence: ResearchEvi
     `## Publishing Destinations`,
     ...destinations.map((item) => `- ${item.name}: ${item.description} (${item.status.replace(/_/g, " ")})`),
     "",
+    `## Budget Plan`,
+    `- Portfolio remaining capital: ${money(proposal.budgetPlan.portfolioRemainingCapital)}`,
+    `- Business budget cap: ${money(proposal.budgetPlan.businessBudgetCap)}`,
+    `- Required spend: ${money(proposal.budgetPlan.requiredSpend)}`,
+    `- Recommended spend: ${money(proposal.budgetPlan.recommendedSpend)}`,
+    `- Zero-budget path: ${proposal.budgetPlan.zeroBudgetPath}`,
+    "",
     `## Content Inventory`,
     ...contents.map((item) => `- ${item.title}: ${item.summary}`),
     "",
@@ -451,12 +514,30 @@ function buildProposalMarkdown(proposal: BusinessProposal, evidence: ResearchEvi
 
 function buildOpportunityHuntState(current: AppDataState, message: string, chatMessageId: string) {
   const now = new Date().toISOString();
+  const fiverrMode = isFiverrPrompt(message);
   const huntId = id("opportunity-hunt");
   const proposalId = id("business-proposal");
   const destinationStaticId = id("production-destination");
   const destinationNewsletterId = id("production-destination");
+  const destinationFiverrId = id("production-destination");
+  const platformRequirementId = id("platform-requirement");
+  const platformPackageId = id("platform-package");
   const contentLandingId = id("content-inventory");
   const contentArticleId = id("content-inventory");
+  const contentFiverrGigId = id("content-inventory");
+  const budgetPlan = buildBudgetPlan(current, proposalId, {
+    requiredSpend: 0,
+    recommendedSpend: 0,
+    businessBudgetCap: 0,
+    zeroBudgetPath: fiverrMode
+      ? "Draft the Fiverr gig locally, research competing gigs with approved/safe read-only research, and publish only after a separate exact Fiverr approval. No paid tools, purchases, ads, or promoted listings."
+      : "Create local drafts, free public research notes, and a no-spend validation package before asking for any publishing or connector approval.",
+    assumptions: [
+      "The user requested a zero-budget path or no spend was explicitly approved.",
+      "Agents know remaining portfolio capital and must not spend any of it without a separate approval.",
+      fiverrMode ? "Fiverr account login is manual; Mission Control does not store credentials." : "External publishing destinations remain draft-only until approved.",
+    ],
+  });
   const evidence: ResearchEvidence[] = [
     {
       id: id("research-evidence"),
@@ -494,6 +575,22 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
       confidence: 76,
       capturedAt: now,
     },
+    ...(fiverrMode
+      ? [
+          {
+            id: id("research-evidence"),
+            huntId,
+            proposalId,
+            agentId: "agent-researcher" as const,
+            title: "Fiverr service marketplace requires clear gig scope and manual account readiness",
+            url: "https://www.fiverr.com/",
+            sourceType: "marketplace" as const,
+            summary: "A Fiverr gig can be prepared as a local draft, but publishing requires user login, platform compliance review, and a separate exact approval.",
+            confidence: 70,
+            capturedAt: now,
+          },
+        ]
+      : []),
   ];
   const destinations: ProductionDestination[] = [
     {
@@ -522,6 +619,28 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
       createdAt: now,
       updatedAt: now,
     },
+    ...(fiverrMode
+      ? [
+          {
+            id: destinationFiverrId,
+            proposalId,
+            type: "marketplace_product_page" as const,
+            name: "Fiverr Gig Draft / Manual Login Required",
+            connector: "marketplace" as const,
+            status: "needs_approval" as const,
+            approvalRequired: true,
+            description: "A local Fiverr gig draft package. The user must log in manually; Mission Control does not store credentials or publish without a separate exact approval.",
+            publishingRules: [
+              "User must log in to Fiverr manually.",
+              "No credentials are stored in Mission Control.",
+              "No publish, form submission, paid promotion, purchase, or messaging occurs from business approval.",
+              "A separate Fiverr publish approval must show exact fields before any connector/browser action.",
+            ],
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]
+      : []),
   ];
   const contentInventory: ContentInventoryItem[] = [
     {
@@ -550,14 +669,94 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
       createdAt: now,
       updatedAt: now,
     },
+    ...(fiverrMode
+      ? [
+          {
+            id: contentFiverrGigId,
+            proposalId,
+            destinationId: destinationFiverrId,
+            title: "Fiverr gig draft: AI workflow setup for freelancers",
+            type: "product_page" as const,
+            status: "draft" as const,
+            summary: "Local Fiverr gig fields prepared for review; publishing is locked behind a separate exact approval.",
+            draftContent:
+              "Gig title: I will create a practical AI workflow checklist for your freelance service. Category: Business consulting / workflow support. Pricing: starter manual package only, no guaranteed results. Delivery scope: intake questions, workflow checklist, setup notes, and revision boundary.",
+            createdByAgentId: "agent-writer" as const,
+            createdAt: now,
+            updatedAt: now,
+          },
+        ]
+      : []),
   ];
+  const externalPlatformRequirements: ExternalPlatformRequirement[] = fiverrMode
+    ? [
+        {
+          id: platformRequirementId,
+          proposalId,
+          platform: "Fiverr",
+          accountNeeded: true,
+          userLoginRequired: true,
+          credentialsStored: false,
+          requiredAssets: ["Gig title", "Category", "Tags", "Pricing packages", "Delivery scope", "FAQ", "Gig description", "Policy/claims check", "Gig image brief"],
+          publishStatus: "local_draft",
+          approvalRequiredBeforePublish: true,
+          blockedActions: ["Credential storage", "Login automation without user present", "Form submission", "Publishing", "Paid promotion", "Purchases", "Buyer messaging"],
+          notes: "Business approval creates only a local Fiverr package. User login and a separate exact publish approval are required before any external action.",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]
+    : [
+        {
+          id: platformRequirementId,
+          proposalId,
+          platform: "Manual publishing / static site",
+          accountNeeded: false,
+          userLoginRequired: false,
+          credentialsStored: false,
+          requiredAssets: ["Landing page draft", "Content brief", "Disclosure/policy notes", "Approval checklist"],
+          publishStatus: "local_draft",
+          approvalRequiredBeforePublish: true,
+          blockedActions: ["External publishing", "Connector execution", "Paid promotion", "Form submission"],
+          notes: "No external account is needed for the local draft; any public publishing remains a separate approval.",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ];
+  const platformExecutionPackages: PlatformExecutionPackage[] = fiverrMode
+    ? [
+        {
+          id: platformPackageId,
+          proposalId,
+          platform: "Fiverr",
+          title: "Fiverr gig publish package",
+          status: "local_draft",
+          actionLabel: "Prepare Fiverr Publish Approval",
+          userLoginRequired: true,
+          exactFields: {
+            "Gig title": "I will create a practical AI workflow checklist for your freelance service",
+            Category: "Business consulting or productivity support",
+            Tags: "ai workflow, freelancer, checklist, productivity, client work",
+            "Starter package": "$0 external spend to prepare; pricing recommendation is draft-only for user review",
+            Description:
+              "Draft copy explains practical workflow help without income guarantees, fake reviews, spam, or misleading claims.",
+            FAQ: "Clarifies scope, delivery files, revision limit, and that results are not guaranteed.",
+          },
+          requiredAssets: ["Gig copy", "Package scope", "FAQ", "Gig image brief", "Policy and claim check"],
+          policyChecks: ["No guaranteed income", "No fake reviews", "No spam/outreach", "No unsupported claims", "No paid promotion without approval"],
+          approvalBoundary: "This package cannot publish by itself. User must log in manually, review exact fields, then approve one publish action.",
+          createdAt: now,
+          updatedAt: now,
+        },
+      ]
+    : [];
   const tasks: BusinessTask[] = taskBlueprints.map((task, index) => ({
     id: id("business-task"),
     huntId,
     proposalId,
     agentId: task.agentId,
     title: task.title,
-    objective: task.objective,
+    objective: `${task.objective} Budget context: portfolio ${money(budgetPlan.portfolioStartingCapital)}, remaining ${money(budgetPlan.portfolioRemainingCapital)}, business cap ${money(budgetPlan.businessBudgetCap)}, required spend ${money(budgetPlan.requiredSpend)}. ${fiverrMode ? "Platform context: Fiverr requires manual user login and a separate publish approval." : ""}`,
     status: index < 3 ? "now_working" : "queued",
     progress: index < 3 ? 18 + index * 8 : 0,
     currentArtifact: task.artifact,
@@ -565,72 +764,129 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
     dependency: index === 0 ? undefined : taskBlueprints[index - 1].title,
     expectedOutput: task.expectedOutput,
     approvalRequired: false,
-    logs: [`${agentLabel(task.agentId)} accepted the task from TeamLeader1A.`],
+    logs: [
+      `${agentLabel(task.agentId)} accepted the task from TeamLeader1A.`,
+      `Budget guard: cap ${money(budgetPlan.businessBudgetCap)}, required spend ${money(budgetPlan.requiredSpend)}, recommended spend ${money(budgetPlan.recommendedSpend)}.`,
+      fiverrMode ? "Platform guard: Fiverr publish/login/form submission are locked behind a separate approval." : "Platform guard: external publishing stays locked until approval.",
+    ],
     startedAt: index < 3 ? now : undefined,
     updatedAt: now,
   }));
   const proposal: BusinessProposal = {
     id: proposalId,
     huntId,
-    title: "Business Proposal: Practical AI Workflow Kit for Freelancers",
-    recommendedIdea: "A zero-budget content and template business that teaches freelancers practical AI workflows through a static site, newsletter drafts, and downloadable checklist templates.",
-    summary: "The team is validating a practical AI workflow kit for freelancers because it can be tested with content, templates, and email signup intent before spending money.",
-    businessModel: "Digital products",
-    targetAudience: "Freelancers, consultants, and solo service providers who want practical AI workflows for client work.",
-    whyMightWork: [
-      "The MVP can be created locally with no required spend.",
-      "The audience has recurring workflow problems and clear search/forum demand.",
-      "The offer can start as free templates and validate email/signup interest before monetization.",
-    ],
-    whyMightFail: [
-      "The AI workflow niche is crowded and may need a sharper positioning angle.",
-      "Search competition may be high for generic AI terms.",
-      "Users may prefer free content unless templates solve a specific painful workflow.",
-    ],
+    title: fiverrMode ? "Business Proposal: Fiverr AI Workflow Gig For Freelancers" : "Business Proposal: Practical AI Workflow Kit for Freelancers",
+    recommendedIdea: fiverrMode
+      ? "A zero-budget Fiverr service gig that sells a practical AI workflow checklist/setup package for freelancers, drafted locally first and published only after a separate exact Fiverr approval."
+      : "A zero-budget content and template business that teaches freelancers practical AI workflows through a static site, newsletter drafts, and downloadable checklist templates.",
+    summary: fiverrMode
+      ? "The team is validating a Fiverr gig concept with local gig copy, package scope, policy checks, and marketplace requirements before any login, form submission, publishing, messaging, or spend."
+      : "The team is validating a practical AI workflow kit for freelancers because it can be tested with content, templates, and email signup intent before spending money.",
+    businessModel: fiverrMode ? "Online services" : "Digital products",
+    targetAudience: fiverrMode ? "Freelancers and solo service providers who want help turning repeated client work into practical AI-assisted workflows." : "Freelancers, consultants, and solo service providers who want practical AI workflows for client work.",
+    whyMightWork: fiverrMode
+      ? [
+          "The gig can be drafted and reviewed with zero external spend.",
+          "Fiverr demand can be checked through marketplace/competitor research before publishing.",
+          "The offer is service-based, so the first validation target can be profile views, saves, or messages rather than paid ads.",
+        ]
+      : [
+          "The MVP can be created locally with no required spend.",
+          "The audience has recurring workflow problems and clear search/forum demand.",
+          "The offer can start as free templates and validate email/signup interest before monetization.",
+        ],
+    whyMightFail: fiverrMode
+      ? [
+          "Fiverr is competitive and new gigs may get little visibility without strong differentiation.",
+          "Publishing requires account readiness, platform compliance, and user-approved form submission.",
+          "Service scope could be too broad unless delivery boundaries are clear.",
+        ]
+      : [
+          "The AI workflow niche is crowded and may need a sharper positioning angle.",
+          "Search competition may be high for generic AI terms.",
+          "Users may prefer free content unless templates solve a specific painful workflow.",
+        ],
     evidenceIds: evidence.map((item) => item.id),
-    seoPlan: [
-      "Target long-tail intent around AI workflow templates for freelancers, client onboarding, meeting summaries, and proposal writing.",
-      "Create a pillar page plus practical briefs that avoid hype and unsupported income claims.",
-      "Use comparison/guide content only after claim and disclosure review.",
-    ],
-    contentPlan: [
-      "Landing page for the kit concept.",
-      "Three practical tutorial articles.",
-      "One newsletter issue draft.",
-      "One downloadable checklist sample.",
-    ],
-    productionPlan: [
-      "Create local static-site draft.",
-      "Create two downloadable template samples.",
-      "Prepare newsletter draft and signup copy as local assets only.",
-      "Prepare publishing checklist and approval package before any external action.",
-    ],
+    seoPlan: fiverrMode
+      ? [
+          "Research Fiverr gig titles and buyer language for AI workflow, virtual assistant, productivity, and freelance operations services.",
+          "Create supporting content around practical AI workflow setup for client onboarding, proposals, meeting notes, and delivery checklists.",
+          "Avoid claims about guaranteed ranking, orders, income, or platform results.",
+        ]
+      : [
+          "Target long-tail intent around AI workflow templates for freelancers, client onboarding, meeting summaries, and proposal writing.",
+          "Create a pillar page plus practical briefs that avoid hype and unsupported income claims.",
+          "Use comparison/guide content only after claim and disclosure review.",
+        ],
+    contentPlan: fiverrMode
+      ? [
+          "Fiverr gig title, description, FAQ, tags, and three package scopes.",
+          "Gig image brief and proof-of-work sample checklist.",
+          "Optional local landing page that explains the same service without publishing.",
+        ]
+      : [
+          "Landing page for the kit concept.",
+          "Three practical tutorial articles.",
+          "One newsletter issue draft.",
+          "One downloadable checklist sample.",
+        ],
+    productionPlan: fiverrMode
+      ? [
+          "Create local Fiverr gig draft fields.",
+          "Prepare service delivery checklist and revision boundary.",
+          "Prepare policy/claim review and exact publish approval package.",
+          "Keep Fiverr login, form submission, publishing, messaging, and paid promotion locked.",
+        ]
+      : [
+          "Create local static-site draft.",
+          "Create two downloadable template samples.",
+          "Prepare newsletter draft and signup copy as local assets only.",
+          "Prepare publishing checklist and approval package before any external action.",
+        ],
     publishingDestinationIds: destinations.map((item) => item.id),
     contentInventoryIds: contentInventory.map((item) => item.id),
+    budgetPlan,
+    externalPlatformRequirementIds: externalPlatformRequirements.map((item) => item.id),
+    platformExecutionPackageIds: platformExecutionPackages.map((item) => item.id),
+    readinessChecklist: [
+      { label: "Budget", status: budgetPlan.approvalBlockers.length ? "blocked" : "passed", detail: `${money(budgetPlan.requiredSpend)} required spend, ${money(budgetPlan.businessBudgetCap)} cap, ${money(budgetPlan.portfolioRemainingCapital)} remaining.` },
+      { label: "Evidence", status: evidence.length >= 3 ? "passed" : "needs_review", detail: `${evidence.length} evidence items are attached; live browsing remains separately controlled.` },
+      { label: "Platform", status: fiverrMode ? "needs_review" : "passed", detail: fiverrMode ? "Fiverr account/login and exact gig fields must be reviewed before publishing." : "Local draft destination is available." },
+      { label: "Compliance", status: "needs_review", detail: "No guarantees, fake reviews, spam, paid promotion, or unsupported claims." },
+      { label: "Approval", status: "needs_review", detail: "Business approval starts internal work only; external execution needs a separate approval." },
+    ],
+    qualityScore: fiverrMode ? 76 : 74,
+    missingRequirements: fiverrMode ? ["User must manually log in to Fiverr before any future publish approval can execute."] : [],
     zeroBudgetValidationTest:
-      "Build local landing page and sample checklist, then seek approval for a no-spend publishing test. Success is measured by email/signup intent and qualitative feedback, not guaranteed revenue.",
-    successMetrics: ["20 qualified email signups or saves", "5 useful qualitative responses", "3 content topics with repeat demand evidence"],
-    failureMetrics: ["No clear audience response", "No low-competition content entry point", "Users reject the core template value"],
-    risks: ["Crowded AI niche", "Potential overclaiming", "Newsletter/publishing actions require explicit approval", "No guaranteed revenue"],
-    validationScore: 74,
+      fiverrMode
+        ? "Create the Fiverr gig package locally, compare safe public marketplace positioning, then request a separate exact publish approval only after the user logs in manually. Success is measured by approved publish readiness and early platform signals, not guaranteed orders."
+        : "Build local landing page and sample checklist, then seek approval for a no-spend publishing test. Success is measured by email/signup intent and qualitative feedback, not guaranteed revenue.",
+    successMetrics: fiverrMode ? ["Gig package passes policy/claim review", "3 competitor positioning gaps identified", "User approves exact Fiverr fields before publish"] : ["20 qualified email signups or saves", "5 useful qualitative responses", "3 content topics with repeat demand evidence"],
+    failureMetrics: fiverrMode ? ["No clear buyer pain", "Gig scope cannot avoid misleading claims", "Required platform action exceeds approval boundary"] : ["No clear audience response", "No low-competition content entry point", "Users reject the core template value"],
+    risks: fiverrMode ? ["Fiverr competition", "Platform policy mistakes", "Overbroad delivery scope", "Publishing requires separate approval", "No guaranteed orders or income"] : ["Crowded AI niche", "Potential overclaiming", "Newsletter/publishing actions require explicit approval", "No guaranteed revenue"],
+    validationScore: fiverrMode ? 76 : 74,
     nextActions: [
       "Let agents finish the safe autonomous research pass.",
       "Review the proposal in Mission Briefs.",
       "Approve as Business only if the validation test and boundaries make sense.",
     ],
     teamLeaderRecommendation:
-      "Proceed to review after the agent tasks finish. This is a strong zero-budget validation candidate, but publishing and any connector action remain approval-gated.",
+      fiverrMode
+        ? "Proceed to review after the agent tasks finish. This is a zero-spend Fiverr draft candidate, but business approval will only create local packages. Fiverr login, publishing, messaging, paid promotion, and form submission require a separate exact approval."
+        : "Proceed to review after the agent tasks finish. This is a strong zero-budget validation candidate, but publishing and any connector action remain approval-gated.",
     status: "drafting",
     createdAt: now,
     updatedAt: now,
   };
   const hunt: OpportunityHunt = {
     id: huntId,
-    title: "Zero-budget opportunity hunt",
-    objective: "Find the best online business idea that can be validated quickly with zero budget.",
+    title: fiverrMode ? "Zero-budget Fiverr opportunity hunt" : "Zero-budget opportunity hunt",
+    objective: fiverrMode ? "Draft and validate a Fiverr gig concept with zero spend and no external action until separately approved." : "Find the best online business idea that can be validated quickly with zero budget.",
     sourcePrompt: message,
     status: "researching",
-    currentPhase: "AgentResearcher, AgentSeo, and AgentContent are working in parallel.",
+    currentPhase: fiverrMode
+      ? "AgentResearcher, AgentSeo, AgentWriter, and AgentProduction are drafting a Fiverr-ready local package with budget and platform constraints."
+      : "AgentResearcher, AgentSeo, and AgentContent are working in parallel.",
     zeroBudget: true,
     sourcePack: "broad_public_web",
     assignedAgentIds: opportunityAgentOrder,
@@ -673,7 +929,7 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
     startedAt: now,
     updatedAt: now,
   }));
-  return { hunt, proposal, evidence, destinations, contentInventory, tasks, sessions };
+  return { hunt, proposal, evidence, destinations, contentInventory, externalPlatformRequirements, platformExecutionPackages, tasks, sessions };
 }
 
 function syncGuildStations(state: AppDataState) {
@@ -3044,6 +3300,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         researchEvidence: [...built.evidence, ...current.researchEvidence],
         productionDestinations: [...built.destinations, ...current.productionDestinations],
         contentInventoryItems: [...built.contentInventory, ...current.contentInventoryItems],
+        externalPlatformRequirements: [...built.externalPlatformRequirements, ...current.externalPlatformRequirements],
+        platformExecutionPackages: [...built.platformExecutionPackages, ...current.platformExecutionPackages],
         businessTasks: [...built.tasks, ...current.businessTasks],
         agentWorkSessions: [...built.sessions, ...current.agentWorkSessions],
         teamLeaderChatMessages: [
@@ -3061,7 +3319,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("tl-chat-opportunity"),
             role: "teamleader",
             content:
-              `I started a live opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. Safe read-only research and internal planning do not need approval. I will bring you one business proposal to review before anything external happens.`,
+              `I started a live opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. They know the budget cap, remaining capital, and platform boundaries. Safe read-only research and internal planning do not need approval. I will bring you one business proposal to review before anything external happens.`,
             createdAt: now,
             mode: "local",
             relatedOpportunityHuntId: built.hunt.id,
@@ -3129,6 +3387,45 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const proposal = current.businessProposals.find((item) => item.id === proposalId);
       if (!proposal) throw new Error("Business proposal not found.");
       const now = new Date().toISOString();
+      const budgetBlockers = proposalBudgetBlockers(proposal);
+      if (budgetBlockers.length > 0) {
+        await persistOptimistic({
+          ...current,
+          businessProposals: current.businessProposals.map((item) =>
+            item.id === proposalId
+              ? {
+                  ...item,
+                  status: "revision_requested",
+                  missingRequirements: [...new Set([...(item.missingRequirements ?? []), ...budgetBlockers])],
+                  updatedAt: now,
+                }
+              : item,
+          ),
+          teamLeaderChatMessages: [
+            ...current.teamLeaderChatMessages,
+            {
+              id: id("tl-chat-budget-block"),
+              role: "teamleader",
+              content: `I cannot approve "${proposal.title}" yet because the budget guard failed: ${budgetBlockers.join(" ")} No business was launched and no external action ran.`,
+              createdAt: now,
+              mode: "system",
+              relatedBusinessProposalId: proposalId,
+            } satisfies TeamLeaderChatMessage,
+          ].slice(-120),
+          activityLogs: [
+            {
+              id: id("log-budget-block"),
+              category: "approval",
+              title: "Business approval blocked by budget guard",
+              detail: budgetBlockers.join(" "),
+              severity: "danger",
+              createdAt: now,
+            } satisfies ActivityLog,
+            ...current.activityLogs,
+          ],
+        });
+        return "";
+      }
       const businessIdeaId = id("business-idea");
       const questId = id("quest-approved-business");
       const businessId = id("approved-business");
@@ -3162,8 +3459,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         difficulty: "Adept",
         potentialReward: "Validated zero-budget business opportunity; revenue remains unproven.",
         riskLevel: "medium",
-        requiredBudget: 0,
-        capitalAllocated: 0,
+        requiredBudget: proposal.budgetPlan.requiredSpend,
+        capitalAllocated: proposal.budgetPlan.recommendedSpend,
         expectedTimeline: "7 days",
         validationEvidence: proposal.evidenceIds,
         successMetrics: proposal.successMetrics,
@@ -3225,6 +3522,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         publishingDestinationIds: proposal.publishingDestinationIds,
         contentInventoryIds: proposal.contentInventoryIds,
         researchEvidenceIds: proposal.evidenceIds,
+        budgetPlan: proposal.budgetPlan,
+        externalPlatformRequirementIds: proposal.externalPlatformRequirementIds,
+        platformExecutionPackageIds: proposal.platformExecutionPackageIds,
+        readinessChecklist: proposal.readinessChecklist,
         risks: proposal.risks,
         nextAction: "Continue safe autonomous improvement and prepare approval packages only when external action is needed.",
         createdAt: now,
@@ -3248,6 +3549,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const updatedContent = current.contentInventoryItems.map((item) =>
         proposal.contentInventoryIds.includes(item.id) ? { ...item, businessId, updatedAt: now } : item,
       );
+      const updatedPlatformRequirements = current.externalPlatformRequirements.map((item) =>
+        proposal.externalPlatformRequirementIds.includes(item.id) ? { ...item, businessId, updatedAt: now } : item,
+      );
+      const updatedPlatformPackages = current.platformExecutionPackages.map((item) =>
+        proposal.platformExecutionPackageIds.includes(item.id) ? { ...item, businessId, updatedAt: now } : item,
+      );
       const next: AppDataState = {
         ...current,
         businessIdeas: [idea, ...current.businessIdeas],
@@ -3258,6 +3565,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         autonomousImprovementRuns: [run, ...current.autonomousImprovementRuns],
         productionDestinations: updatedDestinations,
         contentInventoryItems: updatedContent,
+        externalPlatformRequirements: updatedPlatformRequirements,
+        platformExecutionPackages: updatedPlatformPackages,
         businessProposals: current.businessProposals.map((item) =>
           item.id === proposalId ? { ...item, status: "approved", questId, approvedBusinessId: businessId, updatedAt: now } : item,
         ),
@@ -3269,7 +3578,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             id: id("tl-chat-business-approved"),
             role: "teamleader",
-            content: `Approved. I promoted "${quest.title}" into an active business. Agents can keep improving it through safe research and local drafts. Publishing, spending, messaging, connector execution, launch, and form submission are still approval-gated.`,
+            content: `Approved. I promoted "${quest.title}" into an active business. Agents can keep improving it through safe research and local drafts within the ${money(proposal.budgetPlan.businessBudgetCap)} cap. Publishing, spending, messaging, connector execution, login, launch, and form submission are still approval-gated.`,
             createdAt: now,
             mode: "local",
             relatedApprovedBusinessId: businessId,
@@ -3295,6 +3604,57 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       };
       await persistOptimistic(next);
       return businessId;
+    },
+    [persistOptimistic],
+  );
+
+  const preparePlatformPublishApproval = useCallback(
+    async (packageId: string) => {
+      const current = dataRef.current;
+      const executionPackage = current.platformExecutionPackages.find((item) => item.id === packageId);
+      if (!executionPackage) throw new Error("Platform execution package not found.");
+      const now = new Date().toISOString();
+      const approvalId = id("approval-platform-publish");
+      const business = executionPackage.businessId ? current.approvedBusinesses.find((item) => item.id === executionPackage.businessId) : undefined;
+      const approval: ApprovalRequest = {
+        id: approvalId,
+        type: "Publish externally",
+        title: `${executionPackage.platform} publish approval: ${executionPackage.title}`,
+        questId: business?.questId,
+        requestedBy: "TeamLeader1A",
+        riskLevel: "high",
+        reason: `${executionPackage.actionLabel} requires a separate exact approval. User must be logged in manually; Mission Control will not store credentials.`,
+        safetyChecklist: [
+          "Exact fields must be reviewed before execution.",
+          "User login is manual and credentials are not stored.",
+          "No spend, paid promotion, messaging, purchases, or broad account control is included.",
+          "No guaranteed income, fake reviews, spam, or misleading claims.",
+          "Approval records the package only; connector/browser execution remains locked until a later approved executor exists.",
+        ],
+        blockedBehaviors: ["Credential storage", "Unapproved login automation", "Form submission beyond exact approved fields", "Paid promotion", "Buyer messaging", "Purchases", "Guaranteed income claims"],
+        status: "pending",
+        createdAt: now,
+      };
+      await persistOptimistic({
+        ...current,
+        approvalRequests: [approval, ...current.approvalRequests],
+        platformExecutionPackages: current.platformExecutionPackages.map((item) =>
+          item.id === packageId ? { ...item, status: "approval_requested", approvalId, updatedAt: now } : item,
+        ),
+        activityLogs: [
+          {
+            id: id("log-platform-approval"),
+            category: "approval",
+            title: `${executionPackage.platform} publish approval prepared`,
+            detail: "Exact platform publish package is waiting for user review. No external action executed.",
+            severity: "warning",
+            createdAt: now,
+            relatedQuestId: business?.questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ],
+      });
+      return approvalId;
     },
     [persistOptimistic],
   );
@@ -5521,6 +5881,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       createOpportunityHuntFromMessage,
       approveBusinessProposal,
       updateBusinessProposalStatus,
+      preparePlatformPublishApproval,
       createMissionDraftFromMessage,
       requestMissionStart,
       retryMissionStep,
@@ -5584,6 +5945,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       createOpportunityHuntFromMessage,
       approveBusinessProposal,
       updateBusinessProposalStatus,
+      preparePlatformPublishApproval,
       createMissionDraftFromMessage,
       requestMissionStart,
       retryMissionStep,

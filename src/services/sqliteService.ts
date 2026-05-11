@@ -40,6 +40,8 @@ export const sqliteTables = [
   "research_evidence",
   "production_destinations",
   "content_inventory_items",
+  "external_platform_requirements",
+  "platform_execution_packages",
   "autonomous_improvement_runs",
   "mission_drafts",
   "mission_runs",

@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { AlertTriangle, BriefcaseBusiness, CheckCircle2, FileText, Play, RotateCcw, ShieldCheck, SkipForward, Sparkles, Workflow, XCircle } from "lucide-react";
+import { AlertTriangle, BriefcaseBusiness, CheckCircle2, FileText, Lock, PackageCheck, Play, RotateCcw, ShieldCheck, SkipForward, Sparkles, WalletCards, Workflow, XCircle } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
 import type { MissionAgentStep, MissionDraftStepPlan } from "../../types";
-import { formatDateTime, statusTone } from "../../utils/formatting";
+import { formatCurrency, formatDateTime, statusTone } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
@@ -32,6 +32,7 @@ export function MissionBriefWorkbench() {
     convertMissionStepToLocalDraft,
     approveBusinessProposal,
     updateBusinessProposalStatus,
+    preparePlatformPublishApproval,
     exportObsidianNote,
   } = useAppData();
   const [params, setParams] = useSearchParams();
@@ -42,6 +43,9 @@ export function MissionBriefWorkbench() {
   const selectedProposalEvidence = selectedProposal ? data.researchEvidence.filter((item) => selectedProposal.evidenceIds.includes(item.id)) : [];
   const selectedProposalDestinations = selectedProposal ? data.productionDestinations.filter((item) => selectedProposal.publishingDestinationIds.includes(item.id)) : [];
   const selectedProposalContent = selectedProposal ? data.contentInventoryItems.filter((item) => selectedProposal.contentInventoryIds.includes(item.id)) : [];
+  const selectedPlatformRequirements = selectedProposal ? data.externalPlatformRequirements.filter((item) => selectedProposal.externalPlatformRequirementIds.includes(item.id)) : [];
+  const selectedPlatformPackages = selectedProposal ? data.platformExecutionPackages.filter((item) => selectedProposal.platformExecutionPackageIds.includes(item.id)) : [];
+  const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
   const firstRun = data.missionRuns[0];
   const firstDraft = data.missionDrafts[0];
   const initialId = requestedRunId ?? requestedDraftId ?? firstRun?.id ?? firstDraft?.id ?? "";
@@ -180,6 +184,53 @@ export function MissionBriefWorkbench() {
                 <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.teamLeaderRecommendation}</p>
               </div>
               <div className="grid gap-4 xl:grid-cols-3">
+                <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/8 p-4">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase text-emerald-100">
+                    <WalletCards className="h-3.5 w-3.5" />
+                    Budget plan
+                  </p>
+                  <div className="mt-3 grid gap-2 text-sm text-slate-200">
+                    <div className="flex justify-between gap-3"><span>Portfolio capital</span><span className="font-semibold text-stone-50">{formatCurrency(selectedProposal.budgetPlan.portfolioStartingCapital)}</span></div>
+                    <div className="flex justify-between gap-3"><span>Remaining capital</span><span className="font-semibold text-emerald-100">{formatCurrency(selectedProposal.budgetPlan.portfolioRemainingCapital)}</span></div>
+                    <div className="flex justify-between gap-3"><span>Business cap</span><span className="font-semibold text-stone-50">{formatCurrency(selectedProposal.budgetPlan.businessBudgetCap)}</span></div>
+                    <div className="flex justify-between gap-3"><span>Required spend</span><span className="font-semibold text-stone-50">{formatCurrency(selectedProposal.budgetPlan.requiredSpend)}</span></div>
+                    <div className="flex justify-between gap-3"><span>Recommended spend</span><span className="font-semibold text-stone-50">{formatCurrency(selectedProposal.budgetPlan.recommendedSpend)}</span></div>
+                  </div>
+                  <p className="mt-3 text-sm leading-6 text-emerald-50">{selectedProposal.budgetPlan.zeroBudgetPath}</p>
+                  {budgetBlockers.length > 0 ? (
+                    <div className="mt-3 rounded-md border border-red-300/25 bg-red-500/10 p-3 text-sm text-red-100">
+                      {budgetBlockers.join(" ")}
+                    </div>
+                  ) : (
+                    <Badge tone="teal">within hard cap</Badge>
+                  )}
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="text-xs font-semibold uppercase text-slate-500">Proposal readiness</p>
+                  <div className="mt-3 space-y-2">
+                    {selectedProposal.readinessChecklist.map((item) => (
+                      <div key={item.label} className="rounded-md border border-white/10 bg-black/25 p-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-stone-100">{item.label}</span>
+                          <Badge tone={item.status === "passed" ? "teal" : item.status === "blocked" ? "red" : "amber"}>{item.status.replace(/_/g, " ")}</Badge>
+                        </div>
+                        <p className="mt-1 text-xs leading-5 text-slate-400">{item.detail}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="mt-3 text-xs text-slate-500">Quality score: {selectedProposal.qualityScore}/100</p>
+                </div>
+                <div className="rounded-lg border border-red-300/20 bg-red-500/8 p-4">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase text-red-100">
+                    <Lock className="h-3.5 w-3.5" />
+                    What approval does not do
+                  </p>
+                  <p className="mt-3 text-sm leading-6 text-red-100">
+                    Approving this business will not spend money, publish, submit forms, log in, store credentials, message anyone, or run a connector. It only starts safe internal improvement.
+                  </p>
+                </div>
+              </div>
+              <div className="grid gap-4 xl:grid-cols-3">
                 <div className="rounded-lg border border-white/10 bg-black/25 p-4">
                   <p className="text-xs font-semibold uppercase text-slate-500">Why it might work</p>
                   <ul className="mt-3 space-y-2 text-sm leading-6 text-slate-300">
@@ -239,6 +290,29 @@ export function MissionBriefWorkbench() {
                     ))}
                   </div>
                 </div>
+                <div className="rounded-lg border border-amber-300/20 bg-amber-400/8 p-4">
+                  <p className="text-xs font-semibold uppercase text-amber-100">External platform/account needs</p>
+                  <div className="mt-3 space-y-3">
+                    {selectedPlatformRequirements.map((requirement) => (
+                      <div key={requirement.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-semibold text-stone-100">{requirement.platform}</p>
+                          <Badge tone={requirement.approvalRequiredBeforePublish ? "red" : "teal"}>{requirement.publishStatus.replace(/_/g, " ")}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">{requirement.notes}</p>
+                        <div className="mt-2 grid gap-2 text-xs text-slate-400 md:grid-cols-2">
+                          <span>Account needed: {requirement.accountNeeded ? "yes" : "no"}</span>
+                          <span>User login required: {requirement.userLoginRequired ? "yes" : "no"}</span>
+                          <span>Credentials stored: {requirement.credentialsStored ? "yes" : "no"}</span>
+                          <span>Approval before publish: {requirement.approvalRequiredBeforePublish ? "yes" : "no"}</span>
+                        </div>
+                        <p className="mt-2 text-xs text-slate-500">Required assets: {requirement.requiredAssets.join(", ")}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="grid gap-4 xl:grid-cols-2">
                 <div className="rounded-lg border border-white/10 bg-black/25 p-4">
                   <p className="text-xs font-semibold uppercase text-slate-500">Exact content drafts/assets</p>
                   <div className="mt-3 space-y-2">
@@ -246,6 +320,31 @@ export function MissionBriefWorkbench() {
                       <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <p className="font-semibold text-stone-100">{item.title}</p>
                         <p className="mt-1 text-sm leading-6 text-slate-300">{item.draftContent}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                  <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">
+                    <PackageCheck className="h-3.5 w-3.5" />
+                    Platform execution packages
+                  </p>
+                  <div className="mt-3 space-y-3">
+                    {selectedPlatformPackages.length === 0 ? <p className="text-sm text-slate-400">No external platform package is needed for this proposal yet.</p> : null}
+                    {selectedPlatformPackages.map((item) => (
+                      <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-semibold text-stone-100">{item.title}</p>
+                          <Badge tone={item.status === "local_draft" ? "amber" : item.status === "approval_requested" ? "red" : "teal"}>{item.status.replace(/_/g, " ")}</Badge>
+                        </div>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">{item.approvalBoundary}</p>
+                        <div className="mt-2 space-y-1 text-xs text-slate-400">
+                          {Object.entries(item.exactFields).slice(0, 4).map(([key, value]) => <p key={key}><span className="text-slate-300">{key}:</span> {value}</p>)}
+                        </div>
+                        <Button className="mt-3" variant="outline" size="sm" disabled={item.status === "approval_requested"} onClick={() => void preparePlatformPublishApproval(item.id)}>
+                          <ShieldCheck className="h-4 w-4" />
+                          Prepare Fiverr Publish Approval
+                        </Button>
                       </div>
                     ))}
                   </div>
