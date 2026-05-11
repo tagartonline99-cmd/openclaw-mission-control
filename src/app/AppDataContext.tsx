@@ -79,10 +79,19 @@ import type {
   PlatformExecutionPackage,
   PublishingPackage,
   ProductBlueprint,
+  ProductAgentArtifact,
   ProductDraftApproval,
+  ProductFileManifest,
+  ProductFileRecord,
+  ProductGenerationReceipt,
   ProductPreview,
   ProductPreviewSection,
+  ProductProductionRun,
+  ProductReadinessGate,
   ProductRevisionRequest,
+  ProductTrack,
+  ProductTrackType,
+  ProductRuntimeMode,
   PublishPayloadPreview,
   RenderedProductPreview,
   ApprovalGateState,
@@ -127,6 +136,7 @@ import {
   type UrlResearchInput,
 } from "../services/openclawService";
 import { tavilyService } from "../services/tavilyService";
+import { productFileService, productRootPath } from "../services/productFileService";
 
 type ExportResult = {
   ok: boolean;
@@ -204,6 +214,8 @@ type AppDataContextValue = {
   approveProductLocalDraft: (previewId: string) => Promise<void>;
   requestProductRevision: (previewId: string, reason?: string) => Promise<string>;
   prepareProductPublishApproval: (previewId: string) => Promise<string>;
+  regenerateProductWithAgents: (previewId: string) => Promise<string>;
+  revealProductPath: (path: string) => Promise<void>;
   preparePlatformPublishApproval: (packageId: string) => Promise<string>;
   createMissionDraftFromMessage: (input: { message: string; questId: string }) => Promise<string>;
   requestMissionStart: (draftId: string) => Promise<string>;
@@ -1585,6 +1597,464 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
   };
 }
 
+const productAgentOrder: MissionAgentId[] = ["agent-content", "agent-writer", "agent-production", "agent-publish", "agent-action", "teamleader1a"];
+
+function productTrackForProposal(proposal: BusinessProposal, platformPackage?: PlatformExecutionPackage): { type: ProductTrackType; label: string; deliverables: string[] } {
+  const combined = [proposal.title, proposal.recommendedIdea, proposal.summary, proposal.businessModel, platformPackage?.platform].filter(Boolean).join(" ").toLowerCase();
+  if (combined.includes("fiverr") || combined.includes("gig")) {
+    return {
+      type: "fiverr_gig_package",
+      label: "Fiverr gig package",
+      deliverables: ["Gig title", "Gig description", "Package/pricing draft", "FAQ", "Buyer requirements", "Claims & Safety Check", "Proof pack"],
+    };
+  }
+  if (combined.includes("template") || proposal.businessModel === "Templates") {
+    return {
+      type: "digital_template_pack",
+      label: "Digital template pack",
+      deliverables: ["Template outline", "Template instructions", "Example use cases", "Sales page draft", "Claims & Safety Check", "Proof pack"],
+    };
+  }
+  if (combined.includes("newsletter") || proposal.businessModel === "Newsletters") {
+    return {
+      type: "newsletter",
+      label: "Newsletter product",
+      deliverables: ["Issue draft", "Positioning", "Signup copy", "Content calendar", "Claims & Safety Check", "Proof pack"],
+    };
+  }
+  if (combined.includes("lead") || proposal.businessModel === "Lead generation") {
+    return {
+      type: "lead_gen_site",
+      label: "Lead generation site package",
+      deliverables: ["Landing page", "Service-area content", "Lead form copy", "Compliance notes", "Claims & Safety Check", "Proof pack"],
+    };
+  }
+  if (combined.includes("website") || proposal.businessModel === "Content websites" || proposal.businessModel === "SEO projects") {
+    return {
+      type: "content_website",
+      label: "Content website package",
+      deliverables: ["Homepage draft", "Article drafts", "SEO map", "Disclosure copy", "Claims & Safety Check", "Proof pack"],
+    };
+  }
+  if (combined.includes("sop") || combined.includes("checklist")) {
+    return {
+      type: "sop_checklist_pack",
+      label: "SOP/checklist pack",
+      deliverables: ["Checklist", "SOP", "Usage guide", "Examples", "Claims & Safety Check", "Proof pack"],
+    };
+  }
+  if (combined.includes("article") || combined.includes("content")) {
+    return {
+      type: "article_pack",
+      label: "Article/content pack",
+      deliverables: ["Article drafts", "Briefs", "CTA copy", "Disclosure copy", "Claims & Safety Check", "Proof pack"],
+    };
+  }
+  return {
+    type: "micro_product",
+    label: "Micro-product package",
+    deliverables: ["Product outline", "Full draft", "Landing copy", "Usage guide", "Claims & Safety Check", "Proof pack"],
+  };
+}
+
+function productBlueprintTypeForTrack(trackType: ProductTrackType): ProductBlueprint["productType"] {
+  if (trackType === "fiverr_gig_package") return "fiverr_gig";
+  if (trackType === "newsletter") return "newsletter";
+  if (trackType === "digital_template_pack") return "template";
+  if (trackType === "article_pack") return "article";
+  if (trackType === "sop_checklist_pack") return "sop";
+  return "landing_page";
+}
+
+function productAgentPrompt(agentId: MissionAgentId, proposal: BusinessProposal, track: ProductTrack, previousOutputs: ProductAgentArtifact[]) {
+  const handoff = previousOutputs.map((artifact) => `## ${artifact.agentName}\n${artifact.markdown.slice(0, 1800)}`).join("\n\n");
+  const base = [
+    `Create a real local product artifact for: ${proposal.recommendedIdea}`,
+    `Product track: ${track.label}`,
+    `Target audience: ${proposal.targetAudience}`,
+    `Business model: ${proposal.businessModel}`,
+    `Budget cap: ${money(proposal.budgetPlan.businessBudgetCap)}. Required spend must remain ${money(proposal.budgetPlan.requiredSpend)} unless a separate spend approval exists.`,
+    `Required deliverables: ${track.requiredDeliverables.join(", ")}`,
+    "This is local product creation only. Do not publish, log in, submit forms, send messages, spend money, purchase, run --deliver, broadcast, scrape uncontrolled pages, or execute connectors.",
+    "Return a complete Markdown artifact with concrete copy/content, missing items, claims to verify, and the next handoff.",
+    handoff ? `Previous agent handoff:\n${handoff}` : "",
+  ].filter(Boolean).join("\n\n");
+  if (agentId === "agent-content") return `${base}\n\nFocus: product strategy, product sections, asset list, buyer/problem framing, and production checklist.`;
+  if (agentId === "agent-writer") return `${base}\n\nFocus: write the actual product copy/content. For Fiverr, include title, description, package copy, FAQ, and buyer requirements.`;
+  if (agentId === "agent-production") return `${base}\n\nFocus: final file/package structure, exact platform fields, readiness gaps, and local delivery package.`;
+  if (agentId === "agent-publish") return `${base}\n\nFocus: publishing checklist only. State what remains locked and what exact publish approval would later contain.`;
+  if (agentId === "agent-action") return `${base}\n\nFocus: operating checklist, safe next actions, user review steps, and blocked external actions.`;
+  return `${base}\n\nFocus: TeamLeader1A final product review. Decide if this product is ready for local review, needs revision, or is blocked.`;
+}
+
+function fallbackProductArtifact(agentId: MissionAgentId, proposal: BusinessProposal, track: ProductTrack) {
+  const name = agentLabel(agentId);
+  if (agentId === "agent-writer" && track.type === "fiverr_gig_package") {
+    return [
+      `# ${proposal.recommendedIdea}`,
+      "",
+      "## Fiverr Gig Title",
+      proposal.recommendedIdea,
+      "",
+      "## Gig Description",
+      `I will create a practical AI workflow setup package for ${proposal.targetAudience.toLowerCase()}. The deliverable is a clear checklist, prompt/workflow outline, and implementation guide that helps the buyer organize repeatable work without unsupported income claims.`,
+      "",
+      "## Packages",
+      "- Basic: workflow audit checklist and one setup outline.",
+      "- Standard: checklist, setup outline, and reusable prompt/workflow map.",
+      "- Premium: full workflow pack with FAQ, usage notes, and revision checklist.",
+      "",
+      "## FAQ",
+      "- Do you guarantee business results? No. This is an operational workflow draft, not a guarantee of income or performance.",
+      "- Do you need account access? No. The buyer can provide examples or goals without sharing credentials.",
+      "",
+      "## Buyer Requirements",
+      "- Business type, workflow goal, current tools, examples, constraints, and preferred output format.",
+    ].join("\n");
+  }
+  return [
+    `# ${name} Product Artifact`,
+    "",
+    `Product: ${proposal.recommendedIdea}`,
+    `Track: ${track.label}`,
+    "",
+    "## Concrete Output",
+    `${name} prepared the local product section for ${track.requiredDeliverables.join(", ")}.`,
+    "",
+    "## Missing Items",
+    "- Replace this fallback section with a successful real OpenClaw turn when available.",
+    "",
+    "## Safety",
+    "- Local draft only. No publishing, spend, login, messaging, forms, purchases, or connector execution.",
+  ].join("\n");
+}
+
+function fileKindForName(fileName: string): LocalAssetFile["type"] {
+  if (fileName.includes("fiverr")) return "fiverr_gig";
+  if (fileName.includes("platform")) return "platform_fields";
+  if (fileName.includes("claims")) return "claims_safety";
+  if (fileName.includes("proof")) return "proof_pack";
+  if (fileName.includes("landing")) return "landing_page";
+  if (fileName.includes("newsletter")) return "newsletter";
+  if (fileName.includes("sop") || fileName.includes("checklist")) return "sop";
+  if (fileName.includes("template")) return "template";
+  if (fileName.includes("article")) return "article";
+  return "micro_product";
+}
+
+function productFilesForTrack(track: ProductTrack, proposal: BusinessProposal, artifacts: ProductAgentArtifact[], exactFields: Record<string, string>) {
+  const byAgent = (agentId: MissionAgentId) => artifacts.find((artifact) => artifact.agentId === agentId)?.markdown ?? "";
+  const fullProduct = [
+    `# ${proposal.recommendedIdea}`,
+    "",
+    `Track: ${track.label}`,
+    `Audience: ${proposal.targetAudience}`,
+    `Budget boundary: ${money(proposal.budgetPlan.requiredSpend)} required spend; ${money(proposal.budgetPlan.businessBudgetCap)} cap.`,
+    "",
+    "## AgentContent Strategy",
+    byAgent("agent-content"),
+    "",
+    "## AgentWriter Product Draft",
+    byAgent("agent-writer"),
+    "",
+    "## AgentProduction Package",
+    byAgent("agent-production"),
+    "",
+    "## AgentPublish Checklist",
+    byAgent("agent-publish"),
+    "",
+    "## AgentAction Operating Steps",
+    byAgent("agent-action"),
+    "",
+    "## TeamLeader1A Review",
+    byAgent("teamleader1a"),
+  ].join("\n\n");
+  const safety = [
+    "# Claims & Safety Check",
+    "",
+    "- No guaranteed income claims.",
+    "- No fake reviews, spam, misleading claims, hidden outreach, or unsupported platform claims.",
+    "- No publishing, spend, login, form submission, purchases, messages, or connector execution happened.",
+    "- User must review any external platform terms before later publishing approval.",
+    "",
+    "## Claims To Keep Supported",
+    ...proposal.whyMightWork.map((item) => `- ${item}`),
+    "",
+    "## Risks",
+    ...proposal.risks.map((item) => `- ${item}`),
+  ].join("\n");
+  const proofPack = buildProposalMarkdown(proposal, [], [], []);
+  if (track.type === "fiverr_gig_package") {
+    return [
+      { fileName: "fiverr-gig.md", title: "Fiverr gig package", kind: "fiverr_gig", content: fullProduct },
+      { fileName: "platform-fields.json", title: "Fiverr platform fields", kind: "platform_fields", content: JSON.stringify(exactFields, null, 2) },
+      { fileName: "packages.md", title: "Fiverr packages", kind: "package", content: byAgent("agent-writer") || fullProduct },
+      { fileName: "faq.md", title: "Fiverr FAQ", kind: "faq", content: byAgent("agent-writer") || fullProduct },
+      { fileName: "buyer-requirements.md", title: "Buyer requirements", kind: "buyer_requirements", content: exactFields["Buyer requirements"] ?? byAgent("agent-production") ?? fullProduct },
+      { fileName: "claims-safety.md", title: "Claims & Safety Check", kind: "claims_safety", content: safety },
+      { fileName: "proof-pack.md", title: "Product proof pack", kind: "proof_pack", content: proofPack },
+    ];
+  }
+  return [
+    { fileName: "product-full-draft.md", title: "Full product draft", kind: "full_product", content: fullProduct },
+    { fileName: "platform-fields.json", title: "Platform fields", kind: "platform_fields", content: JSON.stringify(exactFields, null, 2) },
+    { fileName: "landing-or-sales-page.md", title: "Landing or sales page", kind: "landing_page", content: byAgent("agent-writer") || fullProduct },
+    { fileName: "operating-checklist.md", title: "Operating checklist", kind: "sop", content: byAgent("agent-action") || fullProduct },
+    { fileName: "claims-safety.md", title: "Claims & Safety Check", kind: "claims_safety", content: safety },
+    { fileName: "proof-pack.md", title: "Product proof pack", kind: "proof_pack", content: proofPack },
+  ];
+}
+
+async function buildRealProductProductionBundle(current: AppDataState, proposal: BusinessProposal, businessId: string, questId: string, now: string) {
+  const platformPackage = current.platformExecutionPackages.find((item) => proposal.platformExecutionPackageIds.includes(item.id));
+  const trackPlan = productTrackForProposal(proposal, platformPackage);
+  const trackId = id("product-track");
+  const runId = id("product-run");
+  const track: ProductTrack = {
+    id: trackId,
+    businessId,
+    proposalId: proposal.id,
+    type: trackPlan.type,
+    label: trackPlan.label,
+    promptBasis: [proposal.title, proposal.recommendedIdea, proposal.summary].join(" / "),
+    requiredDeliverables: trackPlan.deliverables,
+    requiredAgentIds: productAgentOrder,
+    readinessState: "generating",
+    missingItems: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const artifacts: ProductAgentArtifact[] = [];
+  const commands: OpenClawCommand[] = [];
+  const receipts: ProductGenerationReceipt[] = [];
+  const businessTasks: BusinessTask[] = [];
+  const sessions: AgentWorkSession[] = [];
+  let anyReal = false;
+  let anyFallback = false;
+
+  for (const [index, agentId] of productAgentOrder.entries()) {
+    const agentName = agentLabel(agentId);
+    const startedAt = new Date().toISOString();
+    const prompt = productAgentPrompt(agentId, proposal, track, artifacts);
+    const result = await openclawService.runAgentTurn({
+      agentProfileId: missionAgentProfileId(current, agentId),
+      agentRole: agentName,
+      message: prompt,
+      missionRunId: runId,
+      timeoutSeconds: 240,
+    });
+    const completedAt = new Date().toISOString();
+    const commandId = id("cmd-product-agent");
+    const runtimeMode: ProductRuntimeMode = result.ok ? "real_openclaw" : "fallback_local";
+    const status: ProductAgentArtifact["status"] = result.ok ? "complete" : "fallback_local";
+    anyReal ||= result.ok;
+    anyFallback ||= !result.ok;
+    const markdown = result.ok && result.stdout.trim() ? result.stdout.trim() : fallbackProductArtifact(agentId, proposal, track);
+    const artifactId = id("product-agent-artifact");
+    const artifact: ProductAgentArtifact = {
+      id: artifactId,
+      runId,
+      businessId,
+      proposalId: proposal.id,
+      agentId,
+      agentName,
+      runtimeMode,
+      status,
+      sourcePrompt: prompt,
+      markdown,
+      metadata: {
+        track: track.type,
+        profile: missionAgentProfileId(current, agentId),
+        command: result.command.join(" "),
+      },
+      citations: proposal.evidenceCitationIds ?? [],
+      claims: proposal.whyMightWork,
+      missingItems: result.ok ? [] : [`${agentName} real OpenClaw turn failed; fallback local artifact was generated and labeled.`],
+      nextHandoff: productAgentOrder[index + 1],
+      commandId,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      createdAt: completedAt,
+      updatedAt: completedAt,
+    };
+    artifacts.push(artifact);
+    commands.push({
+      id: commandId,
+      command: result.command.join(" "),
+      targetAgentId: missionAgentProfileId(current, agentId),
+      status: result.ok ? "complete" : "failed",
+      riskLevel: "medium",
+      approvalRequired: false,
+      resultSummary: result.ok ? `${agentName} produced a product artifact.` : `${agentName} failed; fallback local artifact generated.`,
+      createdAt: startedAt,
+      actionKind: "agent_turn",
+      executionMode: result.ok ? "real_local" : "mock",
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      startedAt,
+      completedAt,
+      missionRunId: runId,
+    });
+    receipts.push({
+      id: id("product-receipt"),
+      runId,
+      businessId,
+      proposalId: proposal.id,
+      agentId,
+      title: `${agentName} product artifact`,
+      summary: result.ok ? "Real OpenClaw agent turn completed and produced a product artifact." : "Real OpenClaw turn was unavailable or failed; fallback local artifact was generated and visibly labeled.",
+      runtimeMode,
+      artifactId,
+      fileIds: [],
+      externalActionStatus: "none",
+      createdAt: completedAt,
+    });
+    const taskId = id("business-task");
+    businessTasks.push({
+      id: taskId,
+      businessId,
+      proposalId: proposal.id,
+      huntId: proposal.huntId,
+      agentId,
+      title: `${agentName} product factory step`,
+      objective: `Produce ${track.label} deliverable for ${proposal.recommendedIdea}.`,
+      status: "done",
+      progress: 100,
+      currentArtifact: artifact.markdown.slice(0, 180),
+      currentSource: runtimeMode === "real_openclaw" ? "OpenClaw local agent turn" : "Fallback local generator",
+      expectedOutput: track.requiredDeliverables.join(", "),
+      approvalRequired: false,
+      logs: [receipts[receipts.length - 1].summary, result.stderr.trim()].filter(Boolean),
+      startedAt,
+      completedAt,
+      updatedAt: completedAt,
+    });
+    sessions.push({
+      id: id("agent-work-session"),
+      businessId,
+      proposalId: proposal.id,
+      huntId: proposal.huntId,
+      agentId,
+      stationId: stationIdByAgentId[agentId],
+      status: result.ok ? "review" : "blocked",
+      motion: result.ok ? "review" : "blocked",
+      currentTask: `${agentName} finished product factory step.`,
+      currentOutput: artifact.markdown.slice(0, 220),
+      currentSource: runtimeMode === "real_openclaw" ? "OpenClaw local agent turn" : "Fallback local generator",
+      progress: 100,
+      startedAt,
+      updatedAt: completedAt,
+    });
+  }
+
+  const exactFields = platformPackage?.exactFields ?? {
+    "Product name": proposal.recommendedIdea,
+    Destination: proposal.publishingDestinationIds[0] ?? "Manual/local destination",
+    "Product track": track.label,
+  };
+  const rootPath = productRootPath(proposal.recommendedIdea);
+  const fileDrafts = productFilesForTrack(track, proposal, artifacts, exactFields);
+  const writeResult = await productFileService.writeFiles({
+    rootPath,
+    files: fileDrafts.map((file) => ({ fileName: file.fileName, content: file.content })),
+  });
+  const manifestId = id("product-file-manifest");
+  const fileRecords: ProductFileRecord[] = fileDrafts.map((file) => {
+    const written = writeResult.written.find((item) => item.fileName === file.fileName);
+    return {
+      id: id("product-file"),
+      manifestId,
+      runId,
+      businessId,
+      proposalId: proposal.id,
+      trackId,
+      fileName: file.fileName,
+      title: file.title,
+      kind: file.kind,
+      path: written?.path ?? `${rootPath}\\${file.fileName}`,
+      content: file.content,
+      status: writeResult.mode === "browser-virtual" ? "virtual" : written?.ok ? "written" : "blocked",
+      runtimeMode: writeResult.mode === "browser-virtual" ? "fallback_local" : "local_file",
+      createdAt: now,
+      updatedAt: new Date().toISOString(),
+    };
+  });
+  const fileIds = fileRecords.map((file) => file.id);
+  const manifest: ProductFileManifest = {
+    id: manifestId,
+    runId,
+    businessId,
+    proposalId: proposal.id,
+    trackId,
+    rootPath,
+    fileIds,
+    status: fileRecords.every((file) => file.status === "written" || file.status === "virtual") ? "written" : "partial",
+    runtimeMode: writeResult.mode === "tauri-file" ? "local_file" : "fallback_local",
+    createdAt: now,
+    updatedAt: new Date().toISOString(),
+  };
+  receipts.push({
+    id: id("product-receipt"),
+    runId,
+    businessId,
+    proposalId: proposal.id,
+    title: "Real local product files written",
+    summary: writeResult.message,
+    runtimeMode: writeResult.mode === "tauri-file" ? "local_file" : "fallback_local",
+    fileIds,
+    externalActionStatus: "none",
+    createdAt: new Date().toISOString(),
+  });
+  const localAssetFiles: LocalAssetFile[] = fileRecords.map((file) => ({
+    id: id("local-asset-file"),
+    businessId,
+    productionAssetId: undefined,
+    title: file.title,
+    type: fileKindForName(file.fileName),
+    platform: track.label,
+    intendedPath: file.path,
+    fileName: file.fileName,
+    content: file.content,
+    status: file.status === "written" ? "written" : file.status === "virtual" ? "preview_only" : "blocked",
+    createdAt: file.createdAt,
+    updatedAt: file.updatedAt,
+  }));
+  const readinessGate: ProductReadinessGate = {
+    id: id("product-readiness"),
+    runId,
+    businessId,
+    proposalId: proposal.id,
+    status: manifest.status === "written" ? "ready_for_review" : "needs_revision",
+    requiredDeliverables: track.requiredDeliverables,
+    missingItems: [
+      ...artifacts.flatMap((artifact) => artifact.missingItems),
+      ...(manifest.status === "written" ? [] : ["One or more local product files failed to write."]),
+    ],
+    blockedReasons: [],
+    canRequestPublishApproval: false,
+    summary: `${track.label} generated ${fileRecords.length} local file record(s). ${anyReal ? "At least one real OpenClaw product turn completed." : "All agent turns used fallback local artifacts."}`,
+    updatedAt: new Date().toISOString(),
+  };
+  const run: ProductProductionRun = {
+    id: runId,
+    businessId,
+    proposalId: proposal.id,
+    trackId,
+    status: anyFallback ? "fallback_complete" : "complete",
+    currentAgentId: "teamleader1a",
+    runtimeMode: anyReal ? "real_openclaw" : "fallback_local",
+    artifactIds: artifacts.map((artifact) => artifact.id),
+    fileManifestId: manifest.id,
+    receiptIds: receipts.map((receipt) => receipt.id),
+    summary: readinessGate.summary,
+    startedAt: now,
+    completedAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+  return { track, run, artifacts, commands, receipts, manifest, fileRecords, localAssetFiles, readinessGate, businessTasks, sessions };
+}
+
 function buildProductStudioRecords(
   current: AppDataState,
   proposal: BusinessProposal,
@@ -1592,6 +2062,7 @@ function buildProductStudioRecords(
   now: string,
   localAssetFiles: LocalAssetFile[],
   publishingPackage: PublishingPackage,
+  production?: Awaited<ReturnType<typeof buildRealProductProductionBundle>>,
 ) {
   const destination = current.productionDestinations.find((item) => proposal.publishingDestinationIds.includes(item.id));
   const platformPackage = current.platformExecutionPackages.find((item) => proposal.platformExecutionPackageIds.includes(item.id));
@@ -1604,7 +2075,8 @@ function buildProductStudioRecords(
     Destination: destination?.name ?? publishingPackage.platform,
     "Local draft": proposal.contentPlan.join(" / "),
   };
-  const fullDraft = localAssetFiles.map((file) => [`## ${file.title}`, file.content].join("\n\n")).join("\n\n---\n\n");
+  const fullDraft = localAssetFiles.map((file) => [`## ${file.title}`, `Path: ${file.intendedPath}`, "", file.content].join("\n\n")).join("\n\n---\n\n");
+  const productTrack = production?.track;
   const sectionBlueprints: Array<{
     kind: ProductPreviewSection["kind"];
     title: string;
@@ -1618,7 +2090,7 @@ function buildProductStudioRecords(
       title: "Product overview",
       summary: "The product, buyer, problem, offer, destination, and current locks.",
       content: [
-        `Product: ${fiverrMode ? "Fiverr gig draft" : "Local product draft"} for ${proposal.title.replace("Business Proposal: ", "")}`,
+        `Product: ${productTrack?.label ?? (fiverrMode ? "Fiverr gig draft" : "Local product draft")} for ${proposal.title.replace("Business Proposal: ", "")}`,
         `Buyer: ${proposal.targetAudience}`,
         `Problem solved: ${proposal.summary}`,
         `Offer/deliverable: ${proposal.productionPlan[0] ?? "Local draft package"}`,
@@ -1699,7 +2171,7 @@ function buildProductStudioRecords(
     businessId,
     proposalId: proposal.id,
     name: fiverrMode ? `${proposal.title.replace("Business Proposal: ", "")} Fiverr gig draft` : `${proposal.title.replace("Business Proposal: ", "")} product draft`,
-    productType: fiverrMode ? "fiverr_gig" : "landing_page",
+    productType: productTrack ? productBlueprintTypeForTrack(productTrack.type) : fiverrMode ? "fiverr_gig" : "landing_page",
     audience: proposal.targetAudience,
     problemSolved: proposal.summary,
     offerDeliverable: proposal.productionPlan[0] ?? "Local draft package",
@@ -1730,6 +2202,11 @@ function buildProductStudioRecords(
     missingItems: localAssetFiles.length ? [] : ["At least one local product file is required before a publish approval."],
     readinessScore: proposal.validationScore,
     renderedPreviewIds: [`rendered-${previewId}`],
+    productionRunId: production?.run.id,
+    fileManifestId: production?.manifest.id,
+    generatedByAgents: Boolean(production),
+    runtimeMode: production?.run.runtimeMode,
+    lastAgentRunAt: production?.run.completedAt,
     approvalGateStateId: gateId,
     createdAt: now,
     updatedAt: now,
@@ -5299,6 +5776,24 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       evidenceQualityScores: current.evidenceQualityScores.filter((score) => !score.evidenceId || !current.researchEvidence.some((evidence) => evidence.id === score.evidenceId && evidence.huntId && testHuntIds.has(evidence.huntId))),
       localAssetFiles: current.localAssetFiles.filter((file) => !businessIds.has(file.businessId)),
       publishingPackages: current.publishingPackages.filter((pack) => !businessIds.has(pack.businessId)),
+      productTracks: current.productTracks.filter((track) => !businessIds.has(track.businessId)),
+      productProductionRuns: current.productProductionRuns.filter((run) => !businessIds.has(run.businessId)),
+      productAgentArtifacts: current.productAgentArtifacts.filter((artifact) => !businessIds.has(artifact.businessId)),
+      productFileManifests: current.productFileManifests.filter((manifest) => !businessIds.has(manifest.businessId)),
+      productFileRecords: current.productFileRecords.filter((file) => !businessIds.has(file.businessId)),
+      productGenerationReceipts: current.productGenerationReceipts.filter((receipt) => !businessIds.has(receipt.businessId)),
+      productReadinessGates: current.productReadinessGates.filter((gate) => !businessIds.has(gate.businessId)),
+      productBlueprints: current.productBlueprints.filter((blueprint) => !businessIds.has(blueprint.businessId)),
+      productPreviews: current.productPreviews.filter((preview) => !businessIds.has(preview.businessId)),
+      renderedProductPreviews: current.renderedProductPreviews.filter((preview) => !businessIds.has(preview.businessId)),
+      productPreviewSections: current.productPreviewSections.filter((section) => {
+        const preview = current.productPreviews.find((item) => item.id === section.previewId);
+        return !preview || !businessIds.has(preview.businessId);
+      }),
+      productDraftApprovals: current.productDraftApprovals.filter((approval) => !businessIds.has(approval.businessId)),
+      productRevisionRequests: current.productRevisionRequests.filter((request) => !businessIds.has(request.businessId)),
+      publishPayloadPreviews: current.publishPayloadPreviews.filter((payload) => !businessIds.has(payload.businessId)),
+      approvalGateStates: current.approvalGateStates.filter((gate) => !businessIds.has(gate.businessId)),
       businessMetricSnapshots: current.businessMetricSnapshots.filter((snapshot) => !businessIds.has(snapshot.businessId)),
       budgetLedgerEntries: current.budgetLedgerEntries.filter((entry) => !businessIds.has(entry.businessId)),
       autopilotJobs: current.autopilotJobs.filter((job) => !businessIds.has(job.businessId)),
@@ -5452,7 +5947,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         updatedAt: now,
       };
       const operatingBundle = buildBusinessOperatingBundle(current, proposal, businessId, questId, now);
-      const productStudio = buildProductStudioRecords(current, proposal, businessId, now, operatingBundle.localAssetFiles, operatingBundle.publishingPackage);
+      const productProduction = await buildRealProductProductionBundle(current, proposal, businessId, questId, now);
+      const productStudio = buildProductStudioRecords(current, proposal, businessId, now, productProduction.localAssetFiles, operatingBundle.publishingPackage, productProduction);
+      const productRun: ProductProductionRun = { ...productProduction.run, previewId: productStudio.preview.id };
+      const productReadinessGate: ProductReadinessGate = { ...productProduction.readinessGate, previewId: productStudio.preview.id };
+      const productTaskIds = productProduction.businessTasks.map((task) => task.id);
+      const productLocalFileIds = productProduction.localAssetFiles.map((file) => file.id);
       const inheritedTaskIds = current.businessTasks.filter((task) => task.proposalId === proposalId && task.status !== "done").map((task) => task.id);
       const approvedBusiness: ApprovedBusiness = {
         id: businessId,
@@ -5464,7 +5964,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         teamLeaderRecommendation: proposal.teamLeaderRecommendation,
         validationScore: proposal.validationScore,
         assignedAgentIds: opportunityAgentOrder,
-        activeTaskIds: [...inheritedTaskIds, ...operatingBundle.businessTasks.map((task) => task.id)],
+        activeTaskIds: [...inheritedTaskIds, ...productTaskIds, ...operatingBundle.businessTasks.map((task) => task.id)],
         productionAssetIds: [assetId],
         publishingDestinationIds: proposal.publishingDestinationIds,
         contentInventoryIds: proposal.contentInventoryIds,
@@ -5510,15 +6010,30 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         productionAssets: [asset, ...current.productionAssets],
         approvedBusinesses: [approvedBusiness, ...current.approvedBusinesses],
         autonomousImprovementRuns: [run, ...current.autonomousImprovementRuns],
-        approvedBusinessCockpits: [operatingBundle.cockpit, ...current.approvedBusinessCockpits],
+        approvedBusinessCockpits: [
+          {
+            ...operatingBundle.cockpit,
+            localAssetFileIds: [...productLocalFileIds, ...operatingBundle.cockpit.localAssetFileIds],
+            executionReceiptIds: [...productProduction.receipts.map((receipt) => receipt.id), ...operatingBundle.cockpit.executionReceiptIds],
+            nextBestActions: ["Open Product Studio and inspect the real local product files.", ...operatingBundle.cockpit.nextBestActions],
+          },
+          ...current.approvedBusinessCockpits,
+        ],
         businessOperatingRuns: [operatingBundle.operatingRun, ...current.businessOperatingRuns],
         businessIterations: [...operatingBundle.iterations, ...current.businessIterations],
         executionReceipts: [...operatingBundle.receipts, ...current.executionReceipts],
         researchQueryPlans: [operatingBundle.queryPlan, ...current.researchQueryPlans],
         opportunityCandidates: [operatingBundle.opportunityCandidate, ...current.opportunityCandidates],
         evidenceQualityScores: [...operatingBundle.evidenceQualityScores, ...current.evidenceQualityScores],
-        localAssetFiles: [...operatingBundle.localAssetFiles, ...current.localAssetFiles],
+        localAssetFiles: [...productProduction.localAssetFiles, ...operatingBundle.localAssetFiles, ...current.localAssetFiles],
         publishingPackages: [operatingBundle.publishingPackage, ...current.publishingPackages],
+        productTracks: [productProduction.track, ...current.productTracks],
+        productProductionRuns: [productRun, ...current.productProductionRuns],
+        productAgentArtifacts: [...productProduction.artifacts, ...current.productAgentArtifacts],
+        productFileManifests: [productProduction.manifest, ...current.productFileManifests],
+        productFileRecords: [...productProduction.fileRecords, ...current.productFileRecords],
+        productGenerationReceipts: [...productProduction.receipts, ...current.productGenerationReceipts],
+        productReadinessGates: [productReadinessGate, ...current.productReadinessGates],
         productBlueprints: [productStudio.blueprint, ...current.productBlueprints],
         productPreviews: [productStudio.preview, ...current.productPreviews],
         renderedProductPreviews: [productStudio.renderedPreview, ...current.renderedProductPreviews],
@@ -5528,8 +6043,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         businessMetricSnapshots: [operatingBundle.metricSnapshot, ...current.businessMetricSnapshots],
         budgetLedgerEntries: [operatingBundle.ledgerEntry, ...current.budgetLedgerEntries],
         autopilotJobs: [operatingBundle.autopilotJob, ...current.autopilotJobs],
-        businessTasks: [...operatingBundle.businessTasks, ...current.businessTasks],
+        businessTasks: [...productProduction.businessTasks, ...operatingBundle.businessTasks, ...current.businessTasks],
+        agentWorkSessions: [...productProduction.sessions, ...current.agentWorkSessions],
         agentArtifacts: [...operatingBundle.agentArtifacts, ...current.agentArtifacts],
+        openClawCommands: [...productProduction.commands, ...current.openClawCommands],
         productionDestinations: updatedDestinations,
         contentInventoryItems: updatedContent,
         externalPlatformRequirements: updatedPlatformRequirements,
@@ -5545,7 +6062,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             id: id("tl-chat-business-approved"),
             role: "teamleader",
-            content: `Approved. I promoted "${quest.title}" into an active business. Agents can keep improving it through safe research and local drafts within the ${money(proposal.budgetPlan.businessBudgetCap)} cap. Publishing, spending, messaging, connector execution, login, launch, and form submission are still approval-gated.`,
+            content: `Approved. I promoted "${quest.title}" into an active business and started the Real Product Factory. Product files were prepared under ${productProduction.manifest.rootPath}. Runtime: ${productProduction.run.runtimeMode.replace(/_/g, " ")}. Publishing, spending, messaging, connector execution, login, launch, and form submission are still approval-gated.`,
             createdAt: now,
             mode: "local",
             relatedApprovedBusinessId: businessId,
@@ -5557,7 +6074,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("log-business-approved"),
             category: "quest",
             title: "Business proposal approved",
-            detail: `${quest.title} is now an active business with an autonomous improvement run. No external action executed.`,
+            detail: `${quest.title} is now active. Real Product Factory created ${productProduction.fileRecords.length} local product file record(s). No external action executed.`,
             severity: "success",
             createdAt: now,
             relatedQuestId: questId,
@@ -5566,11 +6083,124 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ].slice(0, 80),
         dashboardSummary: {
           ...current.dashboardSummary,
-          latestTeamLeaderRecommendation: `${quest.title} is active. Monitor it in Businesses, Tasks, and Guild Office. External execution remains approval-gated.`,
+          latestTeamLeaderRecommendation: `${quest.title} is active. Open Product Studio to inspect the generated local product files. External execution remains approval-gated.`,
         },
       };
       await persistOptimistic(next);
       return businessId;
+    },
+    [persistOptimistic],
+  );
+
+  const regenerateProductWithAgents = useCallback(
+    async (previewId: string) => {
+      const current = dataRef.current;
+      const preview = current.productPreviews.find((item) => item.id === previewId);
+      if (!preview) throw new Error("Product preview not found.");
+      const business = current.approvedBusinesses.find((item) => item.id === preview.businessId);
+      if (!business) throw new Error("Approved business not found.");
+      const proposal = current.businessProposals.find((item) => item.id === preview.proposalId);
+      if (!proposal) throw new Error("Source proposal not found.");
+      const now = new Date().toISOString();
+      const questId = business.questId ?? proposal.questId ?? id("quest-product-regenerate");
+      const productProduction = await buildRealProductProductionBundle(current, proposal, business.id, questId, now);
+      const existingPublishingPackage =
+        (preview.publishingPackageId ? current.publishingPackages.find((item) => item.id === preview.publishingPackageId) : undefined) ??
+        current.publishingPackages.find((item) => item.businessId === business.id) ??
+        {
+          id: id("publishing-package"),
+          businessId: business.id,
+          destinationId: preview.destinationId,
+          platform: "Manual / no connector",
+          title: `${business.name} local publishing package`,
+          status: "local_draft",
+          localAssetFileIds: [],
+          approvalBoundary: "No publishing, login, forms, messaging, spending, purchases, or connector execution without a separate exact approval.",
+          requiredUserSteps: ["Review the local product draft.", "Approve the local draft before requesting any publish approval."],
+          connectorActionsBlocked: ["publish", "login", "submit_form", "purchase", "message", "spend"],
+          createdAt: now,
+          updatedAt: now,
+        } satisfies PublishingPackage;
+      const addPublishingPackage = !current.publishingPackages.some((item) => item.id === existingPublishingPackage.id);
+      const productStudio = buildProductStudioRecords(current, proposal, business.id, now, productProduction.localAssetFiles, existingPublishingPackage, productProduction);
+      const productRun: ProductProductionRun = { ...productProduction.run, previewId: productStudio.preview.id };
+      const productReadinessGate: ProductReadinessGate = { ...productProduction.readinessGate, previewId: productStudio.preview.id };
+      const oldPreviewIds = new Set([preview.id]);
+      const oldBlueprintIds = new Set([preview.blueprintId]);
+      const oldGateIds = new Set(preview.approvalGateStateId ? [preview.approvalGateStateId] : []);
+      const next: AppDataState = {
+        ...current,
+        productTracks: [productProduction.track, ...current.productTracks],
+        productProductionRuns: [productRun, ...current.productProductionRuns],
+        productAgentArtifacts: [...productProduction.artifacts, ...current.productAgentArtifacts],
+        productFileManifests: [productProduction.manifest, ...current.productFileManifests],
+        productFileRecords: [...productProduction.fileRecords, ...current.productFileRecords],
+        productGenerationReceipts: [...productProduction.receipts, ...current.productGenerationReceipts],
+        productReadinessGates: [productReadinessGate, ...current.productReadinessGates],
+        productBlueprints: [productStudio.blueprint, ...current.productBlueprints.filter((item) => !oldBlueprintIds.has(item.id))],
+        productPreviews: [productStudio.preview, ...current.productPreviews.filter((item) => !oldPreviewIds.has(item.id))],
+        renderedProductPreviews: [productStudio.renderedPreview, ...current.renderedProductPreviews.filter((item) => !oldPreviewIds.has(item.previewId))],
+        productPreviewSections: [...productStudio.sections, ...current.productPreviewSections.filter((item) => !oldPreviewIds.has(item.previewId))],
+        productDraftApprovals: [productStudio.draftApproval, ...current.productDraftApprovals.filter((item) => !oldPreviewIds.has(item.previewId))],
+        approvalGateStates: [productStudio.gateState, ...current.approvalGateStates.filter((item) => !oldGateIds.has(item.id) && !oldPreviewIds.has(item.previewId ?? ""))],
+        localAssetFiles: [...productProduction.localAssetFiles, ...current.localAssetFiles],
+        publishingPackages: addPublishingPackage ? [existingPublishingPackage, ...current.publishingPackages] : current.publishingPackages,
+        businessTasks: [...productProduction.businessTasks, ...current.businessTasks],
+        agentWorkSessions: [...productProduction.sessions, ...current.agentWorkSessions],
+        openClawCommands: [...productProduction.commands, ...current.openClawCommands],
+        approvedBusinesses: current.approvedBusinesses.map((item) =>
+          item.id === business.id
+            ? {
+                ...item,
+                activeTaskIds: [...productProduction.businessTasks.map((task) => task.id), ...item.activeTaskIds],
+                nextAction: "Open Product Studio and inspect the regenerated local product files.",
+                updatedAt: now,
+              }
+            : item,
+        ),
+        approvedBusinessCockpits: current.approvedBusinessCockpits.map((cockpit) =>
+          cockpit.businessId === business.id
+            ? {
+                ...cockpit,
+                latestProductPreviewId: productStudio.preview.id,
+                localAssetFileIds: [...productProduction.localAssetFiles.map((file) => file.id), ...cockpit.localAssetFileIds],
+                executionReceiptIds: [...productProduction.receipts.map((receipt) => receipt.id), ...cockpit.executionReceiptIds],
+                nextBestActions: ["View the regenerated product files in Product Studio.", ...cockpit.nextBestActions],
+                updatedAt: now,
+              }
+            : cockpit,
+        ),
+        teamLeaderChatMessages: [
+          ...current.teamLeaderChatMessages,
+          {
+            id: id("tl-chat-product-regenerated"),
+            role: "teamleader",
+            content: `I regenerated the local product package for "${business.name}". Product files were written under ${productProduction.manifest.rootPath}. Runtime: ${productProduction.run.runtimeMode.replace(/_/g, " ")}. Nothing was published, submitted, messaged, purchased, or spent.`,
+            createdAt: now,
+            mode: "local",
+            relatedApprovedBusinessId: business.id,
+            relatedBusinessProposalId: proposal.id,
+          } satisfies TeamLeaderChatMessage,
+        ].slice(-120),
+        activityLogs: [
+          {
+            id: id("log-product-regenerated"),
+            category: "system",
+            title: "Real Product Factory regenerated product",
+            detail: `${business.name}: ${productProduction.fileRecords.length} local product file record(s) prepared at ${productProduction.manifest.rootPath}.`,
+            severity: "success",
+            createdAt: now,
+            relatedQuestId: business.questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+        dashboardSummary: {
+          ...current.dashboardSummary,
+          latestTeamLeaderRecommendation: `${business.name} product files were regenerated. Inspect Product Studio before any publish approval.`,
+        },
+      };
+      await persistOptimistic(next);
+      return productProduction.run.id;
     },
     [persistOptimistic],
   );
@@ -8556,6 +9186,27 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     await opener.openPath(path);
   }, []);
 
+  const revealProductPath = useCallback(async (path: string) => {
+    if (!isTauriRuntime()) {
+      setLastExportResult({
+        ok: false,
+        mode: "preview",
+        message: "Opening a product file or folder requires the Tauri desktop shell.",
+      });
+      return;
+    }
+
+    const opener = (await import("@tauri-apps/plugin-opener")) as {
+      revealItemInDir?: (path: string) => Promise<void>;
+      openPath: (path: string) => Promise<void>;
+    };
+    if (opener.revealItemInDir) {
+      await opener.revealItemInDir(path);
+      return;
+    }
+    await opener.openPath(path);
+  }, []);
+
   const value = useMemo<AppDataContextValue>(
     () => ({
       data,
@@ -8598,6 +9249,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       approveProductLocalDraft,
       requestProductRevision,
       prepareProductPublishApproval,
+      regenerateProductWithAgents,
+      revealProductPath,
       preparePlatformPublishApproval,
       createMissionDraftFromMessage,
       requestMissionStart,
@@ -8675,6 +9328,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       approveProductLocalDraft,
       requestProductRevision,
       prepareProductPublishApproval,
+      regenerateProductWithAgents,
+      revealProductPath,
       preparePlatformPublishApproval,
       createMissionDraftFromMessage,
       requestMissionStart,

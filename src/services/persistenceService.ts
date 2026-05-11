@@ -181,11 +181,18 @@ import type {
   ProposalSubmissionGate,
   PublishingPackage,
   ProductBlueprint,
+  ProductAgentArtifact,
   ProductDraftApproval,
+  ProductFileManifest,
+  ProductFileRecord,
+  ProductGenerationReceipt,
   ProductPreview,
   ProductPreviewSection,
+  ProductProductionRun,
+  ProductReadinessGate,
   ProductRevisionDiff,
   ProductRevisionRequest,
+  ProductTrack,
   PublishPayloadPreview,
   RenderedProductPreview,
   ApprovalGateState,
@@ -305,6 +312,13 @@ export interface AppDataState {
   productRevisionRequests: ProductRevisionRequest[];
   publishPayloadPreviews: PublishPayloadPreview[];
   approvalGateStates: ApprovalGateState[];
+  productTracks: ProductTrack[];
+  productProductionRuns: ProductProductionRun[];
+  productAgentArtifacts: ProductAgentArtifact[];
+  productFileManifests: ProductFileManifest[];
+  productFileRecords: ProductFileRecord[];
+  productGenerationReceipts: ProductGenerationReceipt[];
+  productReadinessGates: ProductReadinessGate[];
   agentEvidenceTrails: AgentEvidenceTrail[];
   agentEvidenceItems: AgentEvidenceItem[];
   approvalActionHints: ApprovalActionHint[];
@@ -443,6 +457,13 @@ type EntityKey =
   | "productRevisionRequests"
   | "publishPayloadPreviews"
   | "approvalGateStates"
+  | "productTracks"
+  | "productProductionRuns"
+  | "productAgentArtifacts"
+  | "productFileManifests"
+  | "productFileRecords"
+  | "productGenerationReceipts"
+  | "productReadinessGates"
   | "agentEvidenceTrails"
   | "agentEvidenceItems"
   | "approvalActionHints"
@@ -590,6 +611,13 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "productRevisionRequests", tableName: "product_revision_requests" },
   { stateKey: "publishPayloadPreviews", tableName: "publish_payload_previews" },
   { stateKey: "approvalGateStates", tableName: "approval_gate_states" },
+  { stateKey: "productTracks", tableName: "product_tracks" },
+  { stateKey: "productProductionRuns", tableName: "product_production_runs" },
+  { stateKey: "productAgentArtifacts", tableName: "product_agent_artifacts" },
+  { stateKey: "productFileManifests", tableName: "product_file_manifests" },
+  { stateKey: "productFileRecords", tableName: "product_file_records" },
+  { stateKey: "productGenerationReceipts", tableName: "product_generation_receipts" },
+  { stateKey: "productReadinessGates", tableName: "product_readiness_gates" },
   { stateKey: "agentEvidenceTrails", tableName: "agent_evidence_trails" },
   { stateKey: "agentEvidenceItems", tableName: "agent_evidence_items" },
   { stateKey: "approvalActionHints", tableName: "approval_action_hints" },
@@ -722,6 +750,13 @@ export const initialAppDataState: AppDataState = {
   productRevisionRequests: [],
   publishPayloadPreviews: [],
   approvalGateStates: [],
+  productTracks: [],
+  productProductionRuns: [],
+  productAgentArtifacts: [],
+  productFileManifests: [],
+  productFileRecords: [],
+  productGenerationReceipts: [],
+  productReadinessGates: [],
   agentEvidenceTrails: [],
   agentEvidenceItems: [],
   approvalActionHints: [],
@@ -1048,7 +1083,10 @@ function productTypeForBusiness(state: AppDataState, business: ApprovedBusiness)
   const packageItem = state.platformExecutionPackages.find((item) => business.platformExecutionPackageIds.includes(item.id));
   if (packageItem?.platform.toLowerCase().includes("fiverr")) return "fiverr_gig";
   const file = state.localAssetFiles.find((item) => item.businessId === business.id);
-  return file?.type ?? "landing_page";
+  if (file?.type === "article" || file?.type === "newsletter" || file?.type === "template" || file?.type === "sop" || file?.type === "obsidian_pack") {
+    return file.type;
+  }
+  return "landing_page";
 }
 
 function productContentSummary(state: AppDataState, business: ApprovedBusiness) {
@@ -1758,6 +1796,13 @@ function normalizePhase6BState(state: AppDataState) {
   state.productRevisionRequests ??= [];
   state.publishPayloadPreviews ??= [];
   state.approvalGateStates ??= [];
+  state.productTracks ??= [];
+  state.productProductionRuns ??= [];
+  state.productAgentArtifacts ??= [];
+  state.productFileManifests ??= [];
+  state.productFileRecords ??= [];
+  state.productGenerationReceipts ??= [];
+  state.productReadinessGates ??= [];
   state.agentEvidenceTrails ??= [];
   state.agentEvidenceItems ??= [];
   state.approvalActionHints ??= [];

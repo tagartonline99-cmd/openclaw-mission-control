@@ -222,13 +222,38 @@ export type RealitySourceType =
   | "business"
   | "system";
 export type EvidenceQualityGrade = "strong" | "moderate" | "weak" | "unsupported";
-export type LocalAssetFileType = "fiverr_gig" | "landing_page" | "article" | "newsletter" | "template" | "sop" | "obsidian_pack";
+export type LocalAssetFileType =
+  | "fiverr_gig"
+  | "landing_page"
+  | "article"
+  | "newsletter"
+  | "template"
+  | "sop"
+  | "obsidian_pack"
+  | "platform_fields"
+  | "proof_pack"
+  | "claims_safety"
+  | "lead_gen_site"
+  | "micro_product";
 export type LocalAssetFileStatus = "planned" | "preview_only" | "written" | "blocked";
 export type PublishingPackageStatus = "local_draft" | "ready_for_approval" | "approval_requested" | "blocked";
 export type BudgetLedgerEntryType = "planned_spend" | "approved_spend" | "actual_spend" | "revenue" | "time_cost" | "adjustment";
 export type AutopilotJobType = "research_refresh" | "content_update" | "metric_reminder" | "improvement_proposal" | "local_asset_refresh";
 export type AutopilotJobStatus = "queued" | "running" | "completed" | "paused" | "blocked" | "failed";
 export type ProductBlueprintType = "fiverr_gig" | "landing_page" | "article" | "newsletter" | "template" | "sop" | "obsidian_pack";
+export type ProductTrackType =
+  | "fiverr_gig_package"
+  | "digital_template_pack"
+  | "content_website"
+  | "newsletter"
+  | "article_pack"
+  | "sop_checklist_pack"
+  | "lead_gen_site"
+  | "micro_product";
+export type ProductProductionRunStatus = "running" | "complete" | "blocked" | "fallback_complete";
+export type ProductAgentArtifactStatus = "complete" | "blocked" | "fallback_local";
+export type ProductRuntimeMode = "real_openclaw" | "real_tavily" | "local_file" | "fallback_local" | "blocked";
+export type ProductFileRecordStatus = "planned" | "written" | "blocked" | "virtual";
 export type ProductPreviewStatus = "needs_product_review" | "local_draft_approved" | "revision_requested" | "blocked";
 export type ProductPreviewSectionKind =
   | "overview"
@@ -1053,6 +1078,124 @@ export interface ProductBlueprint {
   updatedAt: string;
 }
 
+export interface ProductTrack {
+  id: string;
+  businessId: string;
+  proposalId: string;
+  type: ProductTrackType;
+  label: string;
+  promptBasis: string;
+  requiredDeliverables: string[];
+  requiredAgentIds: MissionAgentId[];
+  readinessState: "planned" | "generating" | "ready_for_review" | "needs_revision" | "blocked";
+  missingItems: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductProductionRun {
+  id: string;
+  businessId: string;
+  proposalId: string;
+  previewId?: string;
+  trackId: string;
+  status: ProductProductionRunStatus;
+  currentAgentId?: MissionAgentId | "TeamLeader1A";
+  runtimeMode: ProductRuntimeMode;
+  artifactIds: string[];
+  fileManifestId?: string;
+  receiptIds: string[];
+  summary: string;
+  startedAt: string;
+  completedAt?: string;
+  updatedAt: string;
+}
+
+export interface ProductAgentArtifact {
+  id: string;
+  runId: string;
+  businessId: string;
+  proposalId: string;
+  agentId: MissionAgentId | "TeamLeader1A";
+  agentName: string;
+  runtimeMode: ProductRuntimeMode;
+  status: ProductAgentArtifactStatus;
+  sourcePrompt: string;
+  markdown: string;
+  metadata: Record<string, string>;
+  citations: string[];
+  claims: string[];
+  missingItems: string[];
+  nextHandoff?: MissionAgentId | "TeamLeader1A";
+  commandId?: string;
+  stdout?: string;
+  stderr?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductFileManifest {
+  id: string;
+  runId: string;
+  businessId: string;
+  proposalId: string;
+  trackId: string;
+  rootPath: string;
+  fileIds: string[];
+  status: "planned" | "written" | "partial" | "blocked";
+  runtimeMode: ProductRuntimeMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductFileRecord {
+  id: string;
+  manifestId: string;
+  runId: string;
+  businessId: string;
+  proposalId: string;
+  trackId: string;
+  fileName: string;
+  title: string;
+  kind: string;
+  path: string;
+  content: string;
+  status: ProductFileRecordStatus;
+  runtimeMode: ProductRuntimeMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductGenerationReceipt {
+  id: string;
+  runId: string;
+  businessId: string;
+  proposalId: string;
+  agentId?: MissionAgentId | "TeamLeader1A";
+  title: string;
+  summary: string;
+  runtimeMode: ProductRuntimeMode;
+  artifactId?: string;
+  fileIds: string[];
+  externalActionStatus: "none" | "blocked" | "approval_required";
+  createdAt: string;
+}
+
+export interface ProductReadinessGate {
+  id: string;
+  runId: string;
+  businessId: string;
+  proposalId: string;
+  previewId?: string;
+  status: "ready_for_review" | "needs_revision" | "blocked";
+  requiredDeliverables: string[];
+  missingItems: string[];
+  blockedReasons: string[];
+  canRequestPublishApproval: boolean;
+  summary: string;
+  updatedAt: string;
+}
+
 export interface ProductPreview {
   id: string;
   blueprintId: string;
@@ -1069,6 +1212,11 @@ export interface ProductPreview {
   missingItems: string[];
   readinessScore: number;
   renderedPreviewIds?: string[];
+  productionRunId?: string;
+  fileManifestId?: string;
+  generatedByAgents?: boolean;
+  runtimeMode?: ProductRuntimeMode;
+  lastAgentRunAt?: string;
   realityReceiptId?: string;
   approvalGateStateId?: string;
   publishPayloadPreviewId?: string;

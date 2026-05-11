@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CheckCircle2, Eye, FileText, Hammer, Lock, PackageCheck, RotateCcw, ShieldAlert, Sparkles } from "lucide-react";
+import { Activity, CheckCircle2, Eye, FileText, FolderOpen, Hammer, Lock, PackageCheck, RefreshCw, RotateCcw, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
 import { formatCurrency, formatDateTime, statusTone } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
@@ -45,6 +45,8 @@ export function ProductionPipelineWorkbench() {
     requestProductRevision,
     prepareProductPublishApproval,
     exportProductProofPack,
+    regenerateProductWithAgents,
+    revealProductPath,
     lastExportResult,
     createProductionPack,
     advanceProductionAsset,
@@ -59,6 +61,8 @@ export function ProductionPipelineWorkbench() {
   const [businessId, setBusinessId] = useState(data.approvedBusinesses[0]?.id ?? "");
   const [activeTab, setActiveTab] = useState<(typeof previewTabs)[number]["id"]>("overview");
   const [legacyOpen, setLegacyOpen] = useState(false);
+  const [viewerOpen, setViewerOpen] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
   const selectedQuest = data.quests.find((quest) => quest.id === questId);
   const siteProject = data.siteProjects.find((site) => site.questIds.includes(questId));
   const clusters = data.seoKeywordClusters.filter((cluster) => cluster.questId === questId);
@@ -81,6 +85,34 @@ export function ProductionPipelineWorkbench() {
   const latestReceipt = preview
     ? data.executionReceipts.find((receipt) => receipt.businessId === preview.businessId || receipt.proposalId === preview.proposalId)
     : undefined;
+  const productionRun = preview?.productionRunId
+    ? data.productProductionRuns.find((run) => run.id === preview.productionRunId)
+    : selectedBusiness
+      ? data.productProductionRuns.find((run) => run.businessId === selectedBusiness.id)
+      : undefined;
+  const productTrack = productionRun ? data.productTracks.find((track) => track.id === productionRun.trackId) : undefined;
+  const productManifest = preview?.fileManifestId
+    ? data.productFileManifests.find((manifest) => manifest.id === preview.fileManifestId)
+    : productionRun?.fileManifestId
+      ? data.productFileManifests.find((manifest) => manifest.id === productionRun.fileManifestId)
+      : undefined;
+  const productFiles = productManifest ? data.productFileRecords.filter((file) => productManifest.fileIds.includes(file.id)) : [];
+  const productArtifacts = productionRun ? data.productAgentArtifacts.filter((artifact) => productionRun.artifactIds.includes(artifact.id)) : [];
+  const productReceipts = productionRun ? data.productGenerationReceipts.filter((receipt) => productionRun.receiptIds.includes(receipt.id)) : [];
+  const readinessGate = productionRun ? data.productReadinessGates.find((item) => item.runId === productionRun.id) : undefined;
+  const latestProductFile = productFiles[0];
+  const latestProductArtifact = productArtifacts[productArtifacts.length - 1];
+  const productFullText = productFiles.length
+    ? productFiles.map((file) => [`# ${file.title}`, `Path: ${file.path}`, `Mode: ${label(file.runtimeMode)}`, "", file.content].join("\n")).join("\n\n---\n\n")
+    : activeSection?.content ?? renderedPreview?.textPreview ?? "No product content is available yet.";
+  const runtimeLabel = productionRun?.runtimeMode ? label(productionRun.runtimeMode) : preview?.generatedByAgents ? "real product factory" : "not generated yet";
+  const monitorStatus = productionRun?.status === "blocked"
+    ? "Blocked"
+    : productionRun?.completedAt
+      ? "Idle after production"
+      : productionRun
+        ? "Working now"
+        : "Waiting for product generation";
 
   async function createPack() {
     if (!questId) return;
@@ -126,6 +158,26 @@ export function ProductionPipelineWorkbench() {
   async function exportProofPack() {
     if (!preview) return;
     await exportProductProofPack(preview.id);
+  }
+
+  async function regenerateProduct() {
+    if (!preview) return;
+    setIsRegenerating(true);
+    try {
+      await regenerateProductWithAgents(preview.id);
+    } finally {
+      setIsRegenerating(false);
+    }
+  }
+
+  async function openProductFile(path?: string) {
+    if (!path) return;
+    await revealProductPath(path);
+  }
+
+  function openViewer(tab: (typeof previewTabs)[number]["id"] = "full_draft") {
+    setActiveTab(tab);
+    setViewerOpen(true);
   }
 
   return (
@@ -200,17 +252,25 @@ export function ProductionPipelineWorkbench() {
                         <a className="rounded-md border border-teal-300/25 bg-teal-400/10 px-3 py-2 font-semibold text-teal-100 hover:bg-teal-400/15" href="#/businesses">
                           Open business cockpit
                         </a>
-                        <Button variant="secondary" onClick={() => setActiveTab("full_draft")}>
+                        <Button variant="secondary" onClick={() => openViewer("full_draft")}>
                           <Eye className="h-4 w-4" />
-                          View rendered preview
+                          View Product
                         </Button>
-                        <Button variant="outline" disabled={assetFiles.length === 0} onClick={() => setActiveTab("assets")}>
+                        <Button variant="outline" disabled={!latestProductFile && assetFiles.length === 0} onClick={() => void openProductFile(latestProductFile?.path ?? assetFiles[0]?.intendedPath)}>
                           <FileText className="h-4 w-4" />
                           Open product file
+                        </Button>
+                        <Button variant="outline" disabled={!productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                          <FolderOpen className="h-4 w-4" />
+                          Open folder
                         </Button>
                         <Button variant="outline" disabled>
                           <RotateCcw className="h-4 w-4" />
                           Compare latest revision
+                        </Button>
+                        <Button variant="outline" disabled={isRegenerating} onClick={() => void regenerateProduct()}>
+                          <RefreshCw className="h-4 w-4" />
+                          {isRegenerating ? "Generating..." : "Regenerate with agents"}
                         </Button>
                         <Button variant="outline" onClick={() => void exportProofPack()}>
                           <FileText className="h-4 w-4" />
@@ -240,7 +300,7 @@ export function ProductionPipelineWorkbench() {
                       <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
                         <p className="text-xs font-semibold uppercase text-emerald-100">What exists</p>
                         <div className="mt-2 space-y-1 text-sm text-slate-200">
-                          {(assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, 6).map((item) => (
+                          {(productFiles.length ? productFiles.map((file) => file.fileName) : assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, 8).map((item) => (
                             <p key={item}>- {item}</p>
                           ))}
                         </div>
@@ -254,6 +314,44 @@ export function ProductionPipelineWorkbench() {
                         </div>
                       </div>
                     </div>
+                    <div className="mt-4 rounded-lg border border-teal-300/20 bg-black/35 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Activity className="h-4 w-4 text-teal-100" />
+                            <Badge tone={productionRun?.status === "blocked" ? "red" : productionRun ? "emerald" : "amber"}>Agent Reality Monitor</Badge>
+                            <Badge tone={productionRun?.runtimeMode === "real_openclaw" ? "emerald" : productionRun?.runtimeMode === "fallback_local" ? "amber" : "slate"}>{runtimeLabel}</Badge>
+                          </div>
+                          <h3 className="mt-2 font-display text-xl font-semibold text-stone-100">{monitorStatus}</h3>
+                          <p className="mt-1 text-sm leading-6 text-slate-300">
+                            {productionRun?.summary ?? "No product production run is attached yet. Regenerate with agents to produce local files."}
+                          </p>
+                        </div>
+                        <div className="grid min-w-[280px] gap-2 text-sm text-slate-300">
+                          <p><span className="text-slate-500">Track:</span> {productTrack?.label ?? "No track selected"}</p>
+                          <p><span className="text-slate-500">Latest file:</span> {latestProductFile?.fileName ?? "None yet"}</p>
+                          <p><span className="text-slate-500">Latest artifact:</span> {latestProductArtifact?.agentName ?? "None yet"}</p>
+                          <p><span className="text-slate-500">Folder:</span> {productManifest?.rootPath ?? "Not written yet"}</p>
+                        </div>
+                      </div>
+                      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                        {productArtifacts.slice(0, 6).map((artifact) => (
+                          <div key={artifact.id} className="rounded-md border border-white/10 bg-black/30 p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-semibold text-stone-100">{artifact.agentName}</p>
+                              <Badge tone={artifact.status === "complete" ? "emerald" : artifact.status === "fallback_local" ? "amber" : "red"}>{label(artifact.status)}</Badge>
+                            </div>
+                            <p className="mt-2 text-xs uppercase text-slate-500">{label(artifact.runtimeMode)}</p>
+                            <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-300">{artifact.markdown}</p>
+                          </div>
+                        ))}
+                      </div>
+                      {readinessGate ? (
+                        <p className="mt-3 rounded-md border border-white/10 bg-black/25 p-3 text-sm leading-6 text-slate-300">
+                          {readinessGate.summary} Publish approval is still locked until you review and approve the local draft.
+                        </p>
+                      ) : null}
+                    </div>
                     <div className="mt-4 rounded-md border border-teal-300/20 bg-black/30 p-4">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div>
@@ -265,7 +363,7 @@ export function ProductionPipelineWorkbench() {
                               : "Publish approval stays locked until a rendered local preview exists."}
                           </p>
                         </div>
-                        <Button variant="secondary" disabled={!renderedPreview} onClick={() => setActiveTab("full_draft")}>
+                        <Button variant="secondary" disabled={!renderedPreview} onClick={() => openViewer("full_draft")}>
                           <Eye className="h-4 w-4" />
                           View rendered preview
                         </Button>
@@ -309,12 +407,50 @@ export function ProductionPipelineWorkbench() {
                     </div>
                     <div className="rounded-md border border-white/10 bg-black/25 p-3">
                       <p className="text-xs font-semibold uppercase text-slate-500">Product Files</p>
-                      <p className="mt-2 text-2xl font-semibold text-stone-50">{assetFiles.length}</p>
+                      <p className="mt-2 text-2xl font-semibold text-stone-50">{productFiles.length || assetFiles.length}</p>
                     </div>
                     <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
                       <p className="text-xs font-semibold uppercase text-red-100">Locked</p>
                       <p className="mt-2 text-sm leading-6 text-red-100">Publishing, spending, messaging, login, forms, purchases, and connectors.</p>
                     </div>
+                  </div>
+
+                  <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <Badge tone={productManifest?.status === "written" ? "emerald" : productManifest ? "amber" : "red"}>Local Product Files</Badge>
+                        <h3 className="mt-2 font-display text-xl font-semibold text-stone-100">{productManifest?.rootPath ?? "No product folder yet"}</h3>
+                        <p className="mt-1 text-sm text-slate-400">
+                          These are the real local files created for the product. External publishing is separate and locked.
+                        </p>
+                      </div>
+                      <Button variant="outline" disabled={!productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                        <FolderOpen className="h-4 w-4" />
+                        Open folder
+                      </Button>
+                    </div>
+                    {productFiles.length ? (
+                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {productFiles.map((file) => (
+                          <div key={file.id} className="rounded-md border border-white/10 bg-black/35 p-3">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="font-semibold text-stone-100">{file.fileName}</p>
+                              <Badge tone={file.status === "written" || file.status === "virtual" ? "emerald" : "red"}>{label(file.status)}</Badge>
+                            </div>
+                            <p className="mt-2 text-xs uppercase text-slate-500">{label(file.runtimeMode)}</p>
+                            <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-300">{file.content}</p>
+                            <Button className="mt-3" size="sm" variant="outline" onClick={() => void openProductFile(file.path)}>
+                              <FileText className="h-4 w-4" />
+                              Open file
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="mt-4 rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm text-amber-100">
+                        No product file records exist yet. Use Regenerate with agents to create a real local product package.
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex flex-wrap gap-2">
@@ -346,7 +482,9 @@ export function ProductionPipelineWorkbench() {
                         ))}
                       </div>
                     ) : (
-                      <pre className="mt-4 max-h-[460px] overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/25 p-4 text-sm leading-6 text-slate-200">{activeSection?.content}</pre>
+                      <pre className="mt-4 max-h-[460px] overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/25 p-4 text-sm leading-6 text-slate-200">
+                        {activeTab === "full_draft" ? productFullText : activeSection?.content}
+                      </pre>
                     )}
                     {activeTab === "publishing_preview" && publishPayload ? (
                       <div className="mt-4 rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
@@ -398,7 +536,7 @@ export function ProductionPipelineWorkbench() {
                       </p>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <Button variant="outline" onClick={() => setActiveTab("full_draft")}>
+                      <Button variant="outline" onClick={() => openViewer("full_draft")}>
                         <Eye className="h-4 w-4" />
                         View Product
                       </Button>
@@ -439,6 +577,116 @@ export function ProductionPipelineWorkbench() {
           )}
         </CardContent>
       </Card>
+
+      {viewerOpen && preview && blueprint ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm">
+          <div className="flex max-h-[92vh] w-full max-w-6xl flex-col overflow-hidden rounded-lg border border-amber-300/30 bg-[#070605] shadow-2xl shadow-amber-950/30">
+            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/10 p-4">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone="amber">Product Viewer</Badge>
+                  <Badge tone={productionRun?.runtimeMode === "real_openclaw" ? "emerald" : productionRun?.runtimeMode === "fallback_local" ? "amber" : "slate"}>{runtimeLabel}</Badge>
+                  <Badge tone="red">External Action Blocked</Badge>
+                </div>
+                <h2 className="mt-2 font-display text-2xl font-semibold text-stone-50">{blueprint.name}</h2>
+                <p className="mt-1 text-sm text-slate-400">
+                  Inspect the exact local product before any publish approval can be requested.
+                </p>
+              </div>
+              <Button variant="ghost" onClick={() => setViewerOpen(false)} aria-label="Close product viewer">
+                <X className="h-5 w-5" />
+              </Button>
+            </div>
+            <div className="border-b border-white/10 p-3">
+              <div className="flex flex-wrap gap-2">
+                {previewTabs.map((tab) => (
+                  <Button key={tab.id} size="sm" variant={activeTab === tab.id ? "secondary" : "ghost"} onClick={() => setActiveTab(tab.id)}>
+                    {tab.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="grid min-h-0 flex-1 gap-0 overflow-hidden lg:grid-cols-[1fr_340px]">
+              <div className="min-h-0 overflow-auto p-5">
+                {activeTab === "assets" ? (
+                  <div className="space-y-3">
+                    <h3 className="font-display text-xl font-semibold text-stone-100">Product Files</h3>
+                    {productFiles.length ? (
+                      productFiles.map((file) => (
+                        <div key={file.id} className="rounded-md border border-white/10 bg-black/30 p-4">
+                          <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                              <p className="font-semibold text-stone-100">{file.title}</p>
+                              <p className="mt-1 text-xs text-slate-500">{file.path}</p>
+                            </div>
+                            <Button size="sm" variant="outline" onClick={() => void openProductFile(file.path)}>
+                              <FileText className="h-4 w-4" />
+                              Open file
+                            </Button>
+                          </div>
+                          <pre className="mt-4 max-h-[320px] overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/35 p-3 text-sm leading-6 text-slate-200">{file.content}</pre>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm text-amber-100">No product files exist yet.</p>
+                    )}
+                  </div>
+                ) : activeSection?.fields ? (
+                  <div>
+                    <h3 className="font-display text-xl font-semibold text-stone-100">{activeSection.title}</h3>
+                    <div className="mt-4 grid gap-3 md:grid-cols-2">
+                      {Object.entries(activeSection.fields).map(([key, value]) => (
+                        <div key={key} className="rounded-md border border-white/10 bg-black/30 p-3">
+                          <p className="text-xs font-semibold uppercase text-slate-500">{key}</p>
+                          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-200">{value}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <div>
+                    <h3 className="font-display text-xl font-semibold text-stone-100">{activeSection?.title ?? "Full Product"}</h3>
+                    {activeTab === "full_draft" && renderedPreview ? (
+                      <div className="mt-4 rounded-md border border-teal-300/20 bg-teal-400/8 p-4">
+                        <p className="text-xs font-semibold uppercase text-teal-100">Rendered preview</p>
+                        <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-100">{renderedPreview.textPreview}</pre>
+                      </div>
+                    ) : null}
+                    <pre className="mt-4 whitespace-pre-wrap rounded-md border border-white/10 bg-black/30 p-4 text-sm leading-6 text-slate-200">
+                      {activeTab === "full_draft" ? productFullText : activeSection?.content ?? "No section content."}
+                    </pre>
+                  </div>
+                )}
+              </div>
+              <div className="min-h-0 overflow-auto border-t border-white/10 bg-black/25 p-4 lg:border-l lg:border-t-0">
+                <p className="text-xs font-semibold uppercase text-slate-500">Reality</p>
+                <div className="mt-3 space-y-3 text-sm leading-6 text-slate-300">
+                  <p><span className="text-slate-500">Status:</span> {monitorStatus}</p>
+                  <p><span className="text-slate-500">Track:</span> {productTrack?.label ?? "Unknown"}</p>
+                  <p><span className="text-slate-500">Files:</span> {productFiles.length}</p>
+                  <p><span className="text-slate-500">Folder:</span> {productManifest?.rootPath ?? "Not written"}</p>
+                  <p><span className="text-slate-500">Latest receipt:</span> {productReceipts[productReceipts.length - 1]?.title ?? latestReceipt?.title ?? "No receipt"}</p>
+                  <p><span className="text-slate-500">External action:</span> blocked until separate approval</p>
+                </div>
+                <div className="mt-4 space-y-2">
+                  <Button className="w-full" variant="secondary" disabled={!productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                    <FolderOpen className="h-4 w-4" />
+                    Open product folder
+                  </Button>
+                  <Button className="w-full" variant="outline" disabled={isRegenerating} onClick={() => void regenerateProduct()}>
+                    <RefreshCw className="h-4 w-4" />
+                    {isRegenerating ? "Generating..." : "Regenerate with agents"}
+                  </Button>
+                  <Button className="w-full" variant="outline" onClick={() => void exportProofPack()}>
+                    <FileText className="h-4 w-4" />
+                    Export proof pack
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <Card>
         <CardHeader>
