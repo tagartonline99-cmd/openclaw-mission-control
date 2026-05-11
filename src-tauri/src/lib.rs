@@ -1389,7 +1389,11 @@ fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult
          do not deliver messages to external channels; do not run browser automation; do not browse; do not scrape; \
          do not log in; do not submit forms; do not bypass CAPTCHA or website terms; do not request credentials; \
          do not use --deliver, broadcast, purchases, fake reviews, spam, or uncontrolled crawling. \
-         Produce a concise artifact for TeamLeader1A review with evidence needs, assumptions, risks, and next safe approval-gated step.\n\n\
+         If this is a product-production turn, produce a complete publish-ready LOCAL product artifact now, not a summary. \
+         Do not acknowledge, stand by, ask for another instruction, or describe the rules back to the user. \
+         Start with the first required Markdown heading. Include every required Markdown heading requested by Mission Control, \
+         concrete buyer-facing copy, exact fields, evidence/assumption notes, risks, missing items, and the next safe handoff. \
+         Never claim the product was published.\n\n\
          User request:\n{}",
         request.message.trim()
     ));

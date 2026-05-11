@@ -376,6 +376,37 @@ type SqlDatabase = {
   select: <T = Record<string, unknown>>(query: string, bindValues?: unknown[]) => Promise<T[]>;
 };
 
+function sleep(ms: number) {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
+}
+
+function isSqlLocked(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /database is locked|code:\s*5|SQLITE_BUSY/i.test(message);
+}
+
+async function retrySql<T>(operation: () => Promise<T>, label: string): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < 7; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isSqlLocked(error)) throw error;
+      await sleep(120 * (attempt + 1));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(`${label} failed after SQLite lock retries`);
+}
+
+function sqlExecute(db: SqlDatabase, query: string, bindValues?: unknown[]) {
+  return retrySql(() => db.execute(query, bindValues), "SQLite execute");
+}
+
+function sqlSelect<T = Record<string, unknown>>(db: SqlDatabase, query: string, bindValues?: unknown[]) {
+  return retrySql(() => db.select<T>(query, bindValues), "SQLite select");
+}
+
 type EntityKey =
   | "skills"
   | "agents"
@@ -866,7 +897,7 @@ async function getSqlDatabase(): Promise<SqlDatabase | null> {
 }
 
 async function migrate(db: SqlDatabase) {
-  await db.execute(`
+  await sqlExecute(db, `
     CREATE TABLE IF NOT EXISTS app_metadata (
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL,
@@ -877,7 +908,7 @@ async function migrate(db: SqlDatabase) {
   const tableNames = [...new Set([...entityConfigs.map((item) => item.tableName), ...singletonConfigs.map((item) => item.tableName)])];
 
   for (const tableName of tableNames) {
-    await db.execute(`
+    await sqlExecute(db, `
       CREATE TABLE IF NOT EXISTS ${tableName} (
         id TEXT PRIMARY KEY,
         quest_id TEXT,
@@ -890,21 +921,22 @@ async function migrate(db: SqlDatabase) {
         updated_at TEXT NOT NULL
       )
     `);
-    await db.execute(`CREATE INDEX IF NOT EXISTS idx_${tableName}_quest_id ON ${tableName} (quest_id)`);
-    await db.execute(`CREATE INDEX IF NOT EXISTS idx_${tableName}_status ON ${tableName} (status)`);
-    await db.execute(`CREATE INDEX IF NOT EXISTS idx_${tableName}_type ON ${tableName} (type)`);
-    await db.execute(`CREATE INDEX IF NOT EXISTS idx_${tableName}_stage ON ${tableName} (stage)`);
-    await db.execute(`CREATE INDEX IF NOT EXISTS idx_${tableName}_risk_level ON ${tableName} (risk_level)`);
+    await sqlExecute(db, `CREATE INDEX IF NOT EXISTS idx_${tableName}_quest_id ON ${tableName} (quest_id)`);
+    await sqlExecute(db, `CREATE INDEX IF NOT EXISTS idx_${tableName}_status ON ${tableName} (status)`);
+    await sqlExecute(db, `CREATE INDEX IF NOT EXISTS idx_${tableName}_type ON ${tableName} (type)`);
+    await sqlExecute(db, `CREATE INDEX IF NOT EXISTS idx_${tableName}_stage ON ${tableName} (stage)`);
+    await sqlExecute(db, `CREATE INDEX IF NOT EXISTS idx_${tableName}_risk_level ON ${tableName} (risk_level)`);
   }
 }
 
 async function readMetadata(db: SqlDatabase, key: string) {
-  const rows = await db.select<{ value: string }>("SELECT value FROM app_metadata WHERE key = ?", [key]);
+  const rows = await sqlSelect<{ value: string }>(db, "SELECT value FROM app_metadata WHERE key = ?", [key]);
   return rows[0]?.value ?? null;
 }
 
 async function writeMetadata(db: SqlDatabase, key: string, value: string) {
-  await db.execute(
+  await sqlExecute(
+    db,
     `INSERT INTO app_metadata (key, value, updated_at)
      VALUES (?, ?, ?)
      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
@@ -913,7 +945,7 @@ async function writeMetadata(db: SqlDatabase, key: string, value: string) {
 }
 
 async function replaceTable(db: SqlDatabase, tableName: string, records: unknown[]) {
-  await db.execute(`DELETE FROM ${tableName}`);
+  await sqlExecute(db, `DELETE FROM ${tableName}`);
   for (const record of records) {
     await upsertRecord(db, tableName, record);
   }
@@ -923,7 +955,8 @@ async function upsertRecord(db: SqlDatabase, tableName: string, record: unknown,
   const id = forcedId ?? getRecordId(record);
   const indexes = getRecordIndexes(record);
 
-  await db.execute(
+  await sqlExecute(
+    db,
     `INSERT INTO ${tableName} (id, quest_id, status, type, stage, risk_level, payload, created_at, updated_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET
@@ -949,7 +982,7 @@ async function upsertRecord(db: SqlDatabase, tableName: string, record: unknown,
 }
 
 async function loadTable<T>(db: SqlDatabase, tableName: string): Promise<T[]> {
-  const rows = await db.select<StoredRow>(`SELECT id, payload FROM ${tableName} ORDER BY created_at ASC`);
+  const rows = await sqlSelect<StoredRow>(db, `SELECT id, payload FROM ${tableName} ORDER BY created_at ASC`);
   return rows.map((row) => JSON.parse(row.payload) as T);
 }
 
@@ -988,9 +1021,9 @@ async function loadSqlState(db: SqlDatabase): Promise<AppDataState> {
     }
   }
 
-  const settingsRows = await db.select<StoredRow>("SELECT id, payload FROM settings");
+  const settingsRows = await sqlSelect<StoredRow>(db, "SELECT id, payload FROM settings");
   const settingsById = new Map(settingsRows.map((row) => [row.id, JSON.parse(row.payload) as unknown]));
-  const runtimeRows = await db.select<StoredRow>("SELECT id, payload FROM openclaw_runtime_status");
+  const runtimeRows = await sqlSelect<StoredRow>(db, "SELECT id, payload FROM openclaw_runtime_status");
   const runtimeById = new Map(runtimeRows.map((row) => [row.id, JSON.parse(row.payload) as unknown]));
 
   state.userSettings = {

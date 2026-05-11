@@ -92,24 +92,24 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
   await expect(page.getByText("Product Snapshot").first()).toBeVisible();
   await expect(page.getByText("Agent Reality Monitor").first()).toBeVisible();
-  await expect(page.getByText(/Real Product Factory|real product factory|fallback local/i).first()).toBeVisible();
+  await expect(page.getByText("Product Build Status").first()).toBeVisible();
+  await expect(page.getByText("Real OpenClaw Build Blocked").first()).toBeVisible();
+  await expect(page.getByText(/No fallback product is accepted/i).first()).toBeVisible();
   await expect(page.getByText(/See the exact product before any publishing approval/i)).toBeVisible();
   await expect(page.getByText("Product Files", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Local Product Files").first()).toBeVisible();
   await expect(page.getByText("Rendered Product Preview").first()).toBeVisible();
-  await expect(page.getByText(/FIVERR GIG MOCKUP|LANDING PAGE PREVIEW/i).first()).toBeVisible();
+  await expect(page.getByText(/REAL PRODUCT BUILD BLOCKED|FIVERR GIG LOCAL PREVIEW|LANDING PAGE PREVIEW/i).first()).toBeVisible();
   await expect(page.getByText("Claims & Safety Check").first()).toBeVisible();
   await expect(page.getByText("Publishing Preview")).toBeVisible();
   await expect(page.getByText("Product Proof Pack").first()).toBeVisible();
   await expect(page.getByText("Product Receipts").first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Prepare Publish Approval/i })).toBeDisabled();
-  await page.getByRole("button", { name: /View Product/i }).first().click();
+  await expect(page.getByRole("button", { name: /Approve Local Draft/i })).toBeDisabled();
+  await page.getByRole("button", { name: /View Blocked Build|View Product/i }).first().click();
   await expect(page.getByText("Product Viewer")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Full local draft" }).first()).toBeVisible();
+  await expect(page.getByText("No product files were created or accepted.").first()).toBeVisible();
   await page.getByRole("button", { name: /Close product viewer/i }).click();
-  await page.getByRole("button", { name: /Approve Local Draft/i }).click();
-  await expect(page.getByRole("button", { name: /Local Draft Approved/i })).toBeVisible();
-  await page.getByRole("button", { name: /Prepare Publish Approval/i }).click();
 
   await page.goto("/#/approvals", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Approval gates for risky actions" })).toBeVisible();
@@ -118,8 +118,9 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Ready To Request").first()).toBeVisible();
   await expect(page.getByText("Locked").first()).toBeVisible();
   await expect(page.getByText("Blocked").first()).toBeVisible();
-  await expect(page.getByText(/Product publish|Publish externally/i).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Ready, Locked, And Blocked" })).toBeVisible();
+  await expect(page.getByText(/Real OpenClaw command failed|Real Product Build Blocked|Tauri desktop runtime is required/i).first()).toBeVisible();
+  await expect(page.getByText("Open Product Studio").first()).toBeVisible();
 
   await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
@@ -149,7 +150,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Release And Updater Checklist")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Real Product Factory release/i)).toBeVisible();
+  await expect(page.getByText(/No-Fallback Product Factory release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

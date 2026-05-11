@@ -1102,6 +1102,12 @@ export interface ProductProductionRun {
   status: ProductProductionRunStatus;
   currentAgentId?: MissionAgentId | "TeamLeader1A";
   runtimeMode: ProductRuntimeMode;
+  realOpenClawRequired?: boolean;
+  fallbackAllowed?: boolean;
+  failedAgentId?: MissionAgentId | "TeamLeader1A";
+  requiredFileNames?: string[];
+  writtenFilePaths?: string[];
+  buildError?: string;
   artifactIds: string[];
   fileManifestId?: string;
   receiptIds: string[];
@@ -1126,6 +1132,8 @@ export interface ProductAgentArtifact {
   citations: string[];
   claims: string[];
   missingItems: string[];
+  requiredHeadings?: string[];
+  missingHeadings?: string[];
   nextHandoff?: MissionAgentId | "TeamLeader1A";
   commandId?: string;
   stdout?: string;
@@ -1191,6 +1199,9 @@ export interface ProductReadinessGate {
   requiredDeliverables: string[];
   missingItems: string[];
   blockedReasons: string[];
+  failedAgentId?: MissionAgentId | "TeamLeader1A";
+  requiredFileNames?: string[];
+  writtenFilePaths?: string[];
   canRequestPublishApproval: boolean;
   summary: string;
   updatedAt: string;

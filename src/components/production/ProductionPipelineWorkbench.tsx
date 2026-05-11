@@ -100,19 +100,30 @@ export function ProductionPipelineWorkbench() {
   const productArtifacts = productionRun ? data.productAgentArtifacts.filter((artifact) => productionRun.artifactIds.includes(artifact.id)) : [];
   const productReceipts = productionRun ? data.productGenerationReceipts.filter((receipt) => productionRun.receiptIds.includes(receipt.id)) : [];
   const readinessGate = productionRun ? data.productReadinessGates.find((item) => item.runId === productionRun.id) : undefined;
+  const buildBlocked = productionRun?.status === "blocked" || preview?.status === "blocked" || readinessGate?.status === "blocked";
+  const buildComplete = productionRun?.status === "complete" && productFiles.length > 0 && productFiles.every((file) => file.status === "written");
   const latestProductFile = productFiles[0];
+  const primaryProductFile =
+    productFiles.find((file) => /fiverr|gig|landing|newsletter|article|template|sop|checklist/i.test(file.fileName)) ??
+    latestProductFile;
   const latestProductArtifact = productArtifacts[productArtifacts.length - 1];
   const productFullText = productFiles.length
     ? productFiles.map((file) => [`# ${file.title}`, `Path: ${file.path}`, `Mode: ${label(file.runtimeMode)}`, "", file.content].join("\n")).join("\n\n---\n\n")
     : activeSection?.content ?? renderedPreview?.textPreview ?? "No product content is available yet.";
-  const runtimeLabel = productionRun?.runtimeMode ? label(productionRun.runtimeMode) : preview?.generatedByAgents ? "real product factory" : "not generated yet";
-  const monitorStatus = productionRun?.status === "blocked"
-    ? "Blocked"
-    : productionRun?.completedAt
-      ? "Idle after production"
+  const inlineProductPreviewText = (
+    renderedPreview?.textPreview?.trim() ||
+    primaryProductFile?.content?.trim() ||
+    productFullText.trim()
+  ).slice(0, 14_000);
+  const runtimeLabel = buildComplete ? "real openclaw + local files" : productionRun?.runtimeMode ? label(productionRun.runtimeMode) : preview?.generatedByAgents ? "real product factory" : "not generated yet";
+  const monitorStatus = buildBlocked
+    ? "Real OpenClaw Build Blocked"
+    : buildComplete
+      ? "Real OpenClaw Build Complete"
       : productionRun
         ? "Working now"
         : "Waiting for product generation";
+  const blockedReason = productionRun?.buildError ?? readinessGate?.blockedReasons?.join(" ") ?? "No product files were accepted.";
 
   async function createPack() {
     if (!questId) return;
@@ -231,6 +242,36 @@ export function ProductionPipelineWorkbench() {
 
               {selectedBusiness && preview && blueprint ? (
                 <>
+                  <div className={`rounded-lg border p-4 ${buildBlocked ? "border-red-300/25 bg-red-500/10" : buildComplete ? "border-emerald-300/25 bg-emerald-400/10" : "border-amber-300/25 bg-amber-400/10"}`}>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <Badge tone={buildBlocked ? "red" : buildComplete ? "emerald" : "amber"}>Product Build Status</Badge>
+                        <h3 className="mt-2 font-display text-2xl font-semibold text-stone-50">{monitorStatus}</h3>
+                        <p className="mt-2 text-sm leading-6 text-slate-300">
+                          {buildBlocked
+                            ? `No fallback product is accepted. ${blockedReason}`
+                            : buildComplete
+                              ? `Real local product files exist at ${productManifest?.rootPath}. Review them before any publish approval.`
+                              : "The product is not ready until real OpenClaw output and written local files exist."}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant={buildBlocked ? "secondary" : "outline"} disabled={isRegenerating} onClick={() => void regenerateProduct()}>
+                          <RefreshCw className="h-4 w-4" />
+                          {isRegenerating ? "Building..." : buildBlocked ? "Retry Full Product Build" : "Regenerate with agents"}
+                        </Button>
+                        <Button variant="outline" disabled={!productManifest?.rootPath || buildBlocked} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                          <FolderOpen className="h-4 w-4" />
+                          Open Product Folder
+                        </Button>
+                      </div>
+                    </div>
+                    {readinessGate?.failedAgentId ? (
+                      <p className="mt-3 rounded-md border border-red-300/20 bg-black/25 p-3 text-sm text-red-100">
+                        Failed agent: {label(readinessGate.failedAgentId)}. Retry will run the full product build again and will not publish, spend, message, log in, submit forms, purchase, or execute connectors.
+                      </p>
+                    ) : null}
+                  </div>
                   <div className="rounded-lg border border-amber-300/20 bg-gradient-to-br from-amber-400/12 via-black/30 to-teal-400/10 p-5">
                     <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                       <div className="max-w-4xl">
@@ -254,13 +295,13 @@ export function ProductionPipelineWorkbench() {
                         </a>
                         <Button variant="secondary" onClick={() => openViewer("full_draft")}>
                           <Eye className="h-4 w-4" />
-                          View Product
+                          {buildBlocked ? "View Blocked Build" : "View Product"}
                         </Button>
                         <Button variant="outline" disabled={!latestProductFile && assetFiles.length === 0} onClick={() => void openProductFile(latestProductFile?.path ?? assetFiles[0]?.intendedPath)}>
                           <FileText className="h-4 w-4" />
                           Open product file
                         </Button>
-                        <Button variant="outline" disabled={!productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                        <Button variant="outline" disabled={buildBlocked || !productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
                           <FolderOpen className="h-4 w-4" />
                           Open folder
                         </Button>
@@ -270,7 +311,7 @@ export function ProductionPipelineWorkbench() {
                         </Button>
                         <Button variant="outline" disabled={isRegenerating} onClick={() => void regenerateProduct()}>
                           <RefreshCw className="h-4 w-4" />
-                          {isRegenerating ? "Generating..." : "Regenerate with agents"}
+                          {isRegenerating ? "Building..." : buildBlocked ? "Retry Full Product Build" : "Regenerate with agents"}
                         </Button>
                         <Button variant="outline" onClick={() => void exportProofPack()}>
                           <FileText className="h-4 w-4" />
@@ -300,7 +341,7 @@ export function ProductionPipelineWorkbench() {
                       <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
                         <p className="text-xs font-semibold uppercase text-emerald-100">What exists</p>
                         <div className="mt-2 space-y-1 text-sm text-slate-200">
-                          {(productFiles.length ? productFiles.map((file) => file.fileName) : assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, 8).map((item) => (
+                          {(buildBlocked ? ["No real product files created yet"] : productFiles.length ? productFiles.map((file) => file.fileName) : assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, 8).map((item) => (
                             <p key={item}>- {item}</p>
                           ))}
                         </div>
@@ -314,13 +355,61 @@ export function ProductionPipelineWorkbench() {
                         </div>
                       </div>
                     </div>
+                    <div className={`mt-4 rounded-lg border p-4 ${buildComplete ? "border-teal-300/25 bg-teal-400/10" : "border-amber-300/20 bg-black/30"}`}>
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge tone={buildComplete ? "emerald" : buildBlocked ? "red" : "amber"}>Exact Product Preview</Badge>
+                            <Badge tone={buildComplete ? "emerald" : "slate"}>{buildComplete ? "Real Local Files Written" : "Not Ready Yet"}</Badge>
+                          </div>
+                          <h3 className="mt-2 font-display text-2xl font-semibold text-stone-50">
+                            {primaryProductFile?.title ?? renderedPreview?.title ?? blueprint.name}
+                          </h3>
+                          <p className="mt-1 text-sm leading-6 text-slate-300">
+                            {buildComplete
+                              ? `This is the product content created by the agents and written under ${productManifest?.rootPath}. Review it here before approving any draft or publish request.`
+                              : buildBlocked
+                                ? `The product is not visible because the real build was blocked: ${blockedReason}`
+                                : "The product will appear here after the real OpenClaw production run writes local files."}
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button variant="secondary" disabled={!buildComplete} onClick={() => openViewer("full_draft")}>
+                            <Eye className="h-4 w-4" />
+                            Open Full Viewer
+                          </Button>
+                          <Button variant="outline" disabled={!primaryProductFile?.path || buildBlocked} onClick={() => void openProductFile(primaryProductFile?.path)}>
+                            <FileText className="h-4 w-4" />
+                            Open Main File
+                          </Button>
+                        </div>
+                      </div>
+                      <pre className="mt-4 max-h-[560px] overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/45 p-4 text-sm leading-6 text-slate-100">
+                        {inlineProductPreviewText || "No product text exists yet."}
+                      </pre>
+                      {productFiles.length ? (
+                        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                          {productFiles.slice(0, 8).map((file) => (
+                            <button
+                              key={file.id}
+                              className="rounded-md border border-white/10 bg-black/30 p-3 text-left text-sm hover:border-teal-200/35 hover:bg-teal-400/8"
+                              type="button"
+                              onClick={() => void openProductFile(file.path)}
+                            >
+                              <span className="block font-semibold text-stone-100">{file.fileName}</span>
+                              <span className="mt-1 block text-xs text-slate-500">{label(file.runtimeMode)} / {label(file.status)}</span>
+                            </button>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
                     <div className="mt-4 rounded-lg border border-teal-300/20 bg-black/35 p-4">
                       <div className="flex flex-wrap items-start justify-between gap-3">
                         <div>
                           <div className="flex flex-wrap items-center gap-2">
                             <Activity className="h-4 w-4 text-teal-100" />
-                            <Badge tone={productionRun?.status === "blocked" ? "red" : productionRun ? "emerald" : "amber"}>Agent Reality Monitor</Badge>
-                            <Badge tone={productionRun?.runtimeMode === "real_openclaw" ? "emerald" : productionRun?.runtimeMode === "fallback_local" ? "amber" : "slate"}>{runtimeLabel}</Badge>
+                            <Badge tone={buildBlocked ? "red" : buildComplete ? "emerald" : "amber"}>Agent Reality Monitor</Badge>
+                            <Badge tone={buildComplete ? "emerald" : buildBlocked ? "red" : "slate"}>{runtimeLabel}</Badge>
                           </div>
                           <h3 className="mt-2 font-display text-xl font-semibold text-stone-100">{monitorStatus}</h3>
                           <p className="mt-1 text-sm leading-6 text-slate-300">
@@ -339,7 +428,7 @@ export function ProductionPipelineWorkbench() {
                           <div key={artifact.id} className="rounded-md border border-white/10 bg-black/30 p-3">
                             <div className="flex items-center justify-between gap-2">
                               <p className="font-semibold text-stone-100">{artifact.agentName}</p>
-                              <Badge tone={artifact.status === "complete" ? "emerald" : artifact.status === "fallback_local" ? "amber" : "red"}>{label(artifact.status)}</Badge>
+                              <Badge tone={artifact.status === "complete" ? "emerald" : "red"}>{label(artifact.status)}</Badge>
                             </div>
                             <p className="mt-2 text-xs uppercase text-slate-500">{label(artifact.runtimeMode)}</p>
                             <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-300">{artifact.markdown}</p>
@@ -348,7 +437,7 @@ export function ProductionPipelineWorkbench() {
                       </div>
                       {readinessGate ? (
                         <p className="mt-3 rounded-md border border-white/10 bg-black/25 p-3 text-sm leading-6 text-slate-300">
-                          {readinessGate.summary} Publish approval is still locked until you review and approve the local draft.
+                          {readinessGate.summary} Publish approval is still locked until a real product build completes and you approve the local draft.
                         </p>
                       ) : null}
                     </div>
@@ -418,13 +507,13 @@ export function ProductionPipelineWorkbench() {
                   <div className="rounded-lg border border-white/10 bg-black/25 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <Badge tone={productManifest?.status === "written" ? "emerald" : productManifest ? "amber" : "red"}>Local Product Files</Badge>
+                        <Badge tone={productManifest?.status === "written" ? "emerald" : "red"}>Local Product Files</Badge>
                         <h3 className="mt-2 font-display text-xl font-semibold text-stone-100">{productManifest?.rootPath ?? "No product folder yet"}</h3>
                         <p className="mt-1 text-sm text-slate-400">
-                          These are the real local files created for the product. External publishing is separate and locked.
+                          {buildBlocked ? "No real local files were accepted for this product build." : "These are the real local files created for the product. External publishing is separate and locked."}
                         </p>
                       </div>
-                      <Button variant="outline" disabled={!productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                      <Button variant="outline" disabled={buildBlocked || !productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
                         <FolderOpen className="h-4 w-4" />
                         Open folder
                       </Button>
@@ -448,7 +537,7 @@ export function ProductionPipelineWorkbench() {
                       </div>
                     ) : (
                       <p className="mt-4 rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm text-amber-100">
-                        No product file records exist yet. Use Regenerate with agents to create a real local product package.
+                        No real product file records exist yet. Retry the full product build to run OpenClaw production agents and write local files.
                       </p>
                     )}
                   </div>
@@ -538,18 +627,18 @@ export function ProductionPipelineWorkbench() {
                     <div className="flex flex-wrap items-center gap-2">
                       <Button variant="outline" onClick={() => openViewer("full_draft")}>
                         <Eye className="h-4 w-4" />
-                        View Product
+                        {buildBlocked ? "View Blocked Build" : "View Product"}
                       </Button>
                       <Button variant="outline" onClick={() => void requestRevision()}>
                         <RotateCcw className="h-4 w-4" />
                         Request Revision
                       </Button>
-                      <Button variant="secondary" disabled={preview.localDraftApproved} onClick={() => void approveDraft()}>
+                      <Button variant="secondary" disabled={buildBlocked || preview.localDraftApproved} onClick={() => void approveDraft()}>
                         <CheckCircle2 className="h-4 w-4" />
                         {preview.localDraftApproved ? "Local Draft Approved" : "Approve Local Draft"}
                       </Button>
                       <Button
-                        disabled={!preview.localDraftApproved || !renderedPreview || gate?.status === "pending_approval" || gate?.status === "approved" || preview.claimsSafetyStatus === "blocked"}
+                        disabled={buildBlocked || !preview.localDraftApproved || !renderedPreview || renderedPreview.status !== "ready" || gate?.status === "pending_approval" || gate?.status === "approved" || preview.claimsSafetyStatus === "blocked"}
                         onClick={() => void preparePublish()}
                       >
                         <ShieldAlert className="h-4 w-4" />
@@ -565,6 +654,11 @@ export function ProductionPipelineWorkbench() {
                   {preview.localDraftApproved && !renderedPreview ? (
                     <p className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm text-amber-100">
                       Prepare Publish Approval is disabled because a rendered product preview does not exist yet.
+                    </p>
+                  ) : null}
+                  {buildBlocked ? (
+                    <p className="rounded-md border border-red-300/20 bg-red-500/8 p-3 text-sm text-red-100">
+                      Prepare Publish Approval is disabled because the real product build is blocked. No fallback product is accepted.
                     </p>
                   ) : null}
                 </>
@@ -669,7 +763,7 @@ export function ProductionPipelineWorkbench() {
                   <p><span className="text-slate-500">External action:</span> blocked until separate approval</p>
                 </div>
                 <div className="mt-4 space-y-2">
-                  <Button className="w-full" variant="secondary" disabled={!productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                  <Button className="w-full" variant="secondary" disabled={buildBlocked || !productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
                     <FolderOpen className="h-4 w-4" />
                     Open product folder
                   </Button>

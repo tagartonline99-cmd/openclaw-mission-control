@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
-import { readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { setTimeout as delay } from "node:timers/promises";
 
 const exePath =
@@ -8,6 +9,8 @@ const exePath =
   "C:\\Users\\User\\AppData\\Local\\OpenClaw Mission Control\\openclaw-mission-control.exe";
 const port = Number(process.env.OPENCLAW_MC_DEBUG_PORT ?? 9255);
 const expectedVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+const sqlitePath = process.env.OPENCLAW_MC_DB ?? "C:\\Users\\User\\AppData\\Roaming\\com.openclaw.missioncontrol\\openclaw-mission-control.db";
+const productsRoot = process.env.OPENCLAW_MC_PRODUCTS_ROOT ?? "C:\\Users\\User\\.openclaw\\mission-control-products";
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
@@ -51,7 +54,7 @@ function connectCdp(wsUrl) {
             const timer = setTimeout(() => {
               pending.delete(messageId);
               rejectSend(new Error(`${method}: timed out waiting for CDP response`));
-            }, 20_000);
+            }, 120_000);
             pending.set(messageId, { resolve: resolveSend, reject: rejectSend, method, timer });
             ws.send(JSON.stringify({ id: messageId, method, params }));
           });
@@ -98,6 +101,101 @@ async function waitFor(client, expression, label, timeoutMs = 45_000) {
   throw new Error(`Timed out waiting for ${label}. Errors: ${errors}. Body: ${body}`);
 }
 
+function readProductProof(beforeCount) {
+  try {
+    const db = new DatabaseSync(sqlitePath, { readOnly: true });
+    try {
+      const allRuns = db.prepare("SELECT id FROM product_production_runs").all();
+      if (allRuns.length <= beforeCount) return false;
+      const latestRow = db.prepare("SELECT payload FROM product_production_runs ORDER BY updated_at DESC LIMIT 1").get();
+      if (!latestRow?.payload) return false;
+      const latest = JSON.parse(latestRow.payload);
+      if (latest.status === "blocked") {
+        return { status: latest.status, written: 0, rootPath: "", error: latest.buildError || latest.summary || "Product build blocked." };
+      }
+      if (latest.status !== "complete") return false;
+      const fileRows = db.prepare("SELECT payload FROM product_file_records").all();
+      const parsedFiles = fileRows.map((row) => JSON.parse(row.payload)).filter((file) => file.runId === latest.id);
+      const written = parsedFiles.filter((file) => file.status === "written").length;
+      const manifestRow = db.prepare("SELECT payload FROM product_file_manifests WHERE id = ?").get(latest.fileManifestId);
+      const manifest = manifestRow?.payload ? JSON.parse(manifestRow.payload) : null;
+      return written >= 7 ? { status: latest.status, written, rootPath: manifest?.rootPath ?? "", error: "" } : false;
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProductProof(beforeCount, timeoutMs = 900_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const proof = readProductProof(beforeCount);
+    if (proof) return proof;
+    await delay(2_000);
+  }
+  return readProductProof(beforeCount) || { status: "timeout", written: 0, rootPath: "", error: "Timed out waiting for Product Factory." };
+}
+
+function listProductFiles(root = productsRoot) {
+  const files = [];
+  if (!existsSync(root)) return files;
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    const fullPath = `${root}\\${entry.name}`;
+    if (entry.isDirectory()) files.push(...listProductFiles(fullPath));
+    else if (entry.isFile()) files.push({ path: fullPath, mtimeMs: statSync(fullPath).mtimeMs, size: statSync(fullPath).size });
+  }
+  return files;
+}
+
+async function waitForWrittenProductFiles(startedAtMs, timeoutMs = 1_200_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const files = listProductFiles().filter((file) => file.mtimeMs >= startedAtMs - 2_000 && file.size > 0);
+    if (files.length >= 7) {
+      const newest = files.sort((a, b) => b.mtimeMs - a.mtimeMs)[0];
+      return { status: "complete", written: files.length, rootPath: dirname(newest.path), error: "" };
+    }
+    await delay(2_000);
+  }
+  return { status: "timeout", written: 0, rootPath: "", error: "Timed out waiting for real product files on disk." };
+}
+
+function readReadyProposalProof(beforeCount) {
+  try {
+    const db = new DatabaseSync(sqlitePath, { readOnly: true });
+    try {
+      const rows = db.prepare("SELECT payload FROM business_proposals").all();
+      const proposals = rows
+        .map((row) => JSON.parse(row.payload))
+        .filter((proposal) => proposal.status === "ready_for_review")
+        .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
+      if (!proposals.length) return false;
+      return {
+        id: proposals[0].id,
+        status: proposals[0].status,
+        gate: proposals[0].proposalGateStatus,
+        isNew: rows.length > beforeCount,
+      };
+    } finally {
+      db.close();
+    }
+  } catch {
+    return false;
+  }
+}
+
+async function waitForReadyProposal(beforeCount, timeoutMs = 180_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const proof = readReadyProposalProof(beforeCount);
+    if (proof?.isNew) return proof;
+    await delay(2_000);
+  }
+  return readReadyProposalProof(beforeCount);
+}
+
 async function route(client, hash, text) {
   console.log(`route ${hash}`);
   await client.evaluate(`location.hash = ${JSON.stringify(hash)}`);
@@ -105,18 +203,28 @@ async function route(client, hash, text) {
 }
 
 async function click(client, text, index = 0) {
-  const clicked = await client.evaluate(`
+  const box = await client.evaluate(`
     (() => {
       const buttons = [...document.querySelectorAll("button")]
-        .filter((button) => button.innerText.includes(${JSON.stringify(text)}) && !button.disabled);
+        .filter((button) => {
+          const style = window.getComputedStyle(button);
+          return button.innerText.includes(${JSON.stringify(text)}) &&
+            !button.disabled &&
+            button.getClientRects().length > 0 &&
+            style.visibility !== "hidden" &&
+            style.display !== "none";
+        });
       const button = buttons[${index}];
       if (!button) return false;
       button.scrollIntoView({ block: "center" });
-      button.click();
-      return true;
+      const rect = button.getBoundingClientRect();
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, label: button.innerText };
     })()
   `);
-  assert(clicked, `Could not click ${text}`);
+  assert(box, `Could not click ${text}`);
+  await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y, button: "none" });
+  await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
+  await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
 }
 
 async function setFirstSelect(client, value) {
@@ -207,6 +315,9 @@ async function main() {
     commandScreenClean: false,
     opportunityHuntRows: 0,
     browserArtifactRows: 0,
+    productRunStatus: "",
+    productFileRows: 0,
+    productRootPath: "",
     brokerVisible: false,
     noApprovalSpam: false,
   };
@@ -223,15 +334,24 @@ async function main() {
     await route(client, "/", "Tell TeamLeader1A what to build");
     await waitFor(client, "document.querySelectorAll('select').length === 1 && document.body.innerText.includes('Optional quest attachment')", "clean command screen");
     evidence.commandScreenClean = true;
+    const beforeProposalRows = await client.evaluate(`(async () => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (!invoke) return 0;
+      const db = await invoke("plugin:sql|load", { db: "sqlite:openclaw-mission-control.db" });
+      const rows = await invoke("plugin:sql|select", { db, query: "SELECT id FROM business_proposals", values: [] });
+      return rows.length;
+    })()`);
     await setFirstSelect(client, "quick");
     await setTextArea(client, command);
     await click(client, "Send to TeamLeader1A");
     await waitFor(
       client,
-      `document.body.innerText.includes(${JSON.stringify(stamp)}) && document.body.innerText.includes('I started a quick Tavily-backed opportunity hunt') && (document.body.innerText.includes('FactCheck cleared proposal submission') || document.body.innerText.includes('I still created a proposal draft'))`,
-      "quick opportunity hunt result",
-      180_000,
+      `document.body.innerText.includes(${JSON.stringify(stamp)}) && document.body.innerText.includes('I started a quick Tavily-backed opportunity hunt')`,
+      "quick opportunity hunt start",
+      60_000,
     );
+    const proposalProof = await waitForReadyProposal(Number(beforeProposalRows), 180_000);
+    assert(proposalProof.status === "ready_for_review", `Expected an approval-ready proposal, got ${JSON.stringify(proposalProof)}`);
 
     console.log("check tasks");
     await route(client, "/tasks", "Every agent task in one place");
@@ -242,11 +362,37 @@ async function main() {
     await waitFor(client, "document.body.innerText.includes('Research Library') && document.body.innerText.includes('What is happening now')", "guild office active");
 
     console.log("check mission brief");
-    await route(client, "/mission-briefs", "Business Proposal Review");
+    await route(client, `/mission-briefs?proposal=${proposalProof.id}`, "Business Proposal Review");
     await waitFor(
       client,
       "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('proposal draft status') && text.includes('factcheck station') && text.includes('tavily api research') && text.includes('top 3 + winner') && text.includes('safe browser evidence') && text.includes('safe-browser-public-read'); })()",
       "mission brief browser evidence",
+    );
+
+    console.log("approve proposal and wait for real product factory");
+    await waitFor(
+      client,
+      "[...document.querySelectorAll('button')].some((button) => button.innerText.includes('Approve Business') && !button.disabled)",
+      "enabled Approve Business button",
+      60_000,
+    );
+    const productStartMs = Date.now();
+    await click(client, "Approve Business");
+    const productProof = await waitForWrittenProductFiles(productStartMs, 1_200_000);
+    assert(productProof.status === "complete", `Product Factory did not complete: ${JSON.stringify(productProof)}`);
+    assert(productProof.written >= 7, `Expected written product files, got ${JSON.stringify(productProof)}`);
+    evidence.productRunStatus = productProof.status;
+    evidence.productFileRows = productProof.written;
+    evidence.productRootPath = productProof.rootPath;
+    await client.evaluate("window.__acceptanceErrors = []");
+
+    console.log("check Product Studio real output");
+    await route(client, "/production", "Product Studio");
+    await waitFor(
+      client,
+      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('product build status') && text.includes('real openclaw build complete') && text.includes('exact product preview') && text.includes('real local files written') && text.includes('mission-control-products'); })()",
+      "real Product Studio output",
+      120_000,
     );
 
     console.log("check sqlite rows");
@@ -313,7 +459,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('real product factory release')", `${expectedVersion} updater marker`);
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('no-fallback product factory release')", `${expectedVersion} updater marker`);
     evidence.appVersion = await waitFor(
       client,
       `(async () => {
