@@ -30,6 +30,7 @@ import {
   WalletCards,
   Workflow,
 } from "lucide-react";
+import { useState } from "react";
 import { AgentRosterGrid } from "../components/agents/AgentRosterGrid";
 import { ApprovalCenter } from "../components/approvals/ApprovalCenter";
 import { BusinessesWorkbench } from "../components/businesses/BusinessesWorkbench";
@@ -954,10 +955,14 @@ export function OpenClawSystemPage() {
 }
 
 export function SettingsPage() {
-  const { data, adapter, updateSettings, resetLocalData, selectObsidianVault, cleanupAcceptanceTestData } = useAppData();
-  const { userSettings, safetyRules } = data;
+  const { data, adapter, updateSettings, updateTavilySettings, saveTavilyApiKey, testTavilyConnection, resetLocalData, selectObsidianVault, cleanupAcceptanceTestData } = useAppData();
+  const { userSettings, safetyRules, tavilySettings } = data;
+  const [tavilyKeyDraft, setTavilyKeyDraft] = useState("");
   const saveSettings = (patch: Partial<typeof userSettings>) => {
     void updateSettings({ ...userSettings, ...patch });
+  };
+  const saveTavilySettings = (patch: Partial<typeof tavilySettings>) => {
+    void updateTavilySettings({ ...tavilySettings, ...patch });
   };
 
   return (
@@ -973,6 +978,75 @@ export function SettingsPage() {
           </div>
         }
       />
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-teal-100" />
+            Tavily API Research Provider
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+          <div className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Badge tone={tavilySettings.apiKeyConfigured ? "emerald" : "amber"}>
+                {tavilySettings.apiKeyConfigured ? "API key configured" : "API key needed"}
+              </Badge>
+              <Badge tone="teal">Default depth: {tavilySettings.defaultSearchDepth}</Badge>
+              <Badge tone="amber">Per run cap: {tavilySettings.perRunCreditCap} credits</Badge>
+            </div>
+            <p className="text-sm leading-6 text-slate-300">
+              TeamLeader opportunity hunts use Tavily Search first, then extract only top sources. FactCheck Station blocks proposals when sources are weak, duplicated, challenge pages, or unsupported.
+            </p>
+            <div className="flex gap-2">
+              <Input
+                type="password"
+                value={tavilyKeyDraft}
+                onChange={(event) => setTavilyKeyDraft(event.target.value)}
+                placeholder={tavilySettings.maskedApiKey ? `Configured: ${tavilySettings.maskedApiKey}` : "Paste Tavily API key"}
+              />
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void saveTavilyApiKey(tavilyKeyDraft);
+                  setTavilyKeyDraft("");
+                }}
+                disabled={!tavilyKeyDraft.trim()}
+              >
+                Save key
+              </Button>
+              <Button variant="outline" onClick={() => void testTavilyConnection()}>
+                Test
+              </Button>
+            </div>
+            {tavilySettings.lastTestMessage && (
+              <div className={`rounded-md border p-3 text-sm ${tavilySettings.lastTestStatus === "success" ? "border-emerald-300/25 bg-emerald-400/8 text-emerald-100" : "border-amber-300/25 bg-amber-400/8 text-amber-100"}`}>
+                {tavilySettings.lastTestMessage}
+              </div>
+            )}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase text-slate-500">Search depth</span>
+              <Select value={tavilySettings.defaultSearchDepth} onChange={(event) => saveTavilySettings({ defaultSearchDepth: event.target.value as typeof tavilySettings.defaultSearchDepth })}>
+                <option value="basic">basic</option>
+                <option value="advanced">advanced</option>
+              </Select>
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase text-slate-500">Daily credit cap</span>
+              <Input type="number" min={1} value={tavilySettings.dailyCreditCap} onChange={(event) => saveTavilySettings({ dailyCreditCap: Number(event.target.value) || 1 })} />
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase text-slate-500">Per-run credit cap</span>
+              <Input type="number" min={1} value={tavilySettings.perRunCreditCap} onChange={(event) => saveTavilySettings({ perRunCreditCap: Number(event.target.value) || 1 })} />
+            </label>
+            <label className="space-y-2">
+              <span className="text-xs font-semibold uppercase text-slate-500">Extract top sources</span>
+              <Input type="number" min={0} value={tavilySettings.extractTopResults} onChange={(event) => saveTavilySettings({ extractTopResults: Number(event.target.value) || 0 })} />
+            </label>
+          </div>
+        </CardContent>
+      </Card>
       <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
         <Card>
           <CardHeader>

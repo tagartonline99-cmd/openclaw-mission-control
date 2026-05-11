@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "Release And Updater Hardening release 0.1.29";
+const UPDATER_VERIFICATION_MARKER = "Tavily Research + FactCheck release 0.1.30";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;

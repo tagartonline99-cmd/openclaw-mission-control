@@ -21,6 +21,8 @@ import {
   browserResearchFetches,
   browserResearchRuns,
   browserSafetyReceipts,
+  factCheckClaims,
+  factCheckRuns,
   contentInventoryItems,
   contentItems,
   dashboardSummary,
@@ -60,6 +62,8 @@ import {
   evidenceCitations,
   candidateBusinessIdeas,
   candidateScorecards,
+  proposalSubmissionGates,
+  researchPackets,
   productionAssets,
   productionPacks,
   productionDestinations,
@@ -79,6 +83,11 @@ import {
   skillGapRequests,
   tasks,
   teamLeaderChatMessages,
+  tavilyExtractResults,
+  tavilySearchQueries,
+  tavilySearchResults,
+  tavilySearchRuns,
+  tavilySettings,
   userSettings,
   validationReports,
 } from "../data/mockData";
@@ -122,6 +131,8 @@ import type {
   BrowserSafetyReceipt,
   CandidateBusinessIdea,
   CandidateScorecard,
+  FactCheckClaim,
+  FactCheckRun,
   DashboardSummary,
   DecisionLog,
   DemandProofReport,
@@ -167,6 +178,7 @@ import type {
   ProductionPack,
   ProductionDestination,
   PlatformExecutionPackage,
+  ProposalSubmissionGate,
   PublishingPackage,
   ProductBlueprint,
   ProductDraftApproval,
@@ -189,6 +201,7 @@ import type {
   ResearchSourceCapture,
   ReadinessStatus,
   RealPilotRun,
+  ResearchPacket,
   SearchConsoleMetric,
   SearchConsoleProperty,
   SeoKeywordCluster,
@@ -198,6 +211,11 @@ import type {
   SkillGapRequest,
   Task,
   TeamLeaderChatMessage,
+  TavilyExtractResult,
+  TavilySearchQuery,
+  TavilySearchResult,
+  TavilySearchRun,
+  TavilySettings,
   UserSettings,
   ValidationReport,
   RevenueRecord,
@@ -249,6 +267,14 @@ export interface AppDataState {
   browserResearchFetches: BrowserResearchFetch[];
   browserResearchArtifacts: BrowserResearchArtifact[];
   browserSafetyReceipts: BrowserSafetyReceipt[];
+  tavilySearchRuns: TavilySearchRun[];
+  tavilySearchQueries: TavilySearchQuery[];
+  tavilySearchResults: TavilySearchResult[];
+  tavilyExtractResults: TavilyExtractResult[];
+  researchPackets: ResearchPacket[];
+  factCheckRuns: FactCheckRun[];
+  factCheckClaims: FactCheckClaim[];
+  proposalSubmissionGates: ProposalSubmissionGate[];
   businessProposals: BusinessProposal[];
   approvedBusinesses: ApprovedBusiness[];
   businessTasks: BusinessTask[];
@@ -321,6 +347,7 @@ export interface AppDataState {
   openClawPermissions: OpenClawPermission[];
   openClawRuntimeStatus: OpenClawRuntimeStatus;
   realPilotRuns: RealPilotRun[];
+  tavilySettings: TavilySettings;
   userSettings: UserSettings;
   externalActionLock: ExternalActionLock;
   dashboardSummary: DashboardSummary;
@@ -378,6 +405,14 @@ type EntityKey =
   | "browserResearchFetches"
   | "browserResearchArtifacts"
   | "browserSafetyReceipts"
+  | "tavilySearchRuns"
+  | "tavilySearchQueries"
+  | "tavilySearchResults"
+  | "tavilyExtractResults"
+  | "researchPackets"
+  | "factCheckRuns"
+  | "factCheckClaims"
+  | "proposalSubmissionGates"
   | "businessProposals"
   | "approvedBusinesses"
   | "businessTasks"
@@ -450,7 +485,7 @@ type EntityKey =
   | "openClawPermissions"
   | "realPilotRuns";
 
-type SingletonKey = "openClawRuntimeStatus" | "userSettings" | "dashboardSummary" | "externalActionLock";
+type SingletonKey = "openClawRuntimeStatus" | "userSettings" | "dashboardSummary" | "externalActionLock" | "tavilySettings";
 
 type EntityConfig = {
   stateKey: EntityKey;
@@ -517,6 +552,14 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "browserResearchFetches", tableName: "browser_research_fetches" },
   { stateKey: "browserResearchArtifacts", tableName: "browser_research_artifacts" },
   { stateKey: "browserSafetyReceipts", tableName: "browser_safety_receipts" },
+  { stateKey: "tavilySearchRuns", tableName: "tavily_search_runs" },
+  { stateKey: "tavilySearchQueries", tableName: "tavily_search_queries" },
+  { stateKey: "tavilySearchResults", tableName: "tavily_search_results" },
+  { stateKey: "tavilyExtractResults", tableName: "tavily_extract_results" },
+  { stateKey: "researchPackets", tableName: "research_packets" },
+  { stateKey: "factCheckRuns", tableName: "fact_check_runs" },
+  { stateKey: "factCheckClaims", tableName: "fact_check_claims" },
+  { stateKey: "proposalSubmissionGates", tableName: "proposal_submission_gates" },
   { stateKey: "businessProposals", tableName: "business_proposals" },
   { stateKey: "approvedBusinesses", tableName: "approved_businesses" },
   { stateKey: "businessTasks", tableName: "business_tasks" },
@@ -593,6 +636,7 @@ export const entityConfigs: EntityConfig[] = [
 export const singletonConfigs: SingletonConfig[] = [
   { stateKey: "openClawRuntimeStatus", tableName: "openclaw_runtime_status", id: "runtime-mock" },
   { stateKey: "userSettings", tableName: "settings", id: "user-settings" },
+  { stateKey: "tavilySettings", tableName: "settings", id: "tavily-settings" },
   { stateKey: "dashboardSummary", tableName: "settings", id: "dashboard-summary" },
   { stateKey: "externalActionLock", tableName: "settings", id: "global-external-action-lock" },
 ];
@@ -640,6 +684,14 @@ export const initialAppDataState: AppDataState = {
   browserResearchFetches,
   browserResearchArtifacts,
   browserSafetyReceipts,
+  tavilySearchRuns,
+  tavilySearchQueries,
+  tavilySearchResults,
+  tavilyExtractResults,
+  researchPackets,
+  factCheckRuns,
+  factCheckClaims,
+  proposalSubmissionGates,
   businessProposals,
   approvedBusinesses,
   businessTasks,
@@ -712,6 +764,7 @@ export const initialAppDataState: AppDataState = {
   openClawPermissions,
   openClawRuntimeStatus,
   realPilotRuns: [],
+  tavilySettings,
   userSettings,
   externalActionLock,
   dashboardSummary,
@@ -916,6 +969,10 @@ async function loadSqlState(db: SqlDatabase): Promise<AppDataState> {
   state.dashboardSummary = (settingsById.get("dashboard-summary") as DashboardSummary | undefined) ?? state.dashboardSummary;
   state.externalActionLock =
     (settingsById.get("global-external-action-lock") as ExternalActionLock | undefined) ?? state.externalActionLock;
+  state.tavilySettings = {
+    ...state.tavilySettings,
+    ...((settingsById.get("tavily-settings") as Partial<TavilySettings> | undefined) ?? {}),
+  };
   state.openClawRuntimeStatus =
     (runtimeById.get("runtime-mock") as OpenClawRuntimeStatus | undefined) ?? state.openClawRuntimeStatus;
 
@@ -1613,6 +1670,18 @@ function normalizePhase6BState(state: AppDataState) {
   state.browserResearchFetches ??= [];
   state.browserResearchArtifacts ??= [];
   state.browserSafetyReceipts ??= [];
+  state.tavilySearchRuns ??= [];
+  state.tavilySearchQueries ??= [];
+  state.tavilySearchResults ??= [];
+  state.tavilyExtractResults ??= [];
+  state.researchPackets ??= [];
+  state.factCheckRuns ??= [];
+  state.factCheckClaims ??= [];
+  state.proposalSubmissionGates ??= [];
+  state.tavilySettings = {
+    ...cloneState(initialAppDataState).tavilySettings,
+    ...(state.tavilySettings ?? {}),
+  };
   state.opportunityHunts = state.opportunityHunts.map((hunt) => ({
     ...hunt,
     depth: hunt.depth ?? state.userSettings.defaultOpportunityHuntDepth ?? "fast",

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Activity, AlertTriangle, CheckCircle2, Cpu, Lock, Network, Play, Radio, RefreshCw, RotateCcw, Send, TerminalSquare, Users, XCircle } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, Cpu, Lock, Network, Play, Radio, RefreshCw, RotateCcw, Send, ShieldCheck, TerminalSquare, Users, XCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { Progress } from "../ui/progress";
@@ -55,7 +55,7 @@ export function OpenClawPanel() {
     markOpenClawCommandFailed,
     retryOpenClawCommand,
   } = useAppData();
-  const { agents, approvalRequests, openClawCapabilities, openClawCommands, openClawEvents, openClawPermissions, openClawRuntimeStatus } = data;
+  const { agents, approvalRequests, openClawCapabilities, openClawCommands, openClawEvents, openClawPermissions, openClawRuntimeStatus, tavilySettings } = data;
   const [researchPurpose, setResearchPurpose] = useState("Validate competitor positioning and evidence of demand");
   const [researchUrls, setResearchUrls] = useState("https://example.com");
   const [researchGoal, setResearchGoal] = useState("Extract positioning, audience, claims, pricing, and risks.");
@@ -185,6 +185,38 @@ export function OpenClawPanel() {
           </div>
           <div className="mt-4 rounded-lg border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
             {openClawRuntimeStatus.notes}
+          </div>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <ShieldCheck className="h-4 w-4 text-teal-100" />
+            Tavily Research + FactCheck Station
+          </CardTitle>
+          <p className="mt-1 text-sm text-slate-400">
+            Tavily API powers real public research packets. FactCheck Station blocks proposal submission when sources are weak, duplicated, challenge-gated, or unsupported.
+          </p>
+        </CardHeader>
+        <CardContent className="grid gap-4 lg:grid-cols-4">
+          <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+            <p className="text-xs font-semibold uppercase text-slate-500">Provider</p>
+            <p className="mt-1 text-lg font-semibold text-stone-100">Tavily API</p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+            <p className="text-xs font-semibold uppercase text-slate-500">API key</p>
+            <p className="mt-1 text-lg font-semibold text-stone-100">{tavilySettings.apiKeyConfigured ? "Configured" : "Needed"}</p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+            <p className="text-xs font-semibold uppercase text-slate-500">Default depth</p>
+            <p className="mt-1 text-lg font-semibold text-stone-100">{tavilySettings.defaultSearchDepth}</p>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-black/25 p-4">
+            <p className="text-xs font-semibold uppercase text-slate-500">Last test</p>
+            <p className="mt-1 text-sm font-semibold text-stone-100">{tavilySettings.lastTestStatus ?? "untested"}</p>
+          </div>
+          <div className="lg:col-span-4 rounded-lg border border-teal-300/20 bg-teal-400/8 p-3 text-sm leading-6 text-teal-100">
+            Configure the key and credit caps in Settings. Safe autonomous lane is search/extract/read-only evidence only; publish, message, spend, login, form submission, purchases, and connector actions remain approval-gated.
           </div>
         </CardContent>
       </Card>

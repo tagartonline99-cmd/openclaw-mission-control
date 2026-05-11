@@ -228,7 +228,7 @@ async function main() {
     await click(client, "Send to TeamLeader1A");
     await waitFor(
       client,
-      `document.body.innerText.includes(${JSON.stringify(stamp)}) && document.body.innerText.includes('I started a quick public opportunity hunt') && document.body.innerText.includes('Top 3')`,
+      `document.body.innerText.includes(${JSON.stringify(stamp)}) && document.body.innerText.includes('I started a quick Tavily-backed opportunity hunt') && (document.body.innerText.includes('FactCheck cleared proposal submission') || document.body.innerText.includes('FactCheck is blocking proposal submission'))`,
       "quick opportunity hunt result",
       180_000,
     );
@@ -245,7 +245,7 @@ async function main() {
     await route(client, "/mission-briefs", "Business Proposal Review");
     await waitFor(
       client,
-      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('top 3 + winner') && text.includes('safe browser evidence') && text.includes('safe-browser-public-read'); })()",
+      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('factcheck station') && text.includes('tavily api research') && text.includes('top 3 + winner') && text.includes('safe browser evidence') && text.includes('safe-browser-public-read'); })()",
       "mission brief browser evidence",
     );
 
@@ -266,10 +266,20 @@ async function main() {
           query: "SELECT payload FROM browser_research_artifacts WHERE payload LIKE ?",
           values: ["%safe%"],
         });
-        const proof = { hunts: hunts.length, artifacts: artifacts.length };
-        return proof.hunts > 0 && proof.artifacts > 0 ? proof : false;
+        const tavily = await invoke("plugin:sql|select", {
+          db,
+          query: "SELECT payload FROM tavily_search_runs",
+          values: [],
+        });
+        const factchecks = await invoke("plugin:sql|select", {
+          db,
+          query: "SELECT payload FROM fact_check_runs",
+          values: [],
+        });
+        const proof = { hunts: hunts.length, artifacts: artifacts.length, tavily: tavily.length, factchecks: factchecks.length };
+        return proof.hunts > 0 && proof.artifacts > 0 && proof.factchecks > 0 ? proof : false;
       })()`,
-      "SQLite opportunity and browser evidence rows",
+      "SQLite opportunity, Tavily, FactCheck, and browser evidence rows",
       120_000,
     );
     evidence.opportunityHuntRows = dbProof.hunts;
@@ -281,7 +291,7 @@ async function main() {
     await route(client, "/openclaw-system", "OpenClaw System Health");
     await waitFor(
       client,
-      "document.body.innerText.includes('Browser Research Broker') && document.body.innerText.includes('Puppeteer MCP Compatibility') && document.body.innerText.includes('direct agent control')",
+      "document.body.innerText.includes('Tavily Research + FactCheck Station') && document.body.innerText.includes('Browser Research Broker') && document.body.innerText.includes('Puppeteer MCP Compatibility') && document.body.innerText.includes('direct agent control')",
       "browser broker system status",
     );
     evidence.brokerVisible = true;
@@ -298,7 +308,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('release and updater hardening release')", `${expectedVersion} updater marker`);
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('tavily research + factcheck release')", `${expectedVersion} updater marker`);
     evidence.appVersion = await waitFor(
       client,
       `(async () => {

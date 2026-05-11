@@ -59,8 +59,12 @@ import type {
   CandidateBusinessIdea,
   CandidateScorecard,
   EvidenceCitation,
+  FactCheckClaim,
+  FactCheckRun,
   PublicResearchFetch,
   PublicResearchRun,
+  ProposalSubmissionGate,
+  ResearchPacket,
   ResearchEvidence,
   ResearchSourcePack,
   ResearchSourceCapture,
@@ -73,6 +77,11 @@ import type {
   SpendEntry,
   Task,
   TeamLeaderChatMessage,
+  TavilyExtractResult,
+  TavilySearchQuery,
+  TavilySearchResult,
+  TavilySearchRun,
+  TavilySettings,
   UserSettings,
   ValidationReport,
   RevenueRecord,
@@ -1491,6 +1500,25 @@ export const browserResearchRuns: BrowserResearchRun[] = [];
 export const browserResearchFetches: BrowserResearchFetch[] = [];
 export const browserResearchArtifacts: BrowserResearchArtifact[] = [];
 export const browserSafetyReceipts: BrowserSafetyReceipt[] = [];
+export const tavilySettings: TavilySettings = {
+  id: "tavily-settings",
+  providerMode: "api",
+  apiKeyConfigured: false,
+  defaultSearchDepth: "basic",
+  dailyCreditCap: 100,
+  perRunCreditCap: 12,
+  extractTopResults: 5,
+  lastTestStatus: "untested",
+  updatedAt: now,
+};
+export const tavilySearchRuns: TavilySearchRun[] = [];
+export const tavilySearchQueries: TavilySearchQuery[] = [];
+export const tavilySearchResults: TavilySearchResult[] = [];
+export const tavilyExtractResults: TavilyExtractResult[] = [];
+export const researchPackets: ResearchPacket[] = [];
+export const factCheckRuns: FactCheckRun[] = [];
+export const factCheckClaims: FactCheckClaim[] = [];
+export const proposalSubmissionGates: ProposalSubmissionGate[] = [];
 export const businessTasks: BusinessTask[] = [];
 export const agentWorkSessions: AgentWorkSession[] = [];
 export const researchEvidence: ResearchEvidence[] = [];
@@ -1570,6 +1598,18 @@ export const guildOfficeStations: GuildOfficeStation[] = [
     motion: "idle",
     currentTask: "No active build plan.",
     lastOutput: "MVP assets and production packs will appear here.",
+    progress: 0,
+    updatedAt: now,
+  },
+  {
+    id: "station-factcheck",
+    name: "FactCheck Scriptorium",
+    room: "FactCheck Station",
+    agentId: "teamleader1a",
+    status: "idle",
+    motion: "idle",
+    currentTask: "Waiting to verify evidence before proposal submission.",
+    lastOutput: "No TeamLeader proposal can be submitted until sources, claims, budget, and platform boundaries pass.",
     progress: 0,
     updatedAt: now,
   },

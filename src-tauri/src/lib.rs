@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -125,6 +125,82 @@ struct BrowserBrokerStatusResult {
     notes: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilySaveKeyRequest {
+    api_key: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilySecretStatusResult {
+    configured: bool,
+    masked_api_key: Option<String>,
+    source: String,
+    message: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilySearchRequest {
+    query: String,
+    search_depth: Option<String>,
+    max_results: Option<u8>,
+    include_answer: Option<bool>,
+    timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilySearchResultItem {
+    title: String,
+    url: String,
+    content: String,
+    raw_content: Option<String>,
+    score: Option<f64>,
+    published_date: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilySearchResponse {
+    ok: bool,
+    query: String,
+    answer: Option<String>,
+    results: Vec<TavilySearchResultItem>,
+    usage_credits: Option<f64>,
+    error: Option<String>,
+    searched_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilyExtractRequest {
+    urls: Vec<String>,
+    timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilyExtractResultItem {
+    url: String,
+    title: Option<String>,
+    raw_content: Option<String>,
+    content: Option<String>,
+    excerpt: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TavilyExtractResponse {
+    ok: bool,
+    results: Vec<TavilyExtractResultItem>,
+    usage_credits: Option<f64>,
+    error: Option<String>,
+    extracted_at: String,
+}
+
 fn openclaw_program() -> &'static str {
     if cfg!(windows) {
         "openclaw.cmd"
@@ -238,6 +314,26 @@ fn extract_title(html: &str) -> Option<String> {
 fn excerpt_from_body(body: &str) -> String {
     let plain = strip_html(body);
     plain.chars().take(700).collect()
+}
+
+fn detect_blocked_evidence(body: &str) -> Option<String> {
+    let lower = body.to_lowercase();
+    let blocked = [
+        ("needs a human touch", "Source presented an anti-bot or human verification challenge."),
+        ("loading challenge", "Source presented an anti-bot challenge instead of readable evidence."),
+        ("verify you are human", "Source requires human verification."),
+        ("captcha", "Source requires CAPTCHA or similar interactive verification."),
+        ("sign in to continue", "Source requires sign-in before evidence is readable."),
+        ("log in to continue", "Source requires login before evidence is readable."),
+        ("access denied", "Source blocked public access."),
+        ("pxc", "Source appears to be protected by a bot/challenge page."),
+        ("checkout", "Source looks like a checkout or purchase flow."),
+        ("payment", "Source looks like a payment flow."),
+    ];
+    blocked
+        .iter()
+        .find(|(needle, _)| lower.contains(*needle))
+        .map(|(_, reason)| (*reason).to_string())
 }
 
 fn validate_agent_message(message: &str) -> Result<(), String> {
@@ -481,6 +577,208 @@ fn browser_broker_status() -> Result<BrowserBrokerStatusResult, String> {
     })
 }
 
+#[tauri::command]
+fn tavily_secret_status() -> Result<TavilySecretStatusResult, String> {
+    match read_tavily_api_key() {
+        Ok((key, source)) => Ok(TavilySecretStatusResult {
+            configured: true,
+            masked_api_key: Some(mask_api_key(&key)),
+            source,
+            message: "Tavily API key is configured for local backend research.".into(),
+        }),
+        Err(error) => Ok(TavilySecretStatusResult {
+            configured: false,
+            masked_api_key: None,
+            source: "none".into(),
+            message: error,
+        }),
+    }
+}
+
+#[tauri::command]
+fn tavily_save_api_key(request: TavilySaveKeyRequest) -> Result<TavilySecretStatusResult, String> {
+    let key = request.api_key.trim();
+    if key.len() < 16 {
+        return Err("Tavily API key looks too short.".into());
+    }
+    reject_control_chars(key, "Tavily API key")?;
+    let path = tavily_secret_path()?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| format!("Could not create secret directory: {error}"))?;
+    }
+    fs::write(&path, key).map_err(|error| format!("Could not save Tavily API key locally: {error}"))?;
+    Ok(TavilySecretStatusResult {
+        configured: true,
+        masked_api_key: Some(mask_api_key(key)),
+        source: path.to_string_lossy().to_string(),
+        message: "Tavily API key saved locally. It is not written to SQLite or Git.".into(),
+    })
+}
+
+#[tauri::command]
+async fn tavily_test_connection() -> Result<TavilySearchResponse, String> {
+    tavily_search(TavilySearchRequest {
+        query: "online business validation research".into(),
+        search_depth: Some("basic".into()),
+        max_results: Some(1),
+        include_answer: Some(false),
+        timeout_seconds: Some(20),
+    })
+    .await
+}
+
+#[tauri::command]
+async fn tavily_search(request: TavilySearchRequest) -> Result<TavilySearchResponse, String> {
+    let query = request.query.trim().to_string();
+    if query.len() < 3 {
+        return Err("Tavily query is required.".into());
+    }
+    if query.len() > 400 {
+        return Err("Tavily query is too long for a guarded research action.".into());
+    }
+    reject_control_chars(&query, "Tavily query")?;
+    reject_blocked_intent(&query)?;
+    let search_depth = match request.search_depth.as_deref().unwrap_or("basic") {
+        "basic" => "basic",
+        "advanced" => "advanced",
+        _ => return Err("Tavily search depth must be basic or advanced.".into()),
+    };
+    let max_results = request.max_results.unwrap_or(5).clamp(1, 10);
+    let timeout = clamp_timeout(request.timeout_seconds, 25, 45);
+    let body = json!({
+        "query": query,
+        "search_depth": search_depth,
+        "max_results": max_results,
+        "include_answer": request.include_answer.unwrap_or(true),
+        "include_raw_content": false,
+        "include_images": false,
+        "include_usage": true
+    });
+    let searched_at = now_rfc3339();
+    let value = tavily_post("search", body, timeout).await?;
+    let answer = value.get("answer").and_then(Value::as_str).map(str::to_string);
+    let usage_credits = value
+        .pointer("/usage/credits")
+        .and_then(Value::as_f64)
+        .or_else(|| value.get("credits").and_then(Value::as_f64));
+    let mut results = Vec::new();
+    if let Some(items) = value.get("results").and_then(Value::as_array) {
+        for item in items {
+            let url = item.get("url").and_then(Value::as_str).unwrap_or_default().to_string();
+            if validate_url(&url).is_err() || reject_blocked_browser_url(&url).is_err() {
+                continue;
+            }
+            results.push(TavilySearchResultItem {
+                title: item
+                    .get("title")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Untitled Tavily source")
+                    .chars()
+                    .take(220)
+                    .collect(),
+                url,
+                content: item
+                    .get("content")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .chars()
+                    .take(2_400)
+                    .collect(),
+                raw_content: item
+                    .get("raw_content")
+                    .and_then(Value::as_str)
+                    .map(|text| text.chars().take(3_000).collect()),
+                score: item.get("score").and_then(Value::as_f64),
+                published_date: item.get("published_date").and_then(Value::as_str).map(str::to_string),
+            });
+        }
+    }
+    Ok(TavilySearchResponse {
+        ok: true,
+        query,
+        answer,
+        results,
+        usage_credits,
+        error: None,
+        searched_at,
+    })
+}
+
+#[tauri::command]
+async fn tavily_extract(request: TavilyExtractRequest) -> Result<TavilyExtractResponse, String> {
+    let urls = request
+        .urls
+        .iter()
+        .map(|url| url.trim().to_string())
+        .filter(|url| !url.is_empty())
+        .take(8)
+        .collect::<Vec<_>>();
+    if urls.is_empty() {
+        return Err("Tavily Extract requires at least one URL.".into());
+    }
+    for url in &urls {
+        validate_url(url)?;
+        reject_blocked_browser_url(url)?;
+    }
+    let timeout = clamp_timeout(request.timeout_seconds, 35, 60);
+    let body = json!({
+        "urls": urls,
+        "extract_depth": "basic",
+        "include_images": false,
+        "include_usage": true
+    });
+    let extracted_at = now_rfc3339();
+    let value = tavily_post("extract", body, timeout).await?;
+    let usage_credits = value
+        .pointer("/usage/credits")
+        .and_then(Value::as_f64)
+        .or_else(|| value.get("credits").and_then(Value::as_f64));
+    let mut results = Vec::new();
+    if let Some(items) = value.get("results").and_then(Value::as_array) {
+        for item in items {
+            let raw = item
+                .get("raw_content")
+                .or_else(|| item.get("content"))
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let blocked_reason = detect_blocked_evidence(&raw);
+            results.push(TavilyExtractResultItem {
+                url: item.get("url").and_then(Value::as_str).unwrap_or_default().to_string(),
+                title: item.get("title").and_then(Value::as_str).map(str::to_string),
+                raw_content: Some(raw.chars().take(5_000).collect()),
+                content: item.get("content").and_then(Value::as_str).map(|text| text.chars().take(3_000).collect()),
+                excerpt: Some(excerpt_from_body(&raw)),
+                error: blocked_reason,
+            });
+        }
+    }
+    if let Some(items) = value.get("failed_results").and_then(Value::as_array) {
+        for item in items {
+            results.push(TavilyExtractResultItem {
+                url: item.get("url").and_then(Value::as_str).unwrap_or_default().to_string(),
+                title: None,
+                raw_content: None,
+                content: None,
+                excerpt: None,
+                error: Some(
+                    item.get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Tavily extract failed safely.")
+                        .to_string(),
+                ),
+            });
+        }
+    }
+    Ok(TavilyExtractResponse {
+        ok: true,
+        results,
+        usage_credits,
+        error: None,
+        extracted_at,
+    })
+}
+
 fn extract_basic_links(html: &str) -> Vec<String> {
     let mut links = Vec::new();
     let mut rest = html;
@@ -627,6 +925,79 @@ fn user_home_dir() -> Result<PathBuf, String> {
         .or_else(|| env::var_os("HOME"))
         .map(PathBuf::from)
         .ok_or_else(|| "Could not resolve user home directory".to_string())
+}
+
+fn tavily_secret_path() -> Result<PathBuf, String> {
+    let base = env::var_os("APPDATA")
+        .map(PathBuf::from)
+        .unwrap_or(user_home_dir()?.join(".openclaw"));
+    Ok(base
+        .join("com.openclaw.missioncontrol")
+        .join("secrets")
+        .join("tavily-api-key.txt"))
+}
+
+fn mask_api_key(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() <= 8 {
+        return "********".into();
+    }
+    let prefix = trimmed.chars().take(4).collect::<String>();
+    let suffix = trimmed
+        .chars()
+        .rev()
+        .take(4)
+        .collect::<String>()
+        .chars()
+        .rev()
+        .collect::<String>();
+    format!("{prefix}...{suffix}")
+}
+
+fn read_tavily_api_key() -> Result<(String, String), String> {
+    if let Ok(value) = env::var("TAVILY_API_KEY").or_else(|_| env::var("OPENCLAW_TAVILY_API_KEY")) {
+        let trimmed = value.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok((trimmed, "environment".into()));
+        }
+    }
+
+    let path = tavily_secret_path()?;
+    let key = fs::read_to_string(&path)
+        .map_err(|_| "Tavily API key is not configured. Add it in Mission Control Settings.".to_string())?
+        .trim()
+        .to_string();
+    if key.is_empty() {
+        return Err("Tavily API key file is empty. Add a valid key in Mission Control Settings.".into());
+    }
+    Ok((key, path.to_string_lossy().to_string()))
+}
+
+async fn tavily_post(path: &str, body: Value, timeout_seconds: u64) -> Result<Value, String> {
+    let (api_key, _) = read_tavily_api_key()?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(timeout_seconds))
+        .user_agent("OpenClaw-Mission-Control/0.1 tavily-research")
+        .build()
+        .map_err(|error| format!("Could not create Tavily client: {error}"))?;
+    let url = format!("https://api.tavily.com/{path}");
+    let response = client
+        .post(url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {api_key}"))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_string())
+        .send()
+        .await
+        .map_err(|error| format!("Tavily request failed safely: {error}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .map_err(|error| format!("Could not read Tavily response: {error}"))?;
+    if !status.is_success() {
+        return Err(format!("Tavily returned HTTP {}: {}", status.as_u16(), text.chars().take(240).collect::<String>()));
+    }
+    serde_json::from_str::<Value>(&text).map_err(|error| format!("Could not parse Tavily JSON: {error}"))
 }
 
 fn safe_existing_directory(path: &str) -> Option<String> {
@@ -844,8 +1215,7 @@ async fn public_research_fetch(request: PublicResearchFetchRequest) -> Result<Pu
                 .text()
                 .await
                 .map_err(|error| format!("Could not read public research response: {error}"))?;
-            let lower = body.to_lowercase();
-            if lower.contains("captcha") || lower.contains("sign in to continue") || lower.contains("log in to continue") {
+            if let Some(blocked_reason) = detect_blocked_evidence(&body) {
                 return Ok(PublicResearchFetchResult {
                     ok: false,
                     url,
@@ -854,7 +1224,7 @@ async fn public_research_fetch(request: PublicResearchFetchRequest) -> Result<Pu
                     title: extract_title(&body),
                     excerpt: None,
                     content_type,
-                    error: Some("Source requires interactive login/CAPTCHA or similar blocked access.".into()),
+                    error: Some(blocked_reason),
                     fetched_at,
                 });
             }
@@ -940,8 +1310,7 @@ async fn browser_public_read(request: BrowserPublicReadRequest) -> Result<Browse
                 .text()
                 .await
                 .map_err(|error| format!("Could not read public browser response: {error}"))?;
-            let lower = body.to_lowercase();
-            if lower.contains("captcha") || lower.contains("sign in to continue") || lower.contains("log in to continue") {
+            if let Some(blocked_reason) = detect_blocked_evidence(&body) {
                 return Ok(BrowserPublicReadResult {
                     ok: false,
                     url,
@@ -955,7 +1324,7 @@ async fn browser_public_read(request: BrowserPublicReadRequest) -> Result<Browse
                     screenshot_captured: false,
                     basic_links: vec![],
                     safety_receipt,
-                    error: Some("Browser read blocked interactive login/CAPTCHA style page.".into()),
+                    error: Some(blocked_reason),
                     captured_at,
                 });
             }
@@ -1141,6 +1510,11 @@ pub fn run() {
             public_research_fetch,
             browser_public_read,
             browser_broker_status,
+            tavily_secret_status,
+            tavily_save_api_key,
+            tavily_test_connection,
+            tavily_search,
+            tavily_extract,
             openclaw_agent_turn,
             openclaw_url_research,
             openclaw_channel_send

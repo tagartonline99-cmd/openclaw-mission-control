@@ -191,6 +191,14 @@ export type PublicResearchRunStatus = "queued" | "running" | "completed" | "fail
 export type PublicResearchFetchStatus = "queued" | "fetched" | "failed" | "blocked" | "skipped";
 export type BrowserResearchStatus = "queued" | "captured" | "failed" | "blocked" | "skipped";
 export type BrowserResearchArtifactType = "page_summary" | "screenshot";
+export type TavilyProviderMode = "disabled" | "api";
+export type TavilySearchDepth = "basic" | "advanced";
+export type TavilyRunStatus = "queued" | "running" | "completed" | "failed" | "blocked";
+export type TavilyResultStatus = "valid" | "invalid" | "duplicate" | "blocked";
+export type ResearchPacketStatus = "draft" | "ready_for_factcheck" | "factcheck_passed" | "needs_more_evidence" | "blocked";
+export type FactCheckStatus = "running" | "passed" | "passed_with_warnings" | "failed" | "blocked";
+export type FactCheckClaimStatus = "supported" | "weak" | "unsupported" | "blocked";
+export type ProposalGateStatus = "factcheck_pending" | "proposal_ready" | "needs_more_evidence" | "blocked";
 export type CandidateBusinessStatus = "candidate" | "winner" | "rejected" | "archived";
 export type BusinessOperatingRunStatus = "running" | "paused" | "complete" | "blocked";
 export type BusinessIterationPhase = "research" | "validate" | "produce" | "review" | "improve";
@@ -437,6 +445,143 @@ export interface BrowserBrokerStatus {
   notes: string;
 }
 
+export interface TavilySettings {
+  id: "tavily-settings";
+  providerMode: TavilyProviderMode;
+  apiKeyConfigured: boolean;
+  maskedApiKey?: string;
+  defaultSearchDepth: TavilySearchDepth;
+  dailyCreditCap: number;
+  perRunCreditCap: number;
+  extractTopResults: number;
+  lastTestStatus?: "untested" | "success" | "failed";
+  lastTestMessage?: string;
+  lastTestAt?: string;
+  updatedAt: string;
+}
+
+export interface TavilySearchRun {
+  id: string;
+  huntId: string;
+  researchPacketId?: string;
+  provider: "tavily_api";
+  status: TavilyRunStatus;
+  depth: OpportunityHuntDepth;
+  searchDepth: TavilySearchDepth;
+  queryIds: string[];
+  resultIds: string[];
+  extractResultIds: string[];
+  estimatedCredits: number;
+  actualCredits?: number;
+  validResultCount: number;
+  invalidResultCount: number;
+  summary: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface TavilySearchQuery {
+  id: string;
+  runId: string;
+  query: string;
+  purpose: string;
+  status: TavilyRunStatus;
+  resultIds: string[];
+  answer?: string;
+  error?: string;
+  usageCredits?: number;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface TavilySearchResult {
+  id: string;
+  runId: string;
+  queryId: string;
+  title: string;
+  url: string;
+  content: string;
+  rawContent?: string;
+  score?: number;
+  publishedDate?: string;
+  sourceDomain: string;
+  status: TavilyResultStatus;
+  invalidReason?: string;
+  confidence: number;
+  createdAt: string;
+}
+
+export interface TavilyExtractResult {
+  id: string;
+  runId: string;
+  resultId?: string;
+  url: string;
+  status: TavilyResultStatus;
+  title?: string;
+  rawContent?: string;
+  excerpt?: string;
+  invalidReason?: string;
+  createdAt: string;
+}
+
+export interface ResearchPacket {
+  id: string;
+  huntId: string;
+  tavilySearchRunId?: string;
+  queryPlan: string[];
+  validSourceIds: string[];
+  invalidSourceIds: string[];
+  citationIds: string[];
+  status: ResearchPacketStatus;
+  summary: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface FactCheckRun {
+  id: string;
+  huntId: string;
+  proposalId?: string;
+  researchPacketId: string;
+  status: FactCheckStatus;
+  validEvidenceCount: number;
+  invalidEvidenceCount: number;
+  uniqueDomainCount: number;
+  requiredValidSources: number;
+  requiredDomains: number;
+  sourceQualityScore: number;
+  unsupportedClaims: string[];
+  blockingReasons: string[];
+  warningReasons: string[];
+  claimIds: string[];
+  summary: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface FactCheckClaim {
+  id: string;
+  factCheckRunId: string;
+  claim: string;
+  status: FactCheckClaimStatus;
+  supportedByCitationIds: string[];
+  rejectedBySourceIds: string[];
+  notes: string;
+  createdAt: string;
+}
+
+export interface ProposalSubmissionGate {
+  id: string;
+  huntId: string;
+  proposalId: string;
+  factCheckRunId: string;
+  status: ProposalGateStatus;
+  reason: string;
+  missingRequirements: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface EvidenceCitation {
   id: string;
   huntId: string;
@@ -604,6 +749,14 @@ export interface BusinessProposal {
   externalPlatformRequirementIds: string[];
   platformExecutionPackageIds: string[];
   publicResearchRunId?: string;
+  researchPacketId?: string;
+  factCheckRunId?: string;
+  proposalGateStatus?: ProposalGateStatus;
+  sourceQualityScore?: number;
+  validEvidenceCount?: number;
+  invalidEvidenceCount?: number;
+  unsupportedClaims?: string[];
+  factCheckSummary?: string;
   candidateIdeaIds?: string[];
   winningCandidateId?: string;
   evidenceCitationIds?: string[];

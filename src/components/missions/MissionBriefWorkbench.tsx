@@ -72,6 +72,13 @@ export function MissionBriefWorkbench() {
     ? data.evidenceCitations.filter((item) => selectedProposal.evidenceCitationIds?.includes(item.id))
     : [];
   const selectedResearchRun = selectedProposal?.publicResearchRunId ? data.publicResearchRuns.find((run) => run.id === selectedProposal.publicResearchRunId) : undefined;
+  const selectedResearchPacket = selectedProposal?.researchPacketId ? data.researchPackets.find((packet) => packet.id === selectedProposal.researchPacketId) : undefined;
+  const selectedTavilyRun = selectedResearchPacket?.tavilySearchRunId ? data.tavilySearchRuns.find((run) => run.id === selectedResearchPacket.tavilySearchRunId) : undefined;
+  const selectedTavilyQueries = selectedTavilyRun ? data.tavilySearchQueries.filter((query) => selectedTavilyRun.queryIds.includes(query.id)) : [];
+  const selectedTavilyResults = selectedTavilyRun ? data.tavilySearchResults.filter((result) => selectedTavilyRun.resultIds.includes(result.id)) : [];
+  const selectedFactCheckRun = selectedProposal?.factCheckRunId ? data.factCheckRuns.find((run) => run.id === selectedProposal.factCheckRunId) : undefined;
+  const selectedFactCheckClaims = selectedFactCheckRun ? data.factCheckClaims.filter((claim) => selectedFactCheckRun.claimIds.includes(claim.id)) : [];
+  const selectedProposalGate = selectedProposal ? data.proposalSubmissionGates.find((gate) => gate.proposalId === selectedProposal.id) : undefined;
   const selectedResearchFetches = selectedResearchRun ? data.publicResearchFetches.filter((fetch) => selectedResearchRun.fetchIds.includes(fetch.id)) : [];
   const selectedBrowserRun = selectedResearchRun?.browserResearchRunId ? data.browserResearchRuns.find((run) => run.id === selectedResearchRun.browserResearchRunId) : undefined;
   const selectedBrowserArtifacts = selectedBrowserRun ? data.browserResearchArtifacts.filter((artifact) => selectedBrowserRun.artifactIds.includes(artifact.id)) : [];
@@ -91,6 +98,8 @@ export function MissionBriefWorkbench() {
     ...((selectedProposal?.risks.filter((risk) => /assumption|weak|validate|manual|platform/i.test(risk))) ?? []),
   ].filter(Boolean);
   const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
+  const factCheckBlocks = selectedProposalGate && selectedProposalGate.status !== "proposal_ready" ? selectedProposalGate.missingRequirements : [];
+  const canApproveBusiness = selectedProposal?.status === "ready_for_review" && (selectedProposalGate?.status === "proposal_ready" || !selectedProposalGate) && budgetBlockers.length === 0;
   const firstRun = data.missionRuns[0];
   const firstDraft = data.missionDrafts[0];
   const initialId = requestedRunId ?? requestedDraftId ?? firstRun?.id ?? firstDraft?.id ?? "";
@@ -204,7 +213,7 @@ export function MissionBriefWorkbench() {
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="secondary"
-                    disabled={selectedProposal.status !== "ready_for_review" && selectedProposal.status !== "drafting"}
+                    disabled={!canApproveBusiness}
                     onClick={() => void approveBusinessProposal(selectedProposal.id)}
                   >
                     <CheckCircle2 className="h-4 w-4" />
@@ -228,6 +237,103 @@ export function MissionBriefWorkbench() {
                 <p className="text-xs font-semibold uppercase text-slate-500">TeamLeader1A recommendation</p>
                 <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.teamLeaderRecommendation}</p>
               </div>
+              {selectedFactCheckRun ? (
+                <div className={`rounded-lg border p-4 ${selectedProposalGate?.status === "proposal_ready" ? "border-emerald-300/20 bg-emerald-400/8" : "border-red-300/25 bg-red-500/8"}`}>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-slate-500">FactCheck Station</p>
+                      <h3 className="mt-2 font-display text-xl font-semibold text-stone-50">
+                        {selectedProposalGate?.status === "proposal_ready" ? "Proposal gate passed" : "No proposal yet"}
+                      </h3>
+                      <p className="mt-2 text-sm leading-6 text-slate-200">{selectedFactCheckRun.summary}</p>
+                    </div>
+                    <Badge tone={selectedProposalGate?.status === "proposal_ready" ? "emerald" : "red"}>
+                      {selectedProposalGate?.status.replace(/_/g, " ") ?? selectedFactCheckRun.status.replace(/_/g, " ")}
+                    </Badge>
+                  </div>
+                  <div className="mt-4 grid gap-3 md:grid-cols-4">
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs uppercase text-slate-500">Valid sources</p>
+                      <p className="mt-1 text-2xl font-semibold text-stone-50">{selectedFactCheckRun.validEvidenceCount}/{selectedFactCheckRun.requiredValidSources}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs uppercase text-slate-500">Unique domains</p>
+                      <p className="mt-1 text-2xl font-semibold text-stone-50">{selectedFactCheckRun.uniqueDomainCount}/{selectedFactCheckRun.requiredDomains}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs uppercase text-slate-500">Invalid evidence</p>
+                      <p className="mt-1 text-2xl font-semibold text-stone-50">{selectedFactCheckRun.invalidEvidenceCount}</p>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs uppercase text-slate-500">Source quality</p>
+                      <p className="mt-1 text-2xl font-semibold text-stone-50">{selectedFactCheckRun.sourceQualityScore}/100</p>
+                    </div>
+                  </div>
+                  {factCheckBlocks.length > 0 ? (
+                    <div className="mt-4 rounded-md border border-red-300/25 bg-red-500/10 p-3 text-sm leading-6 text-red-100">
+                      <p className="font-semibold">Why no approval-ready proposal yet</p>
+                      {factCheckBlocks.map((reason) => <p key={reason}>- {reason}</p>)}
+                    </div>
+                  ) : null}
+                  <div className="mt-4 grid gap-3 lg:grid-cols-3">
+                    {selectedFactCheckClaims.map((claim) => (
+                      <div key={claim.id} className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-semibold text-stone-100">{claim.claim}</p>
+                          <Badge tone={claim.status === "supported" ? "teal" : claim.status === "weak" ? "amber" : "red"}>{claim.status}</Badge>
+                        </div>
+                        <p className="mt-2 text-xs leading-5 text-slate-400">{claim.notes}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              {selectedTavilyRun ? (
+                <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-teal-100">Tavily API research</p>
+                      <p className="mt-1 text-sm text-slate-300">{selectedTavilyRun.summary}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge tone="teal">{selectedTavilyRun.searchDepth}</Badge>
+                      <Badge tone="amber">credits est. {selectedTavilyRun.estimatedCredits}</Badge>
+                      <Badge tone="emerald">{selectedTavilyRun.validResultCount} valid</Badge>
+                    </div>
+                  </div>
+                  <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1.2fr]">
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Query plan</p>
+                      <div className="mt-2 space-y-2">
+                        {selectedTavilyQueries.slice(0, 8).map((query) => (
+                          <div key={query.id} className="rounded border border-white/10 bg-black/25 p-2 text-xs leading-5 text-slate-300">
+                            <div className="flex items-center justify-between gap-2">
+                              <span>{query.query}</span>
+                              <Badge tone={query.status === "completed" ? "teal" : "red"}>{query.status}</Badge>
+                            </div>
+                            <p className="mt-1 text-slate-500">{query.purpose}</p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                      <p className="text-xs font-semibold uppercase text-slate-500">Top source records</p>
+                      <div className="mt-2 space-y-2">
+                        {selectedTavilyResults.slice(0, 8).map((result) => (
+                          <div key={result.id} className="rounded border border-white/10 bg-black/25 p-2">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <a className="text-sm font-semibold text-teal-100 hover:text-teal-50" href={result.url}>{result.title}</a>
+                              <Badge tone={result.status === "valid" ? "teal" : result.status === "duplicate" ? "amber" : "red"}>{result.status}</Badge>
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-slate-400">{result.content.slice(0, 220)}</p>
+                            {result.invalidReason ? <p className="mt-1 text-xs text-red-100">Invalid: {result.invalidReason}</p> : null}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
               <AgentEvidenceTrailPanel
                 proposalId={selectedProposal.id}
                 businessId={selectedApprovedBusiness?.id}

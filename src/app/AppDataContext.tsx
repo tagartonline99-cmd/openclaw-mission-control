@@ -48,6 +48,8 @@ import type {
   EvidenceQualityScore,
   EvidenceCitation,
   ExecutionReceipt,
+  FactCheckClaim,
+  FactCheckRun,
   JobRun,
   GuildOfficeStation,
   MarketIntelligenceReport,
@@ -86,8 +88,10 @@ import type {
   ApprovalGateState,
   PublicResearchFetch,
   PublicResearchRun,
+  ProposalSubmissionGate,
   PublishingDiff,
   Quest,
+  ResearchPacket,
   ResearchEvidence,
   ResearchQueryPlan,
   ResearchSourceCapture,
@@ -97,6 +101,11 @@ import type {
   SiteProject,
   Task,
   TeamLeaderChatMessage,
+  TavilyExtractResult,
+  TavilySearchQuery,
+  TavilySearchResult,
+  TavilySearchRun,
+  TavilySettings,
   UserSettings,
 } from "../types";
 import { renderMarkdownNote } from "../utils/markdown";
@@ -117,6 +126,7 @@ import {
   type PublicResearchFetchResult,
   type UrlResearchInput,
 } from "../services/openclawService";
+import { tavilyService } from "../services/tavilyService";
 
 type ExportResult = {
   ok: boolean;
@@ -163,6 +173,9 @@ type AppDataContextValue = {
   resetLocalData: () => Promise<void>;
   updateApprovalStatus: (approvalId: string, status: ApprovalStatus) => Promise<void>;
   updateSettings: (settings: UserSettings) => Promise<void>;
+  updateTavilySettings: (settings: TavilySettings) => Promise<void>;
+  saveTavilyApiKey: (apiKey: string) => Promise<void>;
+  testTavilyConnection: () => Promise<void>;
   updateExternalActionLock: (mode: ExternalActionLockMode, reason: string) => Promise<void>;
   recordSystemLog: (input: { title: string; detail: string; severity?: "info" | "success" | "warning" | "danger" }) => Promise<void>;
   runSimulationNow: () => Promise<void>;
@@ -508,6 +521,70 @@ function safeBrowserSummary(result: BrowserPublicReadResult) {
   return `Browser public read failed safely: ${result.error || "source unavailable"}. No login, form, spend, publishing, or messaging occurred.`;
 }
 
+function sourceDomain(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+  } catch {
+    return "unknown-source";
+  }
+}
+
+function invalidEvidenceReason(input: { title?: string | null; content?: string | null; url?: string | null; error?: string | null }) {
+  const combined = [input.title, input.content, input.url, input.error].filter(Boolean).join(" ").toLowerCase();
+  if (!combined.trim()) return "Source has no readable content.";
+  const checks: Array<[string, string]> = [
+    ["needs a human touch", "Anti-bot challenge page is not valid evidence."],
+    ["loading challenge", "Challenge page is not readable evidence."],
+    ["verify you are human", "Human verification page is not valid evidence."],
+    ["captcha", "CAPTCHA page is not valid evidence."],
+    ["access denied", "Blocked page is not valid evidence."],
+    ["sign in to continue", "Login-gated content is not valid evidence."],
+    ["log in to continue", "Login-gated content is not valid evidence."],
+    ["checkout", "Checkout or purchase pages cannot support demand claims."],
+    ["payment", "Payment pages cannot support demand claims."],
+    ["guaranteed income", "Guaranteed income claims are blocked."],
+    ["fake review", "Fake review intent is blocked."],
+    ["spam", "Spam intent is blocked."],
+  ];
+  const match = checks.find(([needle]) => combined.includes(needle));
+  return match?.[1];
+}
+
+function opportunityQueryPlan(message: string, depth: OpportunityHuntDepth) {
+  const lower = message.toLowerCase();
+  const zeroBudget = lower.includes("zero") || lower.includes("$0") || lower.includes("free");
+  const fiverr = isFiverrPrompt(message);
+  const base = fiverr
+    ? [
+        { query: "Fiverr AI automation services competitor examples pricing requirements", purpose: "Marketplace positioning and platform requirements" },
+        { query: "freelancers AI workflow automation service demand problems", purpose: "Demand evidence for AI workflow services" },
+        { query: "small business AI workflow setup service pain points", purpose: "Audience pain points and service scope" },
+        { query: "Fiverr gig description AI automation workflow examples FAQ packages", purpose: "Production package field ideas" },
+      ]
+    : [
+        { query: "zero budget online business ideas validated demand 2026", purpose: "Broad opportunity discovery" },
+        { query: "freelancer AI workflow templates demand forums 2026", purpose: "Demand evidence for AI workflow templates" },
+        { query: "Notion template business demand freelancers small business", purpose: "Template market evidence" },
+        { query: "productized service zero budget validation examples", purpose: "Zero-budget business model evidence" },
+        { query: "newsletter practical AI workflows audience demand", purpose: "Newsletter/content opportunity evidence" },
+        { query: "SEO content cluster beginner AI tools demand opportunity", purpose: "SEO content opportunity evidence" },
+      ];
+  const validation = [
+    { query: "how to validate online business idea without spending money", purpose: "Validation method evidence" },
+    { query: "minimum viable test digital product validation no budget", purpose: "MVT and success/failure metric evidence" },
+    { query: "public market research sources for online business validation", purpose: "Source quality and evidence triangulation" },
+    { query: "platform policy Fiverr gig publishing requirements no automation", purpose: "Platform boundaries and manual requirements" },
+  ];
+  const plan = [...base, ...(zeroBudget || depth !== "quick" ? validation : [])];
+  return plan.slice(0, depth === "quick" ? 4 : depth === "deep" ? 10 : 7);
+}
+
+function requiredEvidenceForDepth(depth: OpportunityHuntDepth) {
+  if (depth === "deep") return { validSources: 10, domains: 5 };
+  if (depth === "quick") return { validSources: 3, domains: 2 };
+  return { validSources: 5, domains: 3 };
+}
+
 async function buildPublicResearchBundle(current: AppDataState, huntId: string, proposalId: string, message: string, depth: OpportunityHuntDepth) {
   const now = new Date().toISOString();
   const fiverrMode = isFiverrPrompt(message);
@@ -526,7 +603,145 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
     .sort((a, b) => b.score - a.score || a.pack.name.localeCompare(b.pack.name))
     .map((item) => item.pack);
   const sourcePacks = prioritizedPacks.slice(0, depth === "quick" ? 2 : depth === "deep" ? 4 : 3);
-  const urls = sourcePacks.flatMap((pack) => pack.urls.map((source) => ({ pack, source }))).slice(0, depthFetchLimit(depth));
+  const tavilyRunId = id("tavily-search-run");
+  const researchPacketId = id("research-packet");
+  const queryPlan = opportunityQueryPlan(message, depth);
+  const tavilySearchQueries: TavilySearchQuery[] = [];
+  const tavilySearchResults: TavilySearchResult[] = [];
+  const tavilyExtractResults: TavilyExtractResult[] = [];
+  const tavilyResultUrls: Array<{ pack: (typeof sourcePacks)[number]; source: (typeof sourcePacks)[number]["urls"][number] }> = [];
+  const searchDepth = depth === "deep" ? "advanced" : current.tavilySettings.defaultSearchDepth ?? "basic";
+  let tavilyEstimatedCredits = queryPlan.length + Math.min(current.tavilySettings.extractTopResults, depth === "deep" ? 6 : 4);
+  let tavilyActualCredits = 0;
+  const tavilyVirtualPack = {
+    id: "source-pack-tavily-api",
+    name: "Tavily API Research",
+    category: "demand" as const,
+    description: "Real public web search results returned by the configured Tavily API.",
+    urls: [],
+    safetyNotes: ["Search API only", "Extract top ranked public pages only", "No login, forms, purchases, or publishing"],
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+  for (const queryItem of queryPlan) {
+    const queryId = id("tavily-query");
+    const queryStartedAt = new Date().toISOString();
+    try {
+      const response = await tavilyService.search({
+        query: queryItem.query,
+        searchDepth,
+        maxResults: depth === "deep" ? 6 : 4,
+        includeAnswer: true,
+        timeoutSeconds: depth === "deep" ? 35 : 25,
+      });
+      tavilyActualCredits += response.usageCredits ?? (searchDepth === "advanced" ? 2 : 1);
+      const resultIds: string[] = [];
+      for (const result of response.results) {
+        const duplicate = tavilySearchResults.some((item) => item.url === result.url);
+        const invalidReason = invalidEvidenceReason({ title: result.title, content: `${result.content} ${result.rawContent ?? ""}`, url: result.url });
+        const resultId = id("tavily-result");
+        const status = duplicate ? "duplicate" : invalidReason ? "invalid" : "valid";
+        tavilySearchResults.push({
+          id: resultId,
+          runId: tavilyRunId,
+          queryId,
+          title: result.title,
+          url: result.url,
+          content: result.content,
+          rawContent: result.rawContent ?? undefined,
+          score: result.score ?? undefined,
+          publishedDate: result.publishedDate ?? undefined,
+          sourceDomain: sourceDomain(result.url),
+          status,
+          invalidReason,
+          confidence: status === "valid" ? clampScore(Math.round((result.score ?? 0.65) * 100)) : 20,
+          createdAt: new Date().toISOString(),
+        });
+        resultIds.push(resultId);
+        if (status === "valid" && tavilyResultUrls.length < depthFetchLimit(depth)) {
+          tavilyResultUrls.push({
+            pack: tavilyVirtualPack,
+            source: {
+              url: result.url,
+              title: result.title,
+              sourceType: result.url.includes("reddit.com") ? "forum" : result.url.includes("fiverr.com") || result.url.includes("etsy.com") ? "marketplace" : "public_web",
+              candidateHint: fiverrMode || result.url.includes("fiverr.com") ? "fiverr-ai-workflow-gig" : result.content.toLowerCase().includes("template") ? "ai-workflow-kit" : "ai-workflow-kit",
+            },
+          });
+        }
+      }
+      tavilySearchQueries.push({
+        id: queryId,
+        runId: tavilyRunId,
+        query: queryItem.query,
+        purpose: queryItem.purpose,
+        status: "completed",
+        resultIds,
+        answer: response.answer ?? undefined,
+        usageCredits: response.usageCredits ?? undefined,
+        createdAt: queryStartedAt,
+        completedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      tavilySearchQueries.push({
+        id: queryId,
+        runId: tavilyRunId,
+        query: queryItem.query,
+        purpose: queryItem.purpose,
+        status: "failed",
+        resultIds: [],
+        error: error instanceof Error ? error.message : String(error),
+        createdAt: queryStartedAt,
+        completedAt: new Date().toISOString(),
+      });
+    }
+  }
+  const extractTargets = tavilySearchResults
+    .filter((result) => result.status === "valid")
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, current.tavilySettings.extractTopResults)
+    .map((result) => result.url);
+  if (extractTargets.length) {
+    try {
+      const extractResponse = await tavilyService.extract({ urls: extractTargets, timeoutSeconds: depth === "deep" ? 45 : 32 });
+      tavilyActualCredits += extractResponse.usageCredits ?? extractTargets.length;
+      for (const extract of extractResponse.results) {
+        const sourceResult = tavilySearchResults.find((item) => item.url === extract.url);
+        const invalidReason = extract.error ?? invalidEvidenceReason({ title: extract.title, content: `${extract.rawContent ?? ""} ${extract.content ?? ""}`, url: extract.url });
+        tavilyExtractResults.push({
+          id: id("tavily-extract"),
+          runId: tavilyRunId,
+          resultId: sourceResult?.id,
+          url: extract.url,
+          status: invalidReason ? "invalid" : "valid",
+          title: extract.title ?? sourceResult?.title,
+          rawContent: extract.rawContent ?? undefined,
+          excerpt: extract.excerpt ?? extract.content ?? undefined,
+          invalidReason: invalidReason ?? undefined,
+          createdAt: new Date().toISOString(),
+        });
+        if (sourceResult && invalidReason) {
+          sourceResult.status = "invalid";
+          sourceResult.invalidReason = invalidReason;
+          sourceResult.confidence = 20;
+        }
+      }
+    } catch (error) {
+      tavilyExtractResults.push({
+        id: id("tavily-extract"),
+        runId: tavilyRunId,
+        url: extractTargets[0],
+        status: "blocked",
+        invalidReason: error instanceof Error ? error.message : String(error),
+        createdAt: new Date().toISOString(),
+      });
+    }
+  }
+  const urls = [
+    ...tavilyResultUrls,
+    ...sourcePacks.flatMap((pack) => pack.urls.map((source) => ({ pack, source }))),
+  ].slice(0, depthFetchLimit(depth));
   const fetches: PublicResearchFetch[] = [];
   const citations: EvidenceCitation[] = [];
   const browserRunId = id("browser-research-run");
@@ -791,6 +1006,43 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
     return bScore - aScore;
   });
   const rankedCandidates = ranked.map((candidate, index) => ({ ...candidate, rank: index + 1, status: index === 0 ? "winner" as const : "candidate" as const }));
+  const tavilyValidResultIds = tavilySearchResults.filter((result) => result.status === "valid").map((result) => result.id);
+  const tavilyInvalidResultIds = tavilySearchResults.filter((result) => result.status !== "valid").map((result) => result.id);
+  const tavilyRun: TavilySearchRun = {
+    id: tavilyRunId,
+    huntId,
+    researchPacketId,
+    provider: "tavily_api",
+    status: tavilySearchQueries.some((query) => query.status === "completed") ? "completed" : "failed",
+    depth,
+    searchDepth,
+    queryIds: tavilySearchQueries.map((query) => query.id),
+    resultIds: tavilySearchResults.map((result) => result.id),
+    extractResultIds: tavilyExtractResults.map((result) => result.id),
+    estimatedCredits: tavilyEstimatedCredits,
+    actualCredits: tavilyActualCredits || undefined,
+    validResultCount: tavilyValidResultIds.length,
+    invalidResultCount: tavilyInvalidResultIds.length,
+    summary:
+      tavilySearchQueries.some((query) => query.status === "completed")
+        ? `Tavily returned ${tavilySearchResults.length} public sources across ${tavilySearchQueries.length} planned queries; ${tavilyValidResultIds.length} passed initial readability checks.`
+        : "Tavily did not return usable results. Mission Control fell back to curated public source packs.",
+    startedAt: now,
+    completedAt: new Date().toISOString(),
+  };
+  const researchPacket: ResearchPacket = {
+    id: researchPacketId,
+    huntId,
+    tavilySearchRunId: tavilyRun.id,
+    queryPlan: queryPlan.map((query) => query.query),
+    validSourceIds: [...tavilyValidResultIds],
+    invalidSourceIds: [...tavilyInvalidResultIds],
+    citationIds: citations.map((citation) => citation.id),
+    status: "ready_for_factcheck",
+    summary: `Research packet contains ${tavilyValidResultIds.length} Tavily-valid sources, ${citations.length} citation records, and ${rankedCandidates.length} candidate ideas.`,
+    createdAt: now,
+    updatedAt: new Date().toISOString(),
+  };
   const browserRun: BrowserResearchRun = {
     id: browserRunId,
     huntId,
@@ -826,6 +1078,13 @@ async function buildPublicResearchBundle(current: AppDataState, huntId: string, 
     citations,
     candidates: rankedCandidates,
     scorecards,
+    tavily: {
+      run: tavilyRun,
+      queries: tavilySearchQueries,
+      results: tavilySearchResults,
+      extracts: tavilyExtractResults,
+    },
+    researchPacket,
     browserResearch: {
       run: browserRun,
       fetches: browserFetches,
@@ -1612,6 +1871,13 @@ function buildOpportunityHuntState(
     citations: EvidenceCitation[];
     candidates: CandidateBusinessIdea[];
     scorecards: CandidateScorecard[];
+    tavily?: {
+      run: TavilySearchRun;
+      queries: TavilySearchQuery[];
+      results: TavilySearchResult[];
+      extracts: TavilyExtractResult[];
+    };
+    researchPacket?: ResearchPacket;
     browserResearch?: {
       run: BrowserResearchRun;
       fetches: BrowserResearchFetch[];
@@ -1714,6 +1980,112 @@ function buildOpportunityHuntState(
       : []),
   ];
   const evidence: ResearchEvidence[] = citationEvidence.length ? citationEvidence : fallbackEvidence;
+  const requiredEvidence = requiredEvidenceForDepth(depth);
+  const validTavilyResults = publicResearch?.tavily?.results.filter((result) => result.status === "valid") ?? [];
+  const invalidTavilyResults = publicResearch?.tavily?.results.filter((result) => result.status !== "valid") ?? [];
+  const validCitationCount = (publicResearch?.citations ?? []).filter((citation) => citation.confidence >= 65 && !invalidEvidenceReason({ title: citation.title, content: `${citation.summary} ${citation.excerpt ?? ""}`, url: citation.url })).length;
+  const uniqueDomains = new Set([
+    ...validTavilyResults.map((result) => result.sourceDomain),
+    ...(publicResearch?.citations ?? []).filter((citation) => citation.confidence >= 65).map((citation) => sourceDomain(citation.url)),
+  ]);
+  const invalidEvidenceCount =
+    invalidTavilyResults.length +
+    (publicResearch?.fetches.filter((fetch) => fetch.status !== "fetched").length ?? 0) +
+    (publicResearch?.browserResearch?.fetches.filter((fetch) => fetch.status !== "captured").length ?? 0);
+  const evidenceCountForGate = Math.max(validTavilyResults.length, validCitationCount);
+  const sourceQualityScore = clampScore(Math.round((evidenceCountForGate / Math.max(requiredEvidence.validSources, 1)) * 55 + (uniqueDomains.size / Math.max(requiredEvidence.domains, 1)) * 35 + (winningScorecard?.evidenceScore ?? 60) * 0.1));
+  const factCheckBlockingReasons = [
+    evidenceCountForGate < requiredEvidence.validSources
+      ? `${depthLabel(depth)} research needs at least ${requiredEvidence.validSources} valid readable sources; found ${evidenceCountForGate}.`
+      : "",
+    uniqueDomains.size < requiredEvidence.domains
+      ? `${depthLabel(depth)} research needs at least ${requiredEvidence.domains} unique domains; found ${uniqueDomains.size}.`
+      : "",
+    budgetPlan.approvalBlockers.length ? budgetPlan.approvalBlockers.join(" ") : "",
+    validTavilyResults.some((result) => result.url.includes("fiverr.com")) && invalidTavilyResults.some((result) => result.url.includes("fiverr.com"))
+      ? "Fiverr produced at least one invalid or challenge-style page; it cannot be used as proof by itself."
+      : "",
+  ].filter(Boolean);
+  const factCheckWarningReasons = [
+    invalidEvidenceCount > 0 ? `${invalidEvidenceCount} source(s) failed, duplicated, or were blocked and cannot support claims.` : "",
+    fiverrMode ? "Fiverr requires manual account login and exact publishing approval; marketplace visibility is not guaranteed." : "",
+  ].filter(Boolean);
+  const factCheckStatus: FactCheckRun["status"] =
+    factCheckBlockingReasons.length > 0
+      ? "failed"
+      : factCheckWarningReasons.length > 0
+        ? "passed_with_warnings"
+        : "passed";
+  const factCheckRunId = id("fact-check-run");
+  const factCheckClaims: FactCheckClaim[] = [
+    {
+      id: id("fact-check-claim"),
+      factCheckRunId,
+      claim: "There is enough public demand evidence to submit a proposal.",
+      status: factCheckBlockingReasons.some((reason) => reason.includes("valid readable sources") || reason.includes("unique domains")) ? "unsupported" : "supported",
+      supportedByCitationIds: (publicResearch?.citations ?? []).slice(0, 5).map((citation) => citation.id),
+      rejectedBySourceIds: invalidTavilyResults.map((result) => result.id),
+      notes: factCheckBlockingReasons.length ? "Demand evidence is still too thin for a proposal-ready decision." : "Demand evidence clears the minimum source/domain gate for a proposal review.",
+      createdAt: now,
+    },
+    {
+      id: id("fact-check-claim"),
+      factCheckRunId,
+      claim: "The proposal can start with a zero-budget validation path.",
+      status: budgetPlan.requiredSpend === 0 && budgetPlan.approvalBlockers.length === 0 ? "supported" : "blocked",
+      supportedByCitationIds: (publicResearch?.citations ?? []).filter((citation) => citation.url.includes("github.com") || citation.summary.toLowerCase().includes("zero")).slice(0, 3).map((citation) => citation.id),
+      rejectedBySourceIds: [],
+      notes: budgetPlan.zeroBudgetPath,
+      createdAt: now,
+    },
+    {
+      id: id("fact-check-claim"),
+      factCheckRunId,
+      claim: "Platform boundaries are clear and no external action will happen from proposal approval.",
+      status: "supported",
+      supportedByCitationIds: [],
+      rejectedBySourceIds: [],
+      notes: fiverrMode
+        ? "Fiverr login, forms, publish, messaging, purchases, and paid promotion require separate exact approval."
+        : "Publishing, messaging, spending, launch, connector execution, login, forms, and purchases remain separate approvals.",
+      createdAt: now,
+    },
+  ];
+  const factCheckRun: FactCheckRun = {
+    id: factCheckRunId,
+    huntId,
+    proposalId,
+    researchPacketId: publicResearch?.researchPacket?.id ?? `research-packet-${huntId}`,
+    status: factCheckStatus,
+    validEvidenceCount: evidenceCountForGate,
+    invalidEvidenceCount,
+    uniqueDomainCount: uniqueDomains.size,
+    requiredValidSources: requiredEvidence.validSources,
+    requiredDomains: requiredEvidence.domains,
+    sourceQualityScore,
+    unsupportedClaims: factCheckClaims.filter((claim) => claim.status === "unsupported" || claim.status === "blocked").map((claim) => claim.claim),
+    blockingReasons: factCheckBlockingReasons,
+    warningReasons: factCheckWarningReasons,
+    claimIds: factCheckClaims.map((claim) => claim.id),
+    summary:
+      factCheckStatus === "failed"
+        ? `No proposal yet. FactCheck found ${factCheckBlockingReasons.length} blocking issue(s).`
+        : `FactCheck ${factCheckStatus === "passed_with_warnings" ? "passed with warnings" : "passed"} with ${evidenceCountForGate} valid sources across ${uniqueDomains.size} domains.`,
+    startedAt: now,
+    completedAt: now,
+  };
+  const proposalGateStatus: ProposalSubmissionGate["status"] = factCheckStatus === "failed" ? "needs_more_evidence" : "proposal_ready";
+  const proposalSubmissionGate: ProposalSubmissionGate = {
+    id: id("proposal-gate"),
+    huntId,
+    proposalId,
+    factCheckRunId,
+    status: proposalGateStatus,
+    reason: factCheckRun.summary,
+    missingRequirements: factCheckBlockingReasons,
+    createdAt: now,
+    updatedAt: now,
+  };
   const destinations: ProductionDestination[] = [
     {
       id: destinationStaticId,
@@ -1973,12 +2345,21 @@ function buildOpportunityHuntState(
     externalPlatformRequirementIds: externalPlatformRequirements.map((item) => item.id),
     platformExecutionPackageIds: platformExecutionPackages.map((item) => item.id),
     publicResearchRunId: publicResearch?.run.id,
+    researchPacketId: publicResearch?.researchPacket?.id,
+    factCheckRunId: factCheckRun.id,
+    proposalGateStatus,
+    sourceQualityScore,
+    validEvidenceCount: evidenceCountForGate,
+    invalidEvidenceCount,
+    unsupportedClaims: factCheckRun.unsupportedClaims,
+    factCheckSummary: factCheckRun.summary,
     candidateIdeaIds: publicResearch?.candidates.map((candidate) => candidate.id) ?? [],
     winningCandidateId: winningCandidate?.id,
     evidenceCitationIds: publicResearch?.citations.map((citation) => citation.id) ?? [],
     readinessChecklist: [
       { label: "Budget", status: budgetPlan.approvalBlockers.length ? "blocked" : "passed", detail: `${money(budgetPlan.requiredSpend)} required spend, ${money(budgetPlan.businessBudgetCap)} cap, ${money(budgetPlan.portfolioRemainingCapital)} remaining.` },
-      { label: "Evidence", status: evidence.length >= 3 ? "passed" : "needs_review", detail: `${evidence.length} evidence items and ${browserArtifactCount} browser artifact(s) are attached from ${depthLabel(depth)} curated public research.` },
+      { label: "Evidence", status: proposalGateStatus === "proposal_ready" ? "passed" : "blocked", detail: `${evidenceCountForGate}/${requiredEvidence.validSources} valid readable sources, ${uniqueDomains.size}/${requiredEvidence.domains} unique domains, ${browserArtifactCount} browser artifact(s), quality ${sourceQualityScore}/100.` },
+      { label: "FactCheck", status: proposalGateStatus === "proposal_ready" ? "passed" : "blocked", detail: factCheckRun.summary },
       { label: "Platform", status: fiverrMode ? "needs_review" : "passed", detail: fiverrMode ? "Fiverr account/login and exact gig fields must be reviewed before publishing." : "Local draft destination is available." },
       { label: "Compliance", status: "needs_review", detail: "No guarantees, fake reviews, spam, paid promotion, or unsupported claims." },
       { label: "Approval", status: "needs_review", detail: "Business approval starts internal work only; external execution needs a separate approval." },
@@ -2003,7 +2384,7 @@ function buildOpportunityHuntState(
       fiverrMode
         ? "Proceed to review after the agent tasks finish. This is a zero-spend Fiverr draft candidate, but business approval will only create local packages. Fiverr login, publishing, messaging, paid promotion, and form submission require a separate exact approval."
         : "Proceed to review after the agent tasks finish. This is a strong zero-budget validation candidate, but publishing and any connector action remain approval-gated.",
-    status: "drafting",
+    status: proposalGateStatus === "proposal_ready" ? "drafting" : "drafting",
     createdAt: now,
     updatedAt: now,
   };
@@ -2073,6 +2454,9 @@ function buildOpportunityHuntState(
     platformExecutionPackages,
     tasks,
     sessions,
+    factCheckRun,
+    factCheckClaims,
+    proposalSubmissionGate,
     publicResearch,
   };
 }
@@ -2084,6 +2468,19 @@ function syncGuildStations(state: AppDataState) {
     if (!existing || existing.updatedAt < session.updatedAt) latestSessionsByAgent.set(session.agentId, session);
   }
   return state.guildOfficeStations.map((station) => {
+    if (station.id === "station-factcheck") {
+      const latest = [...state.factCheckRuns].sort((a, b) => (b.completedAt ?? b.startedAt).localeCompare(a.completedAt ?? a.startedAt))[0];
+      if (!latest) return station;
+      return {
+        ...station,
+        status: latest.status === "failed" || latest.status === "blocked" ? "blocked" as const : "review" as const,
+        motion: latest.status === "failed" || latest.status === "blocked" ? "blocked" as const : "review" as const,
+        currentTask: latest.status === "failed" ? "FactCheck blocked proposal submission." : "FactCheck verified proposal evidence.",
+        lastOutput: latest.summary,
+        progress: latest.status === "failed" ? Math.min(latest.sourceQualityScore, 69) : Math.max(latest.sourceQualityScore, 80),
+        updatedAt: latest.completedAt ?? latest.startedAt,
+      };
+    }
     const session = latestSessionsByAgent.get(station.agentId);
     if (!session) return station;
     return {
@@ -2131,6 +2528,8 @@ function advanceOpportunityWorkState(current: AppDataState): AppDataState | null
   const huntTasks = tasks.filter((task) => task.huntId === activeHunt.id);
   const doneCount = huntTasks.filter((task) => task.status === "done").length;
   const allDone = doneCount === huntTasks.length;
+  const gate = current.proposalSubmissionGates.find((item) => item.huntId === activeHunt.id);
+  const proposalReady = gate?.status === "proposal_ready" || !gate;
   const nextStatus: OpportunityHunt["status"] = allDone
     ? "ready_to_review"
     : doneCount >= 5
@@ -2185,7 +2584,9 @@ function advanceOpportunityWorkState(current: AppDataState): AppDataState | null
             ...hunt,
             status: nextStatus,
             currentPhase: allDone
-              ? "TeamLeader1A finished the proposal. Review it in Mission Briefs."
+              ? proposalReady
+                ? "FactCheck passed. TeamLeader1A finished the proposal. Review it in Mission Briefs."
+                : "FactCheck blocked proposal submission. Review Mission Briefs for why no proposal yet."
               : `${doneCount}/${huntTasks.length} agent tasks complete. Agents are still working.`,
             updatedAt: now,
           }
@@ -2193,18 +2594,20 @@ function advanceOpportunityWorkState(current: AppDataState): AppDataState | null
     ),
     businessProposals: current.businessProposals.map((proposal) =>
       proposal.huntId === activeHunt.id
-        ? { ...proposal, status: allDone ? "ready_for_review" : "drafting", updatedAt: now }
+        ? { ...proposal, status: allDone && proposalReady ? "ready_for_review" : "drafting", updatedAt: now }
         : proposal,
     ),
     activityLogs: [
       {
         id: id("log-opportunity-tick"),
         category: "agent",
-        title: allDone ? "Business proposal ready" : "Agents advanced opportunity hunt",
+        title: allDone && !proposalReady ? "FactCheck blocked proposal submission" : allDone ? "Business proposal ready" : "Agents advanced opportunity hunt",
         detail: allDone
-          ? "TeamLeader1A has a complete business proposal ready for review. No external action ran."
+          ? proposalReady
+            ? "TeamLeader1A has a complete FactCheck-cleared business proposal ready for review. No external action ran."
+            : `${gate?.reason ?? "FactCheck blocked proposal submission."} No external action ran.`
           : `${doneCount}/${huntTasks.length} tasks complete in the active TeamLeader work session.`,
-        severity: allDone ? "success" : "info",
+        severity: allDone && !proposalReady ? "warning" : allDone ? "success" : "info",
         createdAt: now,
       } satisfies ActivityLog,
       ...current.activityLogs,
@@ -3510,6 +3913,103 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [persistOptimistic],
   );
 
+  const updateTavilySettings = useCallback(
+    async (settings: TavilySettings) => {
+      const current = dataRef.current;
+      await persistOptimistic({
+        ...current,
+        tavilySettings: {
+          ...settings,
+          updatedAt: new Date().toISOString(),
+        },
+      });
+    },
+    [persistOptimistic],
+  );
+
+  const saveTavilyApiKey = useCallback(
+    async (apiKey: string) => {
+      const current = dataRef.current;
+      const now = new Date().toISOString();
+      const status = await tavilyService.saveApiKey(apiKey);
+      await persistOptimistic({
+        ...current,
+        tavilySettings: {
+          ...current.tavilySettings,
+          apiKeyConfigured: status.configured,
+          maskedApiKey: status.maskedApiKey ?? undefined,
+          lastTestStatus: status.configured ? "untested" : "failed",
+          lastTestMessage: status.message,
+          updatedAt: now,
+        },
+        activityLogs: [
+          {
+            id: id("log-tavily-key"),
+            category: "system",
+            title: status.configured ? "Tavily API key configured" : "Tavily API key not configured",
+            detail: status.message,
+            severity: status.configured ? "success" : "warning",
+            createdAt: now,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ],
+      });
+    },
+    [persistOptimistic],
+  );
+
+  const testTavilyConnection = useCallback(async () => {
+    const current = dataRef.current;
+    const now = new Date().toISOString();
+    try {
+      const result = await tavilyService.testConnection();
+      await persistOptimistic({
+        ...current,
+        tavilySettings: {
+          ...current.tavilySettings,
+          apiKeyConfigured: true,
+          lastTestStatus: result.ok ? "success" : "failed",
+          lastTestMessage: result.ok ? `Tavily returned ${result.results.length} result(s).` : result.error ?? "Tavily test failed.",
+          lastTestAt: now,
+          updatedAt: now,
+        },
+        activityLogs: [
+          {
+            id: id("log-tavily-test"),
+            category: "system",
+            title: result.ok ? "Tavily connection test passed" : "Tavily connection test failed",
+            detail: result.ok ? `Search test returned ${result.results.length} result(s).` : result.error ?? "Tavily test failed.",
+            severity: result.ok ? "success" : "danger",
+            createdAt: now,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ],
+      });
+    } catch (error) {
+      await persistOptimistic({
+        ...current,
+        tavilySettings: {
+          ...current.tavilySettings,
+          lastTestStatus: "failed",
+          lastTestMessage: error instanceof Error ? error.message : String(error),
+          lastTestAt: now,
+          updatedAt: now,
+        },
+        activityLogs: [
+          {
+            id: id("log-tavily-test"),
+            category: "system",
+            title: "Tavily connection test failed",
+            detail: error instanceof Error ? error.message : String(error),
+            severity: "danger",
+            createdAt: now,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ],
+      });
+    }
+  }, [persistOptimistic]);
+
   const updateExternalActionLock = useCallback(
     async (mode: ExternalActionLockMode, reason: string) => {
       const current = dataRef.current;
@@ -4635,6 +5135,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         browserResearchFetches: [...publicResearch.browserResearch.fetches, ...current.browserResearchFetches],
         browserResearchArtifacts: [...publicResearch.browserResearch.artifacts, ...current.browserResearchArtifacts],
         browserSafetyReceipts: [...publicResearch.browserResearch.safetyReceipts, ...current.browserSafetyReceipts],
+        tavilySearchRuns: [publicResearch.tavily.run, ...current.tavilySearchRuns],
+        tavilySearchQueries: [...publicResearch.tavily.queries, ...current.tavilySearchQueries],
+        tavilySearchResults: [...publicResearch.tavily.results, ...current.tavilySearchResults],
+        tavilyExtractResults: [...publicResearch.tavily.extracts, ...current.tavilyExtractResults],
+        researchPackets: [publicResearch.researchPacket, ...current.researchPackets],
+        factCheckRuns: [built.factCheckRun, ...current.factCheckRuns],
+        factCheckClaims: [...built.factCheckClaims, ...current.factCheckClaims],
+        proposalSubmissionGates: [built.proposalSubmissionGate, ...current.proposalSubmissionGates],
         evidenceCitations: [...publicResearch.citations, ...current.evidenceCitations],
         candidateBusinessIdeas: [...publicResearch.candidates, ...current.candidateBusinessIdeas],
         candidateScorecards: [...publicResearch.scorecards, ...current.candidateScorecards],
@@ -4662,7 +5170,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("tl-chat-opportunity"),
             role: "teamleader",
             content:
-              `I started a ${depthLabel(selectedDepth).toLowerCase()} public opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. They know the budget cap, remaining capital, platform boundaries, public source-pack evidence, and safe browser-read receipts. I compared the Top 3 candidates and will show one winner before anything external happens.`,
+              built.proposalSubmissionGate.status === "proposal_ready"
+                ? `I started a ${depthLabel(selectedDepth).toLowerCase()} Tavily-backed opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. FactCheck cleared proposal submission with ${built.factCheckRun.validEvidenceCount} valid source(s) across ${built.factCheckRun.uniqueDomainCount} domain(s), so I will show the Top 3 + Winner before anything external happens.`
+                : `I started a ${depthLabel(selectedDepth).toLowerCase()} Tavily-backed opportunity hunt for "${trimmed}", but FactCheck is blocking proposal submission for now: ${built.factCheckRun.blockingReasons.join(" ")} Check Mission Briefs for "No proposal yet" and the exact evidence gaps.`,
             createdAt: now,
             mode: "local",
             relatedOpportunityHuntId: built.hunt.id,
@@ -4673,9 +5183,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             id: id("log-opportunity-hunt"),
             category: "agent",
-            title: "TeamLeader1A started opportunity hunt",
-            detail: `${depthLabel(selectedDepth)} curated public research created ${publicResearch.citations.length} citations, ${publicResearch.browserResearch.artifacts.length} brokered browser artifacts, and ${publicResearch.candidates.length} candidate ideas. No publishing, messaging, spending, launch, login automation, form submission, or external connector action ran.`,
-            severity: "success",
+            title: built.proposalSubmissionGate.status === "proposal_ready" ? "TeamLeader1A started opportunity hunt" : "FactCheck blocked proposal submission",
+            detail: `${depthLabel(selectedDepth)} Tavily/public research created ${publicResearch.tavily.results.length} Tavily results, ${publicResearch.citations.length} citations, ${publicResearch.browserResearch.artifacts.length} brokered browser artifacts, and ${publicResearch.candidates.length} candidate ideas. FactCheck: ${built.factCheckRun.summary}. No publishing, messaging, spending, launch, login automation, form submission, or external connector action ran.`,
+            severity: built.proposalSubmissionGate.status === "proposal_ready" ? "success" : "warning",
             createdAt: now,
           } satisfies ActivityLog,
           ...current.activityLogs,
@@ -4736,6 +5246,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const businessIds = new Set(current.approvedBusinesses.filter((business) => proposalIds.has(business.proposalId)).map((business) => business.id));
     const researchRunIds = new Set(current.publicResearchRuns.filter((run) => testHuntIds.has(run.huntId)).map((run) => run.id));
     const browserRunIds = new Set(current.browserResearchRuns.filter((run) => testHuntIds.has(run.huntId)).map((run) => run.id));
+    const tavilyRunIds = new Set(current.tavilySearchRuns.filter((run) => testHuntIds.has(run.huntId)).map((run) => run.id));
+    const researchPacketIds = new Set(current.researchPackets.filter((packet) => testHuntIds.has(packet.huntId)).map((packet) => packet.id));
+    const factCheckRunIds = new Set(current.factCheckRuns.filter((run) => testHuntIds.has(run.huntId)).map((run) => run.id));
     const now = new Date().toISOString();
     await persistOptimistic({
       ...current,
@@ -4750,6 +5263,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       browserResearchFetches: current.browserResearchFetches.filter((fetch) => !browserRunIds.has(fetch.runId)),
       browserResearchArtifacts: current.browserResearchArtifacts.filter((artifact) => !browserRunIds.has(artifact.runId)),
       browserSafetyReceipts: current.browserSafetyReceipts.filter((receipt) => !browserRunIds.has(receipt.runId)),
+      tavilySearchRuns: current.tavilySearchRuns.filter((run) => !tavilyRunIds.has(run.id)),
+      tavilySearchQueries: current.tavilySearchQueries.filter((query) => !tavilyRunIds.has(query.runId)),
+      tavilySearchResults: current.tavilySearchResults.filter((result) => !tavilyRunIds.has(result.runId)),
+      tavilyExtractResults: current.tavilyExtractResults.filter((result) => !tavilyRunIds.has(result.runId)),
+      researchPackets: current.researchPackets.filter((packet) => !researchPacketIds.has(packet.id)),
+      factCheckRuns: current.factCheckRuns.filter((run) => !factCheckRunIds.has(run.id)),
+      factCheckClaims: current.factCheckClaims.filter((claim) => !factCheckRunIds.has(claim.factCheckRunId)),
+      proposalSubmissionGates: current.proposalSubmissionGates.filter((gate) => !testHuntIds.has(gate.huntId)),
       evidenceCitations: current.evidenceCitations.filter((citation) => !testHuntIds.has(citation.huntId)),
       candidateBusinessIdeas: current.candidateBusinessIdeas.filter((candidate) => !testHuntIds.has(candidate.huntId)),
       candidateScorecards: current.candidateScorecards.filter((scorecard) => !testHuntIds.has(scorecard.huntId)),
@@ -4793,7 +5314,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (!proposal) throw new Error("Business proposal not found.");
       const now = new Date().toISOString();
       const budgetBlockers = proposalBudgetBlockers(proposal);
-      if (budgetBlockers.length > 0) {
+      const proposalGate = current.proposalSubmissionGates.find((gate) => gate.proposalId === proposalId);
+      const factCheckBlockers =
+        proposalGate && proposalGate.status !== "proposal_ready"
+          ? [proposalGate.reason, ...proposalGate.missingRequirements]
+          : proposal.factCheckRunId
+            ? []
+            : ["FactCheck Station has not verified this proposal yet."];
+      const blockers = [...budgetBlockers, ...factCheckBlockers].filter(Boolean);
+      if (blockers.length > 0) {
         await persistOptimistic({
           ...current,
           businessProposals: current.businessProposals.map((item) =>
@@ -4801,7 +5330,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
               ? {
                   ...item,
                   status: "revision_requested",
-                  missingRequirements: [...new Set([...(item.missingRequirements ?? []), ...budgetBlockers])],
+                  missingRequirements: [...new Set([...(item.missingRequirements ?? []), ...blockers])],
                   updatedAt: now,
                 }
               : item,
@@ -4811,7 +5340,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             {
               id: id("tl-chat-budget-block"),
               role: "teamleader",
-              content: `I cannot approve "${proposal.title}" yet because the budget guard failed: ${budgetBlockers.join(" ")} No business was launched and no external action ran.`,
+              content: `I cannot approve "${proposal.title}" yet because the proposal gate failed: ${blockers.join(" ")} No business was launched and no external action ran.`,
               createdAt: now,
               mode: "system",
               relatedBusinessProposalId: proposalId,
@@ -4821,8 +5350,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             {
               id: id("log-budget-block"),
               category: "approval",
-              title: "Business approval blocked by budget guard",
-              detail: budgetBlockers.join(" "),
+              title: "Business approval blocked by proposal gate",
+              detail: blockers.join(" "),
               severity: "danger",
               createdAt: now,
             } satisfies ActivityLog,
@@ -8029,6 +8558,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       resetLocalData,
       updateApprovalStatus,
       updateSettings,
+      updateTavilySettings,
+      saveTavilyApiKey,
+      testTavilyConnection,
       updateExternalActionLock,
       recordSystemLog,
       runSimulationNow,
@@ -8105,6 +8637,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       resetLocalData,
       updateApprovalStatus,
       updateSettings,
+      updateTavilySettings,
+      saveTavilyApiKey,
+      testTavilyConnection,
       updateExternalActionLock,
       recordSystemLog,
       runSimulationNow,

@@ -19,8 +19,8 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
     .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
     .fill("find me the best online business idea with zero budget");
   await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
-  await expect(page.getByText(/I started a fast public opportunity hunt/i)).toBeVisible();
-  await expect(page.getByText(/Top 3 candidates/i)).toBeVisible();
+  await expect(page.getByText(/I started a fast Tavily-backed opportunity hunt/i)).toBeVisible();
+  await expect(page.getByText(/FactCheck cleared proposal submission|FactCheck is blocking proposal submission/i)).toBeVisible();
   await expect(page.getByText(/View Work/i).first()).toBeVisible();
 
   await page.goto("/#/tasks", { waitUntil: "domcontentloaded" });
@@ -46,6 +46,8 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Assigned prompt").first()).toBeVisible();
   await expect(page.getByText("Output artifact").first()).toBeVisible();
   await expect(page.getByText("Research Confidence Report").first()).toBeVisible();
+  await expect(page.getByText("FactCheck Station").first()).toBeVisible();
+  await expect(page.getByText("Tavily API research").first()).toBeVisible();
   await expect(page.getByText("Query plan preview").first()).toBeVisible();
   await expect(page.getByText("Weak claim detection").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: /Business Proposal:/i })).toBeVisible();
@@ -111,6 +113,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
   await expect(page.getByText("OpenClaw System Health")).toBeVisible();
   await expect(page.getByText("Free Local MCP Kit")).toBeVisible();
+  await expect(page.getByText("Tavily Research + FactCheck Station")).toBeVisible();
   await expect(page.getByText("Browser Research Broker").first()).toBeVisible();
   await expect(page.getByText("native safe public read")).toBeVisible();
   await page.getByRole("button", { name: /Test browser read with example.com/i }).click();
@@ -125,7 +128,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Release And Updater Checklist")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Release And Updater Hardening release/i)).toBeVisible();
+  await expect(page.getByText(/Tavily Research \+ FactCheck release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {
@@ -134,7 +137,7 @@ test("Fiverr prompt still creates a locked local platform package", async ({ pag
     .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
     .fill("create a Fiverr gig business idea with zero budget");
   await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
-  await expect(page.getByText(/I started a fast public opportunity hunt/i)).toBeVisible();
+  await expect(page.getByText(/I started a fast Tavily-backed opportunity hunt/i)).toBeVisible();
   await page.goto("/#/mission-briefs", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: /Business Proposal: Fiverr AI Workflow Gig/i })).toBeVisible();
   await expect(page.getByText("External platform/account needs")).toBeVisible();
