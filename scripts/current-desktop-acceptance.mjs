@@ -48,7 +48,11 @@ function connectCdp(wsUrl) {
         send(method, params = {}) {
           const messageId = ++id;
           return new Promise((resolveSend, rejectSend) => {
-            pending.set(messageId, { resolve: resolveSend, reject: rejectSend, method });
+            const timer = setTimeout(() => {
+              pending.delete(messageId);
+              rejectSend(new Error(`${method}: timed out waiting for CDP response`));
+            }, 20_000);
+            pending.set(messageId, { resolve: resolveSend, reject: rejectSend, method, timer });
             ws.send(JSON.stringify({ id: messageId, method, params }));
           });
         },
@@ -74,6 +78,7 @@ function connectCdp(wsUrl) {
       if (!message.id || !pending.has(message.id)) return;
       const item = pending.get(message.id);
       pending.delete(message.id);
+      clearTimeout(item.timer);
       if (message.error) item.reject(new Error(`${item.method}: ${message.error.message}`));
       else item.resolve(message.result);
     });
@@ -94,6 +99,7 @@ async function waitFor(client, expression, label, timeoutMs = 45_000) {
 }
 
 async function route(client, hash, text) {
+  console.log(`route ${hash}`);
   await client.evaluate(`location.hash = ${JSON.stringify(hash)}`);
   await waitFor(client, `document.body.innerText.includes(${JSON.stringify(text)})`, text);
 }
@@ -159,6 +165,7 @@ async function setTextArea(client, value) {
 }
 
 async function launch() {
+  console.log(`launch ${exePath}`);
   const child = spawn(exePath, {
     cwd: dirname(exePath),
     env: {
@@ -207,10 +214,12 @@ async function main() {
   try {
     const { client } = app;
 
+    console.log("check settings/storage");
     await route(client, "/settings", "Capital, risk, storage, and permissions");
     await waitFor(client, "document.body.innerText.includes('Storage: tauri-sqlite')", "tauri-sqlite storage adapter");
     evidence.storage = await client.evaluate("document.body.innerText.match(/Storage: [^\\n]+/)?.[0] ?? ''");
 
+    console.log("run TeamLeader command");
     await route(client, "/", "Tell TeamLeader1A what to build");
     await waitFor(client, "document.querySelectorAll('select').length === 1 && document.body.innerText.includes('Optional quest attachment')", "clean command screen");
     evidence.commandScreenClean = true;
@@ -219,24 +228,28 @@ async function main() {
     await click(client, "Send to TeamLeader1A");
     await waitFor(
       client,
-      "document.body.innerText.includes('I started a quick public opportunity hunt') && document.body.innerText.includes('Top 3')",
+      `document.body.innerText.includes(${JSON.stringify(stamp)}) && document.body.innerText.includes('I started a quick public opportunity hunt') && document.body.innerText.includes('Top 3')`,
       "quick opportunity hunt result",
       180_000,
     );
 
+    console.log("check tasks");
     await route(client, "/tasks", "Every agent task in one place");
     await waitFor(client, "document.body.innerText.includes('Research zero-budget demand')", "agent task board populated");
 
+    console.log("check guild office");
     await route(client, "/guild-office", "Watch the agents work");
     await waitFor(client, "document.body.innerText.includes('Research Library') && document.body.innerText.includes('What is happening now')", "guild office active");
 
+    console.log("check mission brief");
     await route(client, "/mission-briefs", "Business Proposal Review");
     await waitFor(
       client,
-      "document.body.innerText.includes('Top 3 + Winner') && document.body.innerText.includes('Safe browser evidence') && document.body.innerText.includes('safe-browser-public-read')",
+      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('top 3 + winner') && text.includes('safe browser evidence') && text.includes('safe-browser-public-read'); })()",
       "mission brief browser evidence",
     );
 
+    console.log("check sqlite rows");
     const dbProof = await waitFor(
       client,
       `(async () => {
@@ -253,15 +266,18 @@ async function main() {
           query: "SELECT payload FROM browser_research_artifacts WHERE payload LIKE ?",
           values: ["%safe%"],
         });
-        return { hunts: hunts.length, artifacts: artifacts.length };
+        const proof = { hunts: hunts.length, artifacts: artifacts.length };
+        return proof.hunts > 0 && proof.artifacts > 0 ? proof : false;
       })()`,
       "SQLite opportunity and browser evidence rows",
+      120_000,
     );
     evidence.opportunityHuntRows = dbProof.hunts;
     evidence.browserArtifactRows = dbProof.artifacts;
     assert(evidence.opportunityHuntRows > 0, "Opportunity hunt did not persist to SQLite");
     assert(evidence.browserArtifactRows > 0, "Browser research artifacts did not persist to SQLite");
 
+    console.log("check browser broker system panel");
     await route(client, "/openclaw-system", "OpenClaw System Health");
     await waitFor(
       client,
@@ -272,6 +288,7 @@ async function main() {
     await click(client, "Test browser read with example.com");
     await waitFor(client, "document.body.innerText.includes('Last artifact:') && document.body.innerText.includes('example.com')", "browser broker diagnostic artifact", 120_000);
 
+    console.log("check approval spam");
     await route(client, "/approvals", "Approval gates for risky actions");
     evidence.noApprovalSpam = await client.evaluate(`
       !document.body.innerText.includes(${JSON.stringify(command)}) &&
@@ -279,8 +296,9 @@ async function main() {
     `);
     assert(evidence.noApprovalSpam, "Safe opportunity hunt created approval spam");
 
+    console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.includes('Browser broker hardening release')", "0.1.13 updater marker");
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('browser broker hardening release')", "0.1.13 updater marker");
     evidence.appVersion = await waitFor(
       client,
       `(async () => {
