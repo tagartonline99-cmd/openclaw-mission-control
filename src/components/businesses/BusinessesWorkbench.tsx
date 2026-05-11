@@ -1,4 +1,5 @@
 import { Activity, Archive, BarChart3, BriefcaseBusiness, ExternalLink, FileArchive, FileText, PackageCheck, Pause, Play, ReceiptText, RotateCw, ShieldAlert, Sparkles, WalletCards } from "lucide-react";
+import { useState } from "react";
 import { useAppData } from "../../app/AppDataContext";
 import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
@@ -22,7 +23,11 @@ export function BusinessesWorkbench() {
     operatingAutopilotEnabled,
     setOperatingAutopilotEnabled,
   } = useAppData();
-  const activeBusinesses = data.approvedBusinesses.filter((business) => business.status !== "archived");
+  const [teamLeaderOnly, setTeamLeaderOnly] = useState(true);
+  const allActiveBusinesses = data.approvedBusinesses.filter((business) => business.status !== "archived");
+  const activeBusinesses = teamLeaderOnly
+    ? allActiveBusinesses.filter((business) => data.businessProposals.some((proposal) => proposal.id === business.proposalId))
+    : allActiveBusinesses;
 
   if (activeBusinesses.length === 0) {
     const readyProposal = data.businessProposals.find((proposal) => proposal.status === "ready_for_review");
@@ -76,6 +81,16 @@ export function BusinessesWorkbench() {
             <p className="mt-2 text-2xl font-semibold text-red-100">external</p>
           </CardContent>
         </Card>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/10 bg-black/25 p-3">
+        <div>
+          <p className="text-sm font-semibold text-stone-100">Business view filter</p>
+          <p className="text-xs text-slate-400">Primary view stays focused on businesses created from TeamLeader1A proposals.</p>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => setTeamLeaderOnly((value) => !value)}>
+          {teamLeaderOnly ? "TeamLeader-created only" : "Showing all businesses"}
+        </Button>
       </div>
 
       <div className="grid gap-5 xl:grid-cols-2">

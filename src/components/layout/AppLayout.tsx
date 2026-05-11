@@ -42,6 +42,7 @@ const advancedItems = [
 export function AppLayout() {
   const { data, adapter, runSimulationNow, simulationEnabled } = useAppData();
   const { dashboardSummary, openClawRuntimeStatus } = data;
+  const pendingApprovalCount = data.approvalRequests.filter((request) => request.status === "pending").length;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -78,6 +79,11 @@ export function AppLayout() {
               >
                 <item.icon className="h-4 w-4" />
                 <span>{item.label}</span>
+                {item.label === "Approvals" && pendingApprovalCount > 0 ? (
+                  <span className="ml-auto rounded-md border border-amber-300/30 bg-amber-300/15 px-1.5 py-0.5 text-[11px] font-semibold text-amber-100">
+                    {pendingApprovalCount}
+                  </span>
+                ) : null}
               </NavLink>
             ))}
             <div className="pt-4">
@@ -154,6 +160,11 @@ export function AppLayout() {
               >
                 <item.icon className="h-4 w-4" />
                 {item.label}
+                {item.label === "Approvals" && pendingApprovalCount > 0 ? (
+                  <span className="rounded-md border border-amber-300/30 bg-amber-300/15 px-1.5 py-0.5 text-[10px] text-amber-100">
+                    {pendingApprovalCount}
+                  </span>
+                ) : null}
               </NavLink>
             ))}
           </div>

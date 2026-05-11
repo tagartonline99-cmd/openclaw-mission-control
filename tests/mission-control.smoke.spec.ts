@@ -3,6 +3,7 @@ import { expect, test } from "@playwright/test";
 test("TeamLeader command runs public research, ranks top candidates, creates business, and production map", async ({ page }) => {
   await page.goto("/#/", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Tell TeamLeader1A what to build" })).toBeVisible();
+  await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
   await expect(page.getByText("TeamLeader1A Chat")).toBeVisible();
   await expect(page.getByText("Research depth")).toBeVisible();
   await expect(page.getByRole("combobox")).toHaveCount(1);
@@ -21,6 +22,8 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/tasks", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Every agent task in one place" })).toBeVisible();
+  await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
+  await expect(page.getByText("TeamLeader-created only")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Now Working" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Research zero-budget demand/i })).toBeVisible();
   await expect(page.getByText(/https:\/\//i).first()).toBeVisible();
@@ -45,6 +48,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/businesses", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Business proposals you approved" })).toBeVisible();
+  await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
   await expect(page.getByRole("heading", { name: /Practical AI Workflow|Local Service Lead-Gen|Client Operations Notion/i })).toBeVisible();
   await expect(page.getByText("Business cockpit", { exact: true })).toBeVisible();
   await expect(page.getByText("What happened receipts")).toBeVisible();
@@ -57,10 +61,14 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/production", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Product Studio" })).toBeVisible();
+  await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
+  await expect(page.getByText("Product Snapshot").first()).toBeVisible();
   await expect(page.getByText(/See the exact product before any publishing approval/i)).toBeVisible();
-  await expect(page.getByText("Product Files")).toBeVisible();
-  await expect(page.getByText("Claims & Safety")).toBeVisible();
+  await expect(page.getByText("Product Files", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Claims & Safety Check").first()).toBeVisible();
   await expect(page.getByText("Publishing Preview")).toBeVisible();
+  await expect(page.getByText("Product Proof Pack").first()).toBeVisible();
+  await expect(page.getByText("Product Receipts").first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Prepare Publish Approval/i })).toBeDisabled();
   await page.getByRole("button", { name: /View Product/i }).click();
   await expect(page.getByText("Full local draft")).toBeVisible();
@@ -89,7 +97,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Product Studio preview gate release/i)).toBeVisible();
+  await expect(page.getByText(/Product clarity and receipts release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

@@ -34,7 +34,9 @@ import { AgentRosterGrid } from "../components/agents/AgentRosterGrid";
 import { ApprovalCenter } from "../components/approvals/ApprovalCenter";
 import { BusinessesWorkbench } from "../components/businesses/BusinessesWorkbench";
 import { DungeonPipeline } from "../components/dashboard/DungeonPipeline";
+import { ExecutionReceiptsPanel } from "../components/dashboard/ExecutionReceiptsPanel";
 import { MetricCard } from "../components/dashboard/MetricCard";
+import { NowCommandCenter } from "../components/dashboard/NowCommandCenter";
 import { TeamLeaderChat } from "../components/dashboard/TeamLeaderChat";
 import { GuildOffice } from "../components/guild/GuildOffice";
 import { MissionBriefWorkbench } from "../components/missions/MissionBriefWorkbench";
@@ -212,29 +214,33 @@ export function CommandPage() {
         <MetricCard label="Proposals ready" value={readyProposals} detail="Review and approve from Mission Briefs." icon={<FileText className="h-4 w-4" />} tone="emerald" />
         <MetricCard label="Businesses" value={activeBusinesses} detail="Approved proposals become active businesses." icon={<BriefcaseBusiness className="h-4 w-4" />} tone="red" />
       </div>
+      <NowCommandCenter />
       <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
         <TeamLeaderChat full />
-        <Card>
-          <CardHeader>
-            <CardTitle>Live Monitoring Shortcuts</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {[
-              ["Tasks", "See exactly what each agent is doing now.", "#/tasks"],
-              ["Guild Office", "Watch the animated dungeon office stations.", "#/guild-office"],
-              ["Mission Briefs", "Review the business proposal and approve or reject it.", "#/mission-briefs"],
-              ["Businesses", "Manage approved business proposals.", "#/businesses"],
-            ].map(([title, detail, href]) => (
-              <a key={title} href={href} className="block rounded-md border border-white/10 bg-black/25 p-3 transition hover:border-teal-300/35 hover:bg-teal-400/8">
-                <p className="font-semibold text-stone-100">{title}</p>
-                <p className="mt-1 text-sm text-slate-300">{detail}</p>
-              </a>
-            ))}
-            <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3 text-sm leading-6 text-red-100">
-              Approvals appear only for risky external actions: spend, publish, message, launch, connector execution, login automation, form submission, purchases, or external automation.
-            </div>
-          </CardContent>
-        </Card>
+        <div className="space-y-5">
+          <Card>
+            <CardHeader>
+              <CardTitle>Live Monitoring Shortcuts</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {[
+                ["Tasks", "See exactly what each agent is doing now.", "#/tasks"],
+                ["Guild Office", "Watch the animated dungeon office stations.", "#/guild-office"],
+                ["Mission Briefs", "Review the business proposal and approve or reject it.", "#/mission-briefs"],
+                ["Businesses", "Manage approved business proposals.", "#/businesses"],
+              ].map(([title, detail, href]) => (
+                <a key={title} href={href} className="block rounded-md border border-white/10 bg-black/25 p-3 transition hover:border-teal-300/35 hover:bg-teal-400/8">
+                  <p className="font-semibold text-stone-100">{title}</p>
+                  <p className="mt-1 text-sm text-slate-300">{detail}</p>
+                </a>
+              ))}
+              <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3 text-sm leading-6 text-red-100">
+                Approvals appear only for risky external actions: spend, publish, message, launch, connector execution, login automation, form submission, purchases, or external automation.
+              </div>
+            </CardContent>
+          </Card>
+          <ExecutionReceiptsPanel limit={4} title="Latest Receipts" />
+        </div>
       </div>
     </div>
   );
@@ -249,6 +255,7 @@ export function TasksPage() {
         description="Tasks are created from TeamLeader1A commands and grouped by what is happening now, queued, blocked, approval-needed, and done."
         action={<Badge tone="teal"><ListChecks className="h-3.5 w-3.5" /> Live task tab</Badge>}
       />
+      <NowCommandCenter compact />
       <BusinessTasksBoard />
     </div>
   );
@@ -277,6 +284,7 @@ export function BusinessesPage() {
         description="Only approved TeamLeader1A proposals appear here. Each business shows its production, content, publishing destination, risks, validation score, and next action."
         action={<Badge tone="teal"><BriefcaseBusiness className="h-3.5 w-3.5" /> Business OS</Badge>}
       />
+      <NowCommandCenter compact />
       <BusinessesWorkbench />
     </div>
   );
@@ -902,6 +910,11 @@ export function ActivityLogPage() {
               {log.relatedMissionRunId ? (
                 <a className="mt-3 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href={`#/mission-briefs?run=${log.relatedMissionRunId}`}>
                   View Mission Brief
+                </a>
+              ) : null}
+              {log.category === "approval" ? (
+                <a className="mt-3 ml-3 inline-flex text-sm font-semibold text-amber-100 hover:text-amber-50" href="#/approvals">
+                  Open Approvals
                 </a>
               ) : null}
             </div>

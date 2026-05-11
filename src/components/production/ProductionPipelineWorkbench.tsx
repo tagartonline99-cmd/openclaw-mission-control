@@ -6,6 +6,9 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Select } from "../ui/select";
+import { ClarityBadge, clarityLabelFromStatus } from "../dashboard/ClarityBadge";
+import { ExecutionReceiptsPanel } from "../dashboard/ExecutionReceiptsPanel";
+import { NowCommandCenter } from "../dashboard/NowCommandCenter";
 
 function label(value: string) {
   return value.replace(/_/g, " ");
@@ -30,7 +33,7 @@ const previewTabs = [
   { id: "full_draft", label: "Full Draft" },
   { id: "platform_fields", label: "Platform Fields" },
   { id: "assets", label: "Assets" },
-  { id: "claims_safety", label: "Claims & Safety" },
+  { id: "claims_safety", label: "Claims & Safety Check" },
   { id: "publishing_preview", label: "Publishing Preview" },
   { id: "revision_requests", label: "Revision Requests" },
 ] as const;
@@ -41,6 +44,8 @@ export function ProductionPipelineWorkbench() {
     approveProductLocalDraft,
     requestProductRevision,
     prepareProductPublishApproval,
+    exportProductProofPack,
+    lastExportResult,
     createProductionPack,
     advanceProductionAsset,
     createSiteProject,
@@ -71,6 +76,9 @@ export function ProductionPipelineWorkbench() {
   const platformPackage = preview?.platformPackageId ? data.platformExecutionPackages.find((item) => item.id === preview.platformPackageId) : undefined;
   const publishPayload = preview?.publishPayloadPreviewId ? data.publishPayloadPreviews.find((item) => item.id === preview.publishPayloadPreviewId) : undefined;
   const pendingApproval = gate?.approvalId ? data.approvalRequests.find((item) => item.id === gate.approvalId) : undefined;
+  const latestReceipt = preview
+    ? data.executionReceipts.find((receipt) => receipt.businessId === preview.businessId || receipt.proposalId === preview.proposalId)
+    : undefined;
 
   async function createPack() {
     if (!questId) return;
@@ -113,8 +121,14 @@ export function ProductionPipelineWorkbench() {
     await prepareProductPublishApproval(preview.id);
   }
 
+  async function exportProofPack() {
+    if (!preview) return;
+    await exportProductProofPack(preview.id);
+  }
+
   return (
     <div className="space-y-5">
+      <NowCommandCenter compact />
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -163,6 +177,78 @@ export function ProductionPipelineWorkbench() {
 
               {selectedBusiness && preview && blueprint ? (
                 <>
+                  <div className="rounded-lg border border-amber-300/20 bg-gradient-to-br from-amber-400/12 via-black/30 to-teal-400/10 p-5">
+                    <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                      <div className="max-w-4xl">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="amber">Product Snapshot</Badge>
+                          <ClarityBadge label={clarityLabelFromStatus(preview.status)} />
+                          {pendingApproval ? (
+                            <a href="#/approvals">
+                              <Badge tone="amber">Pending Approval</Badge>
+                            </a>
+                          ) : (
+                            <Badge tone="red">External Action Blocked</Badge>
+                          )}
+                        </div>
+                        <h3 className="mt-3 font-display text-3xl font-semibold text-stone-50">{blueprint.name}</h3>
+                        <p className="mt-2 text-sm leading-6 text-slate-200">{blueprint.valueProposition}</p>
+                      </div>
+                      <div className="grid min-w-[260px] gap-2 text-sm">
+                        <a className="rounded-md border border-teal-300/25 bg-teal-400/10 px-3 py-2 font-semibold text-teal-100 hover:bg-teal-400/15" href="#/businesses">
+                          Open business cockpit
+                        </a>
+                        <Button variant="secondary" onClick={() => setActiveTab("full_draft")}>
+                          <Eye className="h-4 w-4" />
+                          Exact preview
+                        </Button>
+                        <Button variant="outline" onClick={() => void exportProofPack()}>
+                          <FileText className="h-4 w-4" />
+                          Export Product Proof Pack
+                        </Button>
+                      </div>
+                    </div>
+                    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Buyer</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-200">{blueprint.audience}</p>
+                      </div>
+                      <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Deliverable</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-200">{blueprint.offerDeliverable}</p>
+                      </div>
+                      <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Destination</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-200">{blueprint.intendedDestination}</p>
+                      </div>
+                      <div className="rounded-md border border-white/10 bg-black/25 p-3">
+                        <p className="text-xs font-semibold uppercase text-slate-500">Latest receipt</p>
+                        <p className="mt-2 text-sm leading-6 text-slate-200">{latestReceipt?.title ?? "No receipt yet"}</p>
+                      </div>
+                    </div>
+                    <div className="mt-4 grid gap-3 lg:grid-cols-2">
+                      <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
+                        <p className="text-xs font-semibold uppercase text-emerald-100">What exists</p>
+                        <div className="mt-2 space-y-1 text-sm text-slate-200">
+                          {(assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, 6).map((item) => (
+                            <p key={item}>- {item}</p>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
+                        <p className="text-xs font-semibold uppercase text-amber-100">What is missing / next</p>
+                        <div className="mt-2 space-y-1 text-sm text-slate-200">
+                          {(preview.missingItems.length ? preview.missingItems : [gate?.reason ?? blueprint.nextProductionStep]).map((item) => (
+                            <p key={item}>- {item}</p>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    {lastExportResult ? (
+                      <p className="mt-4 rounded-md border border-white/10 bg-black/25 p-3 text-xs text-slate-300">{lastExportResult.message}</p>
+                    ) : null}
+                  </div>
+
                   <div className="grid gap-3 xl:grid-cols-4">
                     <div className="rounded-md border border-white/10 bg-black/25 p-3 xl:col-span-2">
                       <p className="text-xs font-semibold uppercase text-slate-500">What the product is</p>
@@ -239,6 +325,39 @@ export function ProductionPipelineWorkbench() {
                         <p className="mt-2 text-xs text-slate-500">{publishPayload.budgetBoundary}</p>
                       </div>
                     ) : null}
+                  </div>
+
+                  <div className="grid gap-4 xl:grid-cols-[1fr_420px]">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center gap-2">
+                          <FileText className="h-4 w-4 text-amber-100" />
+                          Product Proof Pack
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3 text-sm leading-6 text-slate-300">
+                        <p className="rounded-md border border-white/10 bg-black/25 p-3">
+                          One review bundle containing the full draft, platform fields, Product Files, Claims & Safety Check, evidence, budget plan, approval boundary, revision history, and receipts.
+                        </p>
+                        <div className="grid gap-2 md:grid-cols-2">
+                          {[
+                            "Full product draft",
+                            "Platform fields",
+                            "Claims & Safety Check",
+                            "Evidence and citations",
+                            "Budget boundary",
+                            "Approval boundary",
+                          ].map((item) => (
+                            <span key={item} className="rounded-md border border-white/10 bg-black/25 px-3 py-2 text-xs font-semibold text-slate-200">{item}</span>
+                          ))}
+                        </div>
+                        <Button variant="secondary" onClick={() => void exportProofPack()}>
+                          <FileText className="h-4 w-4" />
+                          Export / Preview Proof Pack
+                        </Button>
+                      </CardContent>
+                    </Card>
+                    <ExecutionReceiptsPanel businessId={selectedBusiness.id} previewId={preview.id} limit={4} title="Product Receipts" />
                   </div>
 
                   <div className="grid gap-3 lg:grid-cols-[1fr_auto]">

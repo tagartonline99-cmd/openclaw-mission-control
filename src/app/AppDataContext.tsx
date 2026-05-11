@@ -183,6 +183,7 @@ type AppDataContextValue = {
   runBusinessOperatingCycle: (businessId: string) => Promise<string>;
   addBusinessMetricSnapshot: (businessId: string, input: Partial<BusinessMetricSnapshot>) => Promise<string>;
   exportBusinessAssetPack: (businessId: string) => Promise<ExportResult>;
+  exportProductProofPack: (previewId: string) => Promise<ExportResult>;
   operatingAutopilotEnabled: boolean;
   setOperatingAutopilotEnabled: (enabled: boolean) => void;
   updateBusinessProposalStatus: (proposalId: string, status: BusinessProposal["status"]) => Promise<void>;
@@ -4558,6 +4559,21 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const ids = { huntId: id("opportunity-hunt"), proposalId: id("business-proposal") };
       const publicResearch = await buildPublicResearchBundle(current, ids.huntId, ids.proposalId, trimmed, selectedDepth);
       const built = buildOpportunityHuntState(current, trimmed, userChatId, selectedDepth, ids, publicResearch);
+      const commandReceipt: ExecutionReceipt = {
+        id: id("execution-receipt"),
+        proposalId: built.proposal.id,
+        actionType: "teamleader_opportunity_hunt",
+        title: "TeamLeader command receipt",
+        summary: `TeamLeader1A started a ${depthLabel(selectedDepth).toLowerCase()} opportunity hunt, assigned agents, captured public evidence, and created a proposal draft.`,
+        source: "TeamLeader1A / Browser Research Broker",
+        artifactIds: [built.hunt.id, built.proposal.id, publicResearch.run.id],
+        budgetEffect: "No spend. Public read-only research and local proposal drafting only.",
+        externalAction: false,
+        approvalRequired: false,
+        status: "success",
+        nextAction: "Review the Mission Brief proposal.",
+        createdAt: now,
+      };
       const nextPreSync: AppDataState = {
         ...current,
         opportunityHunts: [built.hunt, ...current.opportunityHunts],
@@ -4578,6 +4594,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         platformExecutionPackages: [...built.platformExecutionPackages, ...current.platformExecutionPackages],
         businessTasks: [...built.tasks, ...current.businessTasks],
         agentWorkSessions: [...built.sessions, ...current.agentWorkSessions],
+        executionReceipts: [commandReceipt, ...current.executionReceipts],
         teamLeaderChatMessages: [
           ...current.teamLeaderChatMessages,
           {
@@ -5153,8 +5170,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const preview = current.productPreviews.find((item) => item.id === previewId);
       if (!preview) throw new Error("Product preview not found.");
       const business = current.approvedBusinesses.find((item) => item.id === preview.businessId);
+      const blueprint = current.productBlueprints.find((item) => item.id === preview.blueprintId);
       const now = new Date().toISOString();
       const payloadPreview = buildPublishPayloadPreview(current, preview, now);
+      const receipt: ExecutionReceipt = {
+        id: id("execution-receipt"),
+        businessId: preview.businessId,
+        proposalId: preview.proposalId,
+        actionType: "product_local_draft_approved",
+        title: "Local product draft approved",
+        summary: `${blueprint?.name ?? business?.name ?? "Product draft"} was accepted as a local draft only. This unlocked the ability to request a publish approval, but did not publish anything.`,
+        source: "Product Studio",
+        artifactIds: [preview.id, payloadPreview.id],
+        budgetEffect: payloadPreview.budgetBoundary,
+        externalAction: false,
+        approvalRequired: false,
+        status: "success",
+        nextAction: "Prepare a publish approval only if the exact product preview looks right.",
+        createdAt: now,
+      };
       await persistOptimistic({
         ...current,
         productPreviews: current.productPreviews.map((item) =>
@@ -5186,6 +5220,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             : item,
         ),
         publishPayloadPreviews: [payloadPreview, ...current.publishPayloadPreviews.filter((item) => item.previewId !== previewId || item.status !== "frozen")],
+        executionReceipts: [receipt, ...current.executionReceipts],
         approvalGateStates: current.approvalGateStates.map((item) =>
           item.id === preview.approvalGateStateId
             ? {
@@ -5268,10 +5303,27 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         createdAt: now,
         updatedAt: now,
       };
+      const receipt: ExecutionReceipt = {
+        id: id("execution-receipt"),
+        businessId: preview.businessId,
+        proposalId: preview.proposalId,
+        actionType: "product_revision_requested",
+        title: "Product revision requested",
+        summary: reason,
+        source: "Product Studio",
+        artifactIds: [revisionId, ...taskIds],
+        budgetEffect: "No spend. Revision creates safe local tasks only.",
+        externalAction: false,
+        approvalRequired: false,
+        status: "pending",
+        nextAction: "Watch Tasks for AgentProduction and AgentWriter revision work.",
+        createdAt: now,
+      };
       await persistOptimistic({
         ...current,
         productRevisionRequests: [revision, ...current.productRevisionRequests],
         businessTasks: [...revisionTasks, ...current.businessTasks],
+        executionReceipts: [receipt, ...current.executionReceipts],
         productPreviews: current.productPreviews.map((item) =>
           item.id === previewId ? { ...item, status: "revision_requested", localDraftApproved: false, updatedAt: now } : item,
         ),
@@ -5393,6 +5445,22 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         publishPayloadPreviewId: payloadPreview.id,
         approvalGateStateId: preview.approvalGateStateId,
       };
+      const receipt: ExecutionReceipt = {
+        id: id("execution-receipt"),
+        businessId: preview.businessId,
+        proposalId: preview.proposalId,
+        actionType: "publish_approval_requested",
+        title: "Publish approval requested",
+        summary: `${payloadPreview.platform} has a frozen publish payload waiting in Approvals. No connector, login, form submission, or publishing action has executed.`,
+        source: "Product Studio approval gate",
+        artifactIds: [preview.id, payloadPreview.id, approvalId],
+        budgetEffect: payloadPreview.budgetBoundary,
+        externalAction: false,
+        approvalRequired: true,
+        status: "pending",
+        nextAction: "Open Approvals and inspect the exact publish payload.",
+        createdAt: now,
+      };
       await persistOptimistic({
         ...current,
         approvalRequests: [approval, ...current.approvalRequests],
@@ -5423,6 +5491,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         publishingPackages: current.publishingPackages.map((item) =>
           item.id === preview.publishingPackageId ? { ...item, status: "approval_requested", updatedAt: now } : item,
         ),
+        executionReceipts: [receipt, ...current.executionReceipts],
         activityLogs: [
           {
             id: id("log-product-publish-approval"),
@@ -5822,9 +5891,24 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         createdAt: new Date().toISOString(),
         mode: "local",
       };
+      const receipt: ExecutionReceipt = {
+        id: id("execution-receipt"),
+        actionType: "teamleader_local_reply",
+        title: "TeamLeader1A local reply receipt",
+        summary: `TeamLeader1A answered "${trimmed.slice(0, 120)}${trimmed.length > 120 ? "..." : ""}" from local Mission Control context only.`,
+        source: "TeamLeader Command",
+        artifactIds: [userChat.id, teamLeaderChat.id],
+        budgetEffect: "No spend.",
+        externalAction: false,
+        approvalRequired: false,
+        status: "success",
+        nextAction: "Send a work command if you want the agent team to create tasks, evidence, and a proposal.",
+        createdAt: now,
+      };
       await persistOptimistic({
         ...current,
         teamLeaderChatMessages: [...current.teamLeaderChatMessages, userChat, teamLeaderChat].slice(-120),
+        executionReceipts: [receipt, ...current.executionReceipts],
         activityLogs: [
           {
             id: id("log-teamleader-chat"),
@@ -7667,6 +7751,135 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     [exportObsidianNote, persistOptimistic],
   );
 
+  const exportProductProofPack = useCallback(
+    async (previewId: string) => {
+      const current = dataRef.current;
+      const preview = current.productPreviews.find((item) => item.id === previewId);
+      if (!preview) {
+        return { ok: false, mode: "preview" as const, message: "Product preview not found." };
+      }
+      const business = current.approvedBusinesses.find((item) => item.id === preview.businessId);
+      const blueprint = current.productBlueprints.find((item) => item.id === preview.blueprintId);
+      const proposal = current.businessProposals.find((item) => item.id === preview.proposalId);
+      const sections = current.productPreviewSections.filter((section) => preview.sectionIds.includes(section.id));
+      const files = current.localAssetFiles.filter((file) => preview.assetFileIds.includes(file.id));
+      const evidence = current.researchEvidence.filter((item) => proposal?.evidenceIds.includes(item.id));
+      const gate = current.approvalGateStates.find((item) => item.id === preview.approvalGateStateId);
+      const publishPayload = preview.publishPayloadPreviewId
+        ? current.publishPayloadPreviews.find((item) => item.id === preview.publishPayloadPreviewId)
+        : undefined;
+      const revisions = current.productRevisionRequests.filter((item) => item.previewId === preview.id);
+      const receipts = current.executionReceipts.filter((receipt) => receipt.businessId === preview.businessId || receipt.proposalId === preview.proposalId);
+      const now = new Date().toISOString();
+      const productName = blueprint?.name ?? business?.name ?? "Product Draft";
+      const note: ObsidianNote = {
+        id: `obsidian-product-proof-${previewId}`,
+        title: `${productName} Product Proof Pack`,
+        type: "sop",
+        folder: `OpenClaw/Businesses/${filenameSafe(business?.name ?? productName)}`,
+        linkedQuestId: business?.questId,
+        frontmatter: {
+          type: "product_proof_pack",
+          system: "openclaw",
+          business_id: preview.businessId,
+          proposal_id: preview.proposalId,
+          preview_id: preview.id,
+          product_status: preview.status,
+          local_draft_approved: preview.localDraftApproved,
+          pending_approval_id: gate?.approvalId ?? "",
+          external_actions: "blocked_until_exact_approval",
+          updated_at: now,
+        },
+        body: [
+          `# ${productName} Product Proof Pack`,
+          "",
+          "## Product Snapshot",
+          `Buyer: ${blueprint?.audience ?? proposal?.targetAudience ?? "Not specified"}`,
+          `Problem solved: ${blueprint?.problemSolved ?? "Not specified"}`,
+          `Deliverable: ${blueprint?.offerDeliverable ?? "Not specified"}`,
+          `Destination: ${blueprint?.intendedDestination ?? publishPayload?.platform ?? "Not specified"}`,
+          `Status: ${preview.status.replace(/_/g, " ")}`,
+          `Latest change: ${preview.updatedAt}`,
+          `Next action: ${gate?.actionLabel ?? blueprint?.nextProductionStep ?? "Review the product draft"}`,
+          "",
+          "## What Exists",
+          ...(files.length
+            ? files.map((file) => `- ${file.title} (${file.platform})`)
+            : sections.length
+              ? sections.map((section) => `- ${section.title}`)
+              : ["- No product files have been generated yet."]),
+          "",
+          "## What Is Missing",
+          ...(preview.missingItems.length ? preview.missingItems.map((item) => `- ${item}`) : ["- Nothing blocking the local draft review is recorded."]),
+          "",
+          "## Full Draft",
+          sections.find((section) => section.kind === "full_draft")?.content ?? "No full draft section found.",
+          "",
+          "## Platform Fields",
+          ...(sections.find((section) => section.kind === "platform_fields")?.fields
+            ? Object.entries(sections.find((section) => section.kind === "platform_fields")?.fields ?? {}).map(([key, value]) => `- ${key}: ${value}`)
+            : ["- No platform fields found."]),
+          "",
+          "## Product Files",
+          ...(files.length ? files.map((file) => `- ${file.title} (${file.platform}) -> ${file.intendedPath}`) : ["- No linked local product files found."]),
+          "",
+          "## Claims & Safety Check",
+          sections.find((section) => section.kind === "claims_safety")?.content ?? "No claims and safety section found.",
+          "",
+          "## Evidence And Citations",
+          ...(evidence.length ? evidence.map((item) => `- ${item.title}: ${item.url} - ${item.summary}`) : ["- No linked evidence records found."]),
+          "",
+          "## Budget Plan",
+          proposal
+            ? [
+                `Portfolio starting capital: ${money(proposal.budgetPlan.portfolioStartingCapital)}`,
+                `Remaining capital: ${money(proposal.budgetPlan.portfolioRemainingCapital)}`,
+                `Business budget cap: ${money(proposal.budgetPlan.businessBudgetCap)}`,
+                `Required spend: ${money(proposal.budgetPlan.requiredSpend)}`,
+                `Recommended spend: ${money(proposal.budgetPlan.recommendedSpend)}`,
+                `Zero-budget path: ${proposal.budgetPlan.zeroBudgetPath}`,
+              ].join("\n")
+            : "No proposal budget plan found.",
+          "",
+          "## Approval Boundary",
+          gate ? `${gate.label}: ${gate.reason}` : "No approval gate record found.",
+          publishPayload ? `Frozen publish payload: ${publishPayload.platform}. ${publishPayload.contentSummary}` : "No publish approval payload has been created yet.",
+          "Publishing, messaging, spending, launching, connector execution, login automation, form submission, and purchases remain locked until a separate exact approval exists.",
+          "",
+          "## Revision History",
+          ...(revisions.length ? revisions.map((item) => `- ${item.updatedAt}: ${item.reason}`) : ["- No revision requests yet."]),
+          "",
+          "## Execution Receipts",
+          ...(receipts.length ? receipts.slice(0, 12).map((receipt) => `- ${receipt.title}: ${receipt.summary} Budget effect: ${receipt.budgetEffect}`) : ["- No receipts yet."]),
+        ].join("\n"),
+      };
+      const receipt: ExecutionReceipt = {
+        id: id("execution-receipt"),
+        businessId: preview.businessId,
+        proposalId: preview.proposalId,
+        actionType: "product_proof_pack_export",
+        title: "Product Proof Pack prepared",
+        summary: `${productName} proof pack was assembled with draft content, platform fields, evidence, budget, safety checks, and approval boundary.`,
+        source: "Product Studio / Obsidian export",
+        artifactIds: [preview.id, note.id],
+        budgetEffect: "No spend. Local/export artifact only.",
+        externalAction: false,
+        approvalRequired: false,
+        status: "success",
+        nextAction: "Review the proof pack before requesting any external approval.",
+        createdAt: now,
+      };
+      const noteExists = current.obsidianNotes.some((item) => item.id === note.id);
+      await persistOptimistic({
+        ...current,
+        obsidianNotes: noteExists ? current.obsidianNotes.map((item) => (item.id === note.id ? note : item)) : [note, ...current.obsidianNotes],
+        executionReceipts: [receipt, ...current.executionReceipts],
+      });
+      return exportObsidianNote(note);
+    },
+    [exportObsidianNote, persistOptimistic],
+  );
+
   const exportRealPilotReport = useCallback(
     async (runId: string) => {
       const current = dataRef.current;
@@ -7781,6 +7994,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       runBusinessOperatingCycle,
       addBusinessMetricSnapshot,
       exportBusinessAssetPack,
+      exportProductProofPack,
       setOperatingAutopilotEnabled,
       updateBusinessProposalStatus,
       approveProductLocalDraft,
@@ -7855,6 +8069,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       runBusinessOperatingCycle,
       addBusinessMetricSnapshot,
       exportBusinessAssetPack,
+      exportProductProofPack,
       updateBusinessProposalStatus,
       approveProductLocalDraft,
       requestProductRevision,

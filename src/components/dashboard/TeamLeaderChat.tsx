@@ -154,7 +154,9 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
               </div>
               <p className="whitespace-pre-wrap text-sm leading-6 text-slate-200">{item.content}</p>
               {item.relatedApprovalId ? (
-                <p className="mt-3 text-xs text-amber-100">Approval: {item.relatedApprovalId}</p>
+                <a className="mt-3 inline-flex text-xs font-semibold text-amber-100 hover:text-amber-50" href="#/approvals">
+                  Open pending approval: {item.relatedApprovalId}
+                </a>
               ) : null}
                   {item.relatedOpportunityHuntId || item.relatedBusinessProposalId ? (
                 <a

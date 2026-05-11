@@ -6,6 +6,8 @@ import type { BusinessTaskStatus } from "../../types";
 import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { Badge } from "../ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
+import { ClarityBadge } from "../dashboard/ClarityBadge";
+import { ExecutionReceiptsPanel } from "../dashboard/ExecutionReceiptsPanel";
 import { Progress } from "../ui/progress";
 
 const groups: Array<{ status: BusinessTaskStatus; title: string; icon: React.ReactNode; tone: "teal" | "amber" | "red" | "emerald" | "slate" }> = [
@@ -22,21 +24,26 @@ function taskAgentName(agentId: string) {
 
 export function BusinessTasksBoard() {
   const { data } = useAppData();
-  const [selectedTaskId, setSelectedTaskId] = useState(data.businessTasks[0]?.id ?? "");
-  const selectedTask = data.businessTasks.find((task) => task.id === selectedTaskId) ?? data.businessTasks[0];
+  const [teamLeaderOnly, setTeamLeaderOnly] = useState(true);
+  const visibleTasks = useMemo(
+    () => teamLeaderOnly ? data.businessTasks.filter((task) => task.huntId || task.proposalId || task.businessId) : data.businessTasks,
+    [data.businessTasks, teamLeaderOnly],
+  );
+  const [selectedTaskId, setSelectedTaskId] = useState(visibleTasks[0]?.id ?? "");
+  const selectedTask = visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks[0];
   const taskCounts = useMemo(
-    () => Object.fromEntries(groups.map((group) => [group.status, data.businessTasks.filter((task) => task.status === group.status).length])),
-    [data.businessTasks],
+    () => Object.fromEntries(groups.map((group) => [group.status, visibleTasks.filter((task) => task.status === group.status).length])),
+    [visibleTasks],
   );
 
-  if (data.businessTasks.length === 0) {
+  if (visibleTasks.length === 0) {
     return (
       <Card>
         <CardContent className="p-6">
           <Badge tone="amber">Waiting for TeamLeader1A</Badge>
           <h3 className="mt-3 font-display text-2xl font-semibold text-stone-50">No live agent tasks yet</h3>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-300">
-            Send TeamLeader1A a command like “find me the best online business idea with zero budget.” Tasks will appear here automatically as agents start working.
+            Send TeamLeader1A a command like "find me the best online business idea with zero budget." Tasks will appear here automatically as agents start working.
           </p>
           <a className="mt-4 inline-flex text-sm font-semibold text-teal-100 hover:text-teal-50" href="#/">
             Go to Command
@@ -49,6 +56,19 @@ export function BusinessTasksBoard() {
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
       <div className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/10 bg-black/25 p-3">
+          <div>
+            <p className="text-sm font-semibold text-stone-100">Task view filter</p>
+            <p className="text-xs text-slate-400">Keep primary work focused on TeamLeader-created tasks and hide legacy/sample clutter.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setTeamLeaderOnly((value) => !value)}
+            className="rounded-md border border-teal-300/30 bg-teal-400/10 px-3 py-2 text-xs font-semibold text-teal-100 transition hover:bg-teal-400/15"
+          >
+            {teamLeaderOnly ? "TeamLeader-created only" : "Showing all tasks"}
+          </button>
+        </div>
         <div className="grid gap-3 md:grid-cols-5">
           {groups.map((group) => (
             <Card key={group.status}>
@@ -64,7 +84,7 @@ export function BusinessTasksBoard() {
         </div>
 
         {groups.map((group) => {
-          const tasks = data.businessTasks.filter((task) => task.status === group.status);
+          const tasks = visibleTasks.filter((task) => task.status === group.status);
           if (tasks.length === 0) return null;
           return (
             <Card key={group.status}>
@@ -156,9 +176,7 @@ export function BusinessTasksBoard() {
                 );
               })()}
               <div>
-                <Badge tone={selectedTask.approvalRequired ? "red" : "teal"}>
-                  {selectedTask.approvalRequired ? "requires approval" : "safe autonomous"}
-                </Badge>
+                <ClarityBadge label={selectedTask.approvalRequired ? "Pending Approval" : selectedTask.currentSource ? "Real Public Read" : "Local Draft"} />
                 <h3 className="mt-3 font-display text-xl font-semibold text-stone-50">{selectedTask.title}</h3>
                 <p className="mt-2 text-sm leading-6 text-slate-300">{selectedTask.expectedOutput}</p>
               </div>
@@ -184,6 +202,13 @@ export function BusinessTasksBoard() {
                   View proposal
                 </a>
               ) : null}
+              {selectedTask.approvalRequired ? (
+                <a className="inline-flex items-center gap-2 text-sm font-semibold text-amber-100 hover:text-amber-50" href="#/approvals">
+                  <ShieldAlert className="h-4 w-4" />
+                  Open pending approvals
+                </a>
+              ) : null}
+              <ExecutionReceiptsPanel businessId={selectedTask.businessId} limit={3} title="Task Receipts" />
             </>
           ) : null}
         </CardContent>
