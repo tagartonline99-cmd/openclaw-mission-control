@@ -50,6 +50,12 @@ import {
   openClawRuntimeStatus,
   offerClaimReviews,
   opportunityHunts,
+  researchSourcePacks,
+  publicResearchRuns,
+  publicResearchFetches,
+  evidenceCitations,
+  candidateBusinessIdeas,
+  candidateScorecards,
   productionAssets,
   productionPacks,
   productionDestinations,
@@ -95,6 +101,8 @@ import type {
   BusinessProposal,
   BusinessIdea,
   BusinessTask,
+  CandidateBusinessIdea,
+  CandidateScorecard,
   DashboardSummary,
   DecisionLog,
   DemandProofReport,
@@ -104,6 +112,7 @@ import type {
   CommandLedgerEntry,
   ContentItem,
   ContentInventoryItem,
+  EvidenceCitation,
   ExternalActionLock,
   ExternalPlatformRequirement,
   GuildOfficeStation,
@@ -133,11 +142,14 @@ import type {
   ProductionPack,
   ProductionDestination,
   PlatformExecutionPackage,
+  PublicResearchFetch,
+  PublicResearchRun,
   PublishingDiff,
   PublishingConnector,
   PortfolioScore,
   Quest,
   ResearchEvidence,
+  ResearchSourcePack,
   ResearchSourceCapture,
   RealPilotRun,
   SearchConsoleMetric,
@@ -190,6 +202,12 @@ export interface AppDataState {
   jobSchedules: JobSchedule[];
   jobRuns: JobRun[];
   opportunityHunts: OpportunityHunt[];
+  researchSourcePacks: ResearchSourcePack[];
+  publicResearchRuns: PublicResearchRun[];
+  publicResearchFetches: PublicResearchFetch[];
+  evidenceCitations: EvidenceCitation[];
+  candidateBusinessIdeas: CandidateBusinessIdea[];
+  candidateScorecards: CandidateScorecard[];
   businessProposals: BusinessProposal[];
   approvedBusinesses: ApprovedBusiness[];
   businessTasks: BusinessTask[];
@@ -281,6 +299,12 @@ type EntityKey =
   | "jobSchedules"
   | "jobRuns"
   | "opportunityHunts"
+  | "researchSourcePacks"
+  | "publicResearchRuns"
+  | "publicResearchFetches"
+  | "evidenceCitations"
+  | "candidateBusinessIdeas"
+  | "candidateScorecards"
   | "businessProposals"
   | "approvedBusinesses"
   | "businessTasks"
@@ -382,6 +406,12 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "jobSchedules", tableName: "job_schedules" },
   { stateKey: "jobRuns", tableName: "job_runs" },
   { stateKey: "opportunityHunts", tableName: "opportunity_hunts" },
+  { stateKey: "researchSourcePacks", tableName: "research_source_packs" },
+  { stateKey: "publicResearchRuns", tableName: "public_research_runs" },
+  { stateKey: "publicResearchFetches", tableName: "public_research_fetches" },
+  { stateKey: "evidenceCitations", tableName: "evidence_citations" },
+  { stateKey: "candidateBusinessIdeas", tableName: "candidate_business_ideas" },
+  { stateKey: "candidateScorecards", tableName: "candidate_scorecards" },
   { stateKey: "businessProposals", tableName: "business_proposals" },
   { stateKey: "approvedBusinesses", tableName: "approved_businesses" },
   { stateKey: "businessTasks", tableName: "business_tasks" },
@@ -467,6 +497,12 @@ export const initialAppDataState: AppDataState = {
   jobSchedules,
   jobRuns,
   opportunityHunts,
+  researchSourcePacks,
+  publicResearchRuns,
+  publicResearchFetches,
+  evidenceCitations,
+  candidateBusinessIdeas,
+  candidateScorecards,
   businessProposals,
   approvedBusinesses,
   businessTasks,
@@ -815,6 +851,18 @@ function normalizePhase6BState(state: AppDataState) {
   state.jobSchedules ??= cloneState(initialAppDataState).jobSchedules;
   state.jobRuns ??= cloneState(initialAppDataState).jobRuns;
   state.opportunityHunts ??= [];
+  state.researchSourcePacks = state.researchSourcePacks?.length ? state.researchSourcePacks : cloneState(initialAppDataState).researchSourcePacks;
+  state.publicResearchRuns ??= [];
+  state.publicResearchFetches ??= [];
+  state.evidenceCitations ??= [];
+  state.candidateBusinessIdeas ??= [];
+  state.candidateScorecards ??= [];
+  state.opportunityHunts = state.opportunityHunts.map((hunt) => ({
+    ...hunt,
+    depth: hunt.depth ?? state.userSettings.defaultOpportunityHuntDepth ?? "fast",
+    candidateIdeaIds: hunt.candidateIdeaIds ?? [],
+    evidenceCitationIds: hunt.evidenceCitationIds ?? [],
+  }));
   state.businessProposals ??= [];
   state.approvedBusinesses ??= [];
   state.businessTasks ??= [];
@@ -831,6 +879,8 @@ function normalizePhase6BState(state: AppDataState) {
     budgetPlan: proposal.budgetPlan ?? defaultBudgetPlan(state, proposal.id),
     externalPlatformRequirementIds: proposal.externalPlatformRequirementIds ?? [],
     platformExecutionPackageIds: proposal.platformExecutionPackageIds ?? [],
+    candidateIdeaIds: proposal.candidateIdeaIds ?? [],
+    evidenceCitationIds: proposal.evidenceCitationIds ?? [],
     readinessChecklist: proposal.readinessChecklist ?? [
       { label: "Budget", status: "passed", detail: "Zero-spend path is available." },
       { label: "Evidence", status: proposal.evidenceIds?.length ? "passed" : "missing", detail: "Demand evidence is required before launch." },
@@ -857,6 +907,7 @@ function normalizePhase6BState(state: AppDataState) {
   state.portfolioScores ??= cloneState(initialAppDataState).portfolioScores;
   state.externalActionLock ??= cloneState(initialAppDataState).externalActionLock;
   state.openClawMcpServers ??= cloneState(initialAppDataState).openClawMcpServers;
+  state.userSettings.defaultOpportunityHuntDepth ??= "fast";
   state.approvalDecisionRecords ??= [];
   state.allowlistEntries = safetyPolicyService.migrateSettingsAllowlists(state.userSettings, state.allowlistEntries ?? []);
   for (const request of state.approvalRequests) {

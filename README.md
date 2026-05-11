@@ -31,6 +31,7 @@ This build covers the local end-to-end MVP:
 - Phase 11B TeamLeader Command Center release: TeamLeader prompts create live opportunity hunts, visible agent tasks, animated Guild Office stations, Business Proposal Mission Briefs, approved business dashboards, production destination clarity, and simpler approval lanes.
 - Phase 11B command delegation fix: normal TeamLeader work commands now create visible agent tasks, while status/help questions stay as local replies.
 - Phase 11C Budget-aware platform readiness: proposals include hard budget plans, platform/account requirements, Fiverr-style local gig packages, readiness checks, and separate publish approvals.
+- Phase 11D Public Research Opportunity Engine: TeamLeader opportunity hunts use Quick/Fast/Deep curated public source packs, real desktop GET-only fetch receipts, Top 3 + Winner candidate scorecards, evidence citations, and source-backed business proposals without approval spam.
 - Playwright QA smoke coverage for Dashboard, TeamLeader1A Chat, Mission Briefs, Approvals, OpenClaw System, Settings, and updater marker checks.
 - Free local OpenClaw MCP Manager for scoped filesystem memory, durable local memory, and disabled approval-gated fetch configuration; browser/Puppeteer MCP remains deferred.
 - Native Tauri plugin wiring for SQL, filesystem, dialog, and opener.
@@ -47,7 +48,8 @@ Guardrails in this app:
 - Real local OpenClaw actions are limited to allowlisted commands and require one approval per risky action.
 - Structured allowlists are the source of truth for approved research domains, channel targets, and local OpenClaw capabilities.
 - Blocked URL/channel attempts are stored as local audit records and never execute.
-- Browser research/scraping is limited to explicit approved URLs, no login, no form submission, no PII harvesting, no terms bypass, and no uncontrolled crawling.
+- TeamLeader opportunity hunts may run safe public read-only research from curated source packs without per-URL approval. They use GET-only public fetches, rate limits, private-host blocking, and no login, form submission, PII harvesting, terms bypass, or uncontrolled crawling.
+- User-entered URL research remains approval-gated and limited to explicit approved URLs.
 - Channel messaging drafts are visible first; dry-run is the default, broadcasts and batch targets are blocked, and real sends require explicit approval.
 
 Approvals are durable local records with safety evaluations and decision timelines. Approved OpenClaw actions execute once through the desktop bridge, with command text, stdout, stderr, exit code, events, and activity logs persisted to SQLite. Phase 6A-10 workflows remain local planning, evidence, analytics, and asset-preparation workflows. Spending, publishing, payments, bulk outreach, browser login flows, and external business automation remain disabled.
@@ -136,7 +138,7 @@ npm.cmd run tauri build
 npm.cmd run release:prepare-updater
 ```
 
-Create GitHub release `v0.1.10` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
+Create GitHub release `v0.1.11` or later and upload every file from `release-artifacts\vVERSION`. The updater manifest is `latest.json`.
 
 For a controlled local dev launch that reuses an already-running Vite server, use:
 
@@ -167,6 +169,7 @@ Important service boundaries:
 - `approvalService`: exposes approval request data and safe local decision previews.
 - `obsidianService`: renders Markdown and path previews.
 - `openclawService`: hybrid adapter for runtime status, profile sync, approved real local actions in Tauri, and safe browser fallback.
+- Public research engine: curated source packs, desktop GET-only fetch receipts, candidate scorecards, evidence citations, and Top 3 + Winner proposal synthesis live in the app data layer and persist through SQLite.
 - `sqliteService`: schema plan and persistence status metadata.
 
 ## Playwright QA

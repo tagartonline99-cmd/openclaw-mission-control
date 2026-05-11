@@ -7,12 +7,14 @@ import { Select } from "../ui/select";
 import { formatCurrency, formatDateTime } from "../../utils/formatting";
 import { cn } from "../../utils/cn";
 import { useAppData } from "../../app/AppDataContext";
+import type { OpportunityHuntDepth } from "../../types";
 
 export function TeamLeaderChat({ full = false }: { full?: boolean }) {
-  const { data, sendTeamLeaderChatMessage } = useAppData();
+  const { data, sendTeamLeaderChatMessage, updateSettings } = useAppData();
   const { approvalRequests, businessProposals, businessTasks, dashboardSummary, opportunityHunts, quests, teamLeaderChatMessages } = data;
   const [message, setMessage] = useState("");
   const [questId, setQuestId] = useState(quests[0]?.id ?? "");
+  const [depth, setDepth] = useState<OpportunityHuntDepth>(data.userSettings.defaultOpportunityHuntDepth ?? "fast");
   const [isSending, setIsSending] = useState(false);
   const riskyPending = approvalRequests.filter((request) => request.status === "pending").length;
   const latestHunt = opportunityHunts[0];
@@ -34,7 +36,7 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
     if (!trimmed || isSending) return;
     setIsSending(true);
     try {
-      await sendTeamLeaderChatMessage(trimmed, { questId });
+      await sendTeamLeaderChatMessage(trimmed, { questId, opportunityHuntDepth: depth });
       setMessage("");
     } finally {
       setIsSending(false);
@@ -180,6 +182,13 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
             </div>
             <p className="mt-1 text-2xl font-semibold text-stone-50">{opportunityHunts.length}</p>
           </div>
+          <div className="rounded-lg border border-amber-300/20 bg-amber-400/8 p-3">
+            <div className="flex items-center gap-2 text-sm font-semibold text-amber-100">
+              <Sparkles className="h-4 w-4" />
+              Research depth
+            </div>
+            <p className="mt-1 text-2xl font-semibold capitalize text-stone-50">{depth}</p>
+          </div>
           <div className="rounded-lg border border-red-300/20 bg-red-500/8 p-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-red-100">
               <ShieldAlert className="h-4 w-4" />
@@ -194,6 +203,18 @@ export function TeamLeaderChat({ full = false }: { full?: boolean }) {
             {quests.map((quest) => (
               <option key={quest.id} value={quest.id}>{quest.title}</option>
             ))}
+          </Select>
+          <Select
+            value={depth}
+            onChange={(event) => {
+              const nextDepth = event.target.value as OpportunityHuntDepth;
+              setDepth(nextDepth);
+              void updateSettings({ ...data.userSettings, defaultOpportunityHuntDepth: nextDepth });
+            }}
+          >
+            <option value="quick">Quick public research</option>
+            <option value="fast">Fast public research</option>
+            <option value="deep">Deep public research</option>
           </Select>
           <textarea
             value={message}

@@ -45,6 +45,17 @@ export function MissionBriefWorkbench() {
   const selectedProposalContent = selectedProposal ? data.contentInventoryItems.filter((item) => selectedProposal.contentInventoryIds.includes(item.id)) : [];
   const selectedPlatformRequirements = selectedProposal ? data.externalPlatformRequirements.filter((item) => selectedProposal.externalPlatformRequirementIds.includes(item.id)) : [];
   const selectedPlatformPackages = selectedProposal ? data.platformExecutionPackages.filter((item) => selectedProposal.platformExecutionPackageIds.includes(item.id)) : [];
+  const selectedCandidates = selectedProposal?.candidateIdeaIds?.length
+    ? data.candidateBusinessIdeas
+        .filter((item) => selectedProposal.candidateIdeaIds?.includes(item.id))
+        .sort((a, b) => a.rank - b.rank)
+    : [];
+  const selectedScorecards = selectedCandidates.map((candidate) => data.candidateScorecards.find((scorecard) => scorecard.id === candidate.scorecardId));
+  const selectedCitations = selectedProposal?.evidenceCitationIds?.length
+    ? data.evidenceCitations.filter((item) => selectedProposal.evidenceCitationIds?.includes(item.id))
+    : [];
+  const selectedResearchRun = selectedProposal?.publicResearchRunId ? data.publicResearchRuns.find((run) => run.id === selectedProposal.publicResearchRunId) : undefined;
+  const selectedResearchFetches = selectedResearchRun ? data.publicResearchFetches.filter((fetch) => selectedResearchRun.fetchIds.includes(fetch.id)) : [];
   const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
   const firstRun = data.missionRuns[0];
   const firstDraft = data.missionDrafts[0];
@@ -183,6 +194,43 @@ export function MissionBriefWorkbench() {
                 <p className="text-xs font-semibold uppercase text-slate-500">TeamLeader1A recommendation</p>
                 <p className="mt-2 text-sm leading-6 text-stone-100">{selectedProposal.teamLeaderRecommendation}</p>
               </div>
+              {selectedCandidates.length > 0 ? (
+                <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase text-teal-100">Top 3 + Winner</p>
+                      <p className="mt-1 text-sm text-slate-300">
+                        {selectedResearchRun ? `${selectedResearchRun.depth} public research / ${selectedResearchFetches.filter((fetch) => fetch.status === "fetched").length}/${selectedResearchFetches.length} sources fetched` : "Candidate scorecards"}
+                      </p>
+                    </div>
+                    {selectedResearchRun ? <Badge tone="teal">{selectedResearchRun.executionReceipt}</Badge> : null}
+                  </div>
+                  <div className="mt-4 grid gap-3 xl:grid-cols-3">
+                    {selectedCandidates.map((candidate, index) => {
+                      const scorecard = selectedScorecards[index];
+                      return (
+                        <div key={candidate.id} className={`rounded-md border p-3 ${candidate.status === "winner" ? "border-amber-300/35 bg-amber-400/10" : "border-white/10 bg-black/25"}`}>
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="text-sm font-semibold text-stone-100">#{candidate.rank} {candidate.title}</p>
+                            <Badge tone={candidate.status === "winner" ? "amber" : "slate"}>{candidate.status === "winner" ? "winner" : `${scorecard?.totalScore ?? 0}/100`}</Badge>
+                          </div>
+                          <p className="mt-2 text-xs leading-5 text-slate-400">{candidate.summary}</p>
+                          <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300">
+                            <span>Demand {scorecard?.demandScore ?? 0}</span>
+                            <span>SEO {scorecard?.seoScore ?? 0}</span>
+                            <span>Zero budget {scorecard?.zeroBudgetScore ?? 0}</span>
+                            <span>Evidence {scorecard?.evidenceScore ?? 0}</span>
+                          </div>
+                          <p className="mt-3 text-xs font-semibold uppercase text-slate-500">Why {candidate.status === "winner" ? "this won" : "it lost"}</p>
+                          <p className="mt-1 text-xs leading-5 text-slate-300">
+                            {candidate.status === "winner" ? candidate.whyItMightWin.join(" ") : candidate.whyItMightLose.join(" ")}
+                          </p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : null}
               <div className="grid gap-4 xl:grid-cols-3">
                 <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/8 p-4">
                   <p className="flex items-center gap-2 text-xs font-semibold uppercase text-emerald-100">
@@ -252,6 +300,16 @@ export function MissionBriefWorkbench() {
                 <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-4">
                   <p className="text-xs font-semibold uppercase text-slate-500">Evidence and links</p>
                   <div className="mt-3 space-y-3">
+                    {selectedCitations.map((item) => (
+                      <div key={item.id} className="rounded-md border border-teal-300/15 bg-teal-400/8 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-semibold text-stone-100">{item.title}</p>
+                          <Badge tone={item.confidence >= 70 ? "teal" : "amber"}>{item.confidence}/100 confidence</Badge>
+                        </div>
+                        <p className="mt-1 text-sm leading-6 text-slate-300">{item.summary}</p>
+                        <a className="mt-2 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50" href={item.url}>{item.url}</a>
+                      </div>
+                    ))}
                     {selectedProposalEvidence.map((item) => (
                       <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <p className="font-semibold text-stone-100">{item.title}</p>

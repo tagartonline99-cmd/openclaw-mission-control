@@ -24,6 +24,8 @@ import type {
   BusinessIdea,
   BusinessProposal,
   BusinessTask,
+  CandidateBusinessIdea,
+  CandidateScorecard,
   CommandLedgerEntry,
   ContentInventoryItem,
   ContentItem,
@@ -33,6 +35,7 @@ import type {
   ExperimentAnalysis,
   ExternalActionLockMode,
   ExternalPlatformRequirement,
+  EvidenceCitation,
   JobRun,
   GuildOfficeStation,
   MarketIntelligenceReport,
@@ -48,6 +51,7 @@ import type {
   MissionRun,
   MissionTask,
   OpportunityHunt,
+  OpportunityHuntDepth,
   OpenClawApprovalPayload,
   OfferClaimReview,
   OpenClawCommand,
@@ -57,6 +61,8 @@ import type {
   ProductionPack,
   ProductionDestination,
   PlatformExecutionPackage,
+  PublicResearchFetch,
+  PublicResearchRun,
   PublishingDiff,
   Quest,
   ResearchEvidence,
@@ -83,6 +89,7 @@ import {
   openclawService,
   type ChannelMessageInput,
   type OpenClawBridgeResult,
+  type PublicResearchFetchResult,
   type UrlResearchInput,
 } from "../services/openclawService";
 
@@ -144,8 +151,9 @@ type AppDataContextValue = {
   installOpenClawMcpLocalKit: () => Promise<void>;
   requestGatewayStart: () => Promise<void>;
   requestTeamLeaderTurn: (message: string) => Promise<void>;
-  sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string }) => Promise<void>;
-  createOpportunityHuntFromMessage: (message: string) => Promise<string>;
+  sendTeamLeaderChatMessage: (message: string, options?: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string; opportunityHuntDepth?: OpportunityHuntDepth }) => Promise<void>;
+  createOpportunityHuntFromMessage: (message: string, depth?: OpportunityHuntDepth) => Promise<string>;
+  cleanupAcceptanceTestData: () => Promise<void>;
   approveBusinessProposal: (proposalId: string) => Promise<string>;
   updateBusinessProposalStatus: (proposalId: string, status: BusinessProposal["status"]) => Promise<void>;
   preparePlatformPublishApproval: (packageId: string) => Promise<string>;
@@ -425,6 +433,257 @@ function isFiverrPrompt(message: string) {
   return lower.includes("fiverr") || lower.includes("gig") || lower.includes("marketplace service");
 }
 
+function depthFetchLimit(depth: OpportunityHuntDepth) {
+  if (depth === "quick") return 4;
+  if (depth === "deep") return 10;
+  return 7;
+}
+
+function depthLabel(depth: OpportunityHuntDepth) {
+  if (depth === "quick") return "Quick";
+  if (depth === "deep") return "Deep";
+  return "Fast";
+}
+
+function sourceTypeFromPack(packCategory: string): ResearchEvidence["sourceType"] {
+  if (packCategory === "marketplace") return "marketplace";
+  if (packCategory === "community") return "forum";
+  if (packCategory === "production" || packCategory === "platform") return "directory";
+  return "public_web";
+}
+
+function safeFetchSummary(result: PublicResearchFetchResult, fallbackTitle: string) {
+  if (result.ok) {
+    return result.excerpt?.slice(0, 240) || `Fetched ${result.title || fallbackTitle} as a public read-only source.`;
+  }
+  return `Fetch failed safely: ${result.error || "source unavailable"}. Source remains a candidate citation, not proof.`;
+}
+
+async function buildPublicResearchBundle(current: AppDataState, huntId: string, proposalId: string, message: string, depth: OpportunityHuntDepth) {
+  const now = new Date().toISOString();
+  const fiverrMode = isFiverrPrompt(message);
+  const promptLower = message.toLowerCase();
+  const runId = id("public-research-run");
+  const enabledPacks = current.researchSourcePacks.filter((pack) => pack.enabled);
+  const prioritizedPacks = enabledPacks
+    .map((pack) => {
+      let score = 0;
+      if (pack.id.includes("ai-workflows")) score += promptLower.includes("ai") || promptLower.includes("workflow") || promptLower.includes("zero budget") ? 4 : 2;
+      if (pack.id.includes("marketplaces")) score += fiverrMode || promptLower.includes("service") || promptLower.includes("template") ? 4 : 1;
+      if (pack.id.includes("zero-budget-production")) score += promptLower.includes("zero budget") || promptLower.includes("free") ? 4 : 2;
+      if (pack.id.includes("local-services")) score += promptLower.includes("lead") || promptLower.includes("local") ? 4 : 1;
+      return { pack, score };
+    })
+    .sort((a, b) => b.score - a.score || a.pack.name.localeCompare(b.pack.name))
+    .map((item) => item.pack);
+  const sourcePacks = prioritizedPacks.slice(0, depth === "quick" ? 2 : depth === "deep" ? 4 : 3);
+  const urls = sourcePacks.flatMap((pack) => pack.urls.map((source) => ({ pack, source }))).slice(0, depthFetchLimit(depth));
+  const fetches: PublicResearchFetch[] = [];
+  const citations: EvidenceCitation[] = [];
+
+  for (const { pack, source } of urls) {
+    const fetchId = id("public-research-fetch");
+    const startedAt = new Date().toISOString();
+    let result: PublicResearchFetchResult;
+    try {
+      result = await openclawService.fetchPublicResearch({ url: source.url, sourcePackId: pack.id, timeoutSeconds: depth === "quick" ? 8 : 12 });
+    } catch (error) {
+      result = {
+        ok: false,
+        url: source.url,
+        sourcePackId: pack.id,
+        statusCode: null,
+        title: null,
+        excerpt: null,
+        contentType: null,
+        error: error instanceof Error ? error.message : String(error),
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+    const completedAt = new Date().toISOString();
+    fetches.push({
+      id: fetchId,
+      runId,
+      sourcePackId: pack.id,
+      url: source.url,
+      status: result.ok ? "fetched" : "failed",
+      httpStatus: result.statusCode ?? undefined,
+      title: result.title ?? source.title,
+      excerpt: result.excerpt ?? undefined,
+      error: result.error ?? undefined,
+      startedAt,
+      completedAt,
+    });
+    citations.push({
+      id: id("evidence-citation"),
+      huntId,
+      researchRunId: runId,
+      sourcePackId: pack.id,
+      fetchId,
+      title: result.title || source.title,
+      url: source.url,
+      sourceType: source.sourceType || sourceTypeFromPack(pack.category),
+      summary: safeFetchSummary(result, source.title),
+      excerpt: result.excerpt ?? undefined,
+      confidence: result.ok ? 72 : 45,
+      capturedAt: completedAt,
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, depth === "deep" ? 450 : 250));
+  }
+
+  const candidateBlueprints = fiverrMode
+    ? [
+        {
+          key: "fiverr-ai-workflow-gig",
+          title: "Fiverr AI Workflow Gig For Freelancers",
+          model: "Online services" as const,
+          audience: "Freelancers and solo service providers who want practical AI workflow setup help.",
+          summary: "A zero-budget Fiverr service package drafted locally first, with manual login and a separate publish approval.",
+          zeroBudgetPath: "Draft gig fields, scope, FAQ, and policy checks locally; no Fiverr publishing until a separate exact approval.",
+          platformNeeds: ["Fiverr account", "Manual user login", "Separate publish approval"],
+          scores: [78, 68, 96, 76, 58, 70],
+        },
+        {
+          key: "ai-workflow-kit",
+          title: "Practical AI Workflow Template Kit",
+          model: "Templates" as const,
+          audience: "Freelancers who want repeatable client-work templates.",
+          summary: "A local template and checklist pack validated through content and free public evidence before monetization.",
+          zeroBudgetPath: "Create template samples and a local landing page first; publish only after approval.",
+          platformNeeds: ["Static site or Obsidian export", "Optional newsletter later"],
+          scores: [75, 72, 98, 84, 82, 72],
+        },
+        {
+          key: "local-service-leadgen",
+          title: "Local Service Lead-Gen Research Site",
+          model: "Lead generation" as const,
+          audience: "Local service businesses with fragmented online discovery.",
+          summary: "A no-spend research/content site that validates one niche before any outreach or paid data collection.",
+          zeroBudgetPath: "Prepare local directory content and validation criteria; no outreach or scraping contact lists.",
+          platformNeeds: ["Static website draft", "Manual compliance review"],
+          scores: [70, 66, 88, 64, 70, 62],
+        },
+      ]
+    : [
+        {
+          key: "ai-workflow-kit",
+          title: "Practical AI Workflow Template Kit",
+          model: "Templates" as const,
+          audience: "Freelancers and solo operators who want repeatable client-work systems.",
+          summary: "A zero-budget template/content business around AI-assisted client onboarding, meeting notes, proposals, and delivery checklists.",
+          zeroBudgetPath: "Create local template samples, publish only after approval, and measure signup/save intent before spend.",
+          platformNeeds: ["Static site draft", "Newsletter draft", "Obsidian export"],
+          scores: [82, 74, 98, 86, 82, 76],
+        },
+        {
+          key: "local-service-leadgen",
+          title: "Local Service Lead-Gen Validation Site",
+          model: "Lead generation" as const,
+          audience: "Home-service providers and searchers in one narrow local niche.",
+          summary: "A local-first SEO research site that tests commercial intent without buying ads or contacting businesses.",
+          zeroBudgetPath: "Draft local pages and evidence map; no scraping contact lists, outreach, or paid ads.",
+          platformNeeds: ["Static site draft", "Compliance checklist"],
+          scores: [76, 69, 90, 68, 72, 68],
+        },
+        {
+          key: "notion-template-pack",
+          title: "Client Operations Notion Template Pack",
+          model: "Templates" as const,
+          audience: "Freelancers who need simple project intake and client delivery systems.",
+          summary: "A no-spend digital template pack with local previews and marketplace requirements held behind approval.",
+          zeroBudgetPath: "Build local template screenshots/copy first; marketplace listing requires separate approval.",
+          platformNeeds: ["Template files", "Optional marketplace account later"],
+          scores: [72, 71, 94, 80, 74, 66],
+        },
+      ];
+
+  const citationIdsByHint = new Map<string, string[]>();
+  for (const { pack, source } of urls) {
+    const citation = citations.find((item) => item.url === source.url && item.sourcePackId === pack.id);
+    if (!citation) continue;
+    const hint = source.candidateHint ?? "ai-workflow-kit";
+    citationIdsByHint.set(hint, [...(citationIdsByHint.get(hint) ?? []), citation.id]);
+  }
+
+  const scorecards: CandidateScorecard[] = [];
+  const candidates: CandidateBusinessIdea[] = candidateBlueprints.map((candidate, index) => {
+    const candidateId = id("candidate-business");
+    const scorecardId = id("candidate-scorecard");
+    const directCitationIds = citationIdsByHint.get(candidate.key) ?? [];
+    const fallbackCitationIds = citations.slice(0, 3).map((item) => item.id);
+    const evidenceCitationIds = (directCitationIds.length ? directCitationIds : fallbackCitationIds).slice(0, depth === "quick" ? 2 : 4);
+    const [demandScore, seoScore, zeroBudgetScore, productionScore, platformRiskRaw, evidenceScore] = candidate.scores;
+    const fetchedBonus = citations.filter((item) => evidenceCitationIds.includes(item.id) && item.confidence >= 70).length * 2;
+    const totalScore = clampScore((demandScore + seoScore + zeroBudgetScore + productionScore + (100 - platformRiskRaw) + evidenceScore) / 6 + fetchedBonus);
+    scorecards.push({
+      id: scorecardId,
+      huntId,
+      candidateId,
+      demandScore,
+      seoScore,
+      zeroBudgetScore,
+      productionScore,
+      platformRiskScore: platformRiskRaw,
+      evidenceScore: clampScore(evidenceScore + fetchedBonus),
+      totalScore,
+      notes: [
+        `${depthLabel(depth)} research used ${sourcePacks.length} curated source packs.`,
+        "Scores are directional and require validation before launch.",
+        candidate.platformNeeds.length ? `Platform needs: ${candidate.platformNeeds.join(", ")}.` : "No external platform needed for local draft.",
+      ],
+    });
+    return {
+      id: candidateId,
+      huntId,
+      researchRunId: runId,
+      rank: index + 1,
+      status: "candidate" as const,
+      title: candidate.title,
+      businessModel: candidate.model,
+      audience: candidate.audience,
+      summary: candidate.summary,
+      zeroBudgetPath: candidate.zeroBudgetPath,
+      platformNeeds: candidate.platformNeeds,
+      evidenceCitationIds,
+      scorecardId,
+      whyItMightWin: [
+        `Zero-budget fit scored ${zeroBudgetScore}/100.`,
+        `Production path scored ${productionScore}/100.`,
+        "Can be reviewed locally before any public action.",
+      ],
+      whyItMightLose: [
+        platformRiskRaw >= 70 ? "Platform or compliance risk is meaningful." : "Needs sharper positioning to stand out.",
+        "Evidence is directional until a real validation test runs.",
+      ],
+      nextValidationStep: "Prepare local assets and define one no-spend validation test before any external launch.",
+      createdAt: now,
+      updatedAt: now,
+    };
+  });
+
+  const ranked = [...candidates].sort((a, b) => {
+    const aScore = scorecards.find((item) => item.candidateId === a.id)?.totalScore ?? 0;
+    const bScore = scorecards.find((item) => item.candidateId === b.id)?.totalScore ?? 0;
+    return bScore - aScore;
+  });
+  const rankedCandidates = ranked.map((candidate, index) => ({ ...candidate, rank: index + 1, status: index === 0 ? "winner" as const : "candidate" as const }));
+  const run: PublicResearchRun = {
+    id: runId,
+    huntId,
+    depth,
+    status: fetches.some((item) => item.status === "fetched") ? "completed" : "failed",
+    sourcePackIds: sourcePacks.map((pack) => pack.id),
+    fetchIds: fetches.map((item) => item.id),
+    evidenceCitationIds: citations.map((item) => item.id),
+    candidateIdeaIds: rankedCandidates.map((candidate) => candidate.id),
+    startedAt: now,
+    completedAt: new Date().toISOString(),
+    summary: `Public research ${fetches.some((item) => item.status === "fetched") ? "completed" : "failed safely"} with ${fetches.filter((item) => item.status === "fetched").length}/${fetches.length} sources fetched.`,
+    executionReceipt: `safe-public-research:${runId}:GET-only:${depth}:${fetches.length}-urls:no-login:no-forms:no-spend:no-publish`,
+  };
+  return { run, fetches, citations, candidates: rankedCandidates, scorecards };
+}
+
 function buildBudgetPlan(current: AppDataState, proposalId: string, options: { requiredSpend: number; recommendedSpend: number; businessBudgetCap: number; zeroBudgetPath: string; assumptions: string[] }) {
   const starting = current.dashboardSummary.totalStartingCapital || current.userSettings.totalStartingCapital || 0;
   const remaining = current.dashboardSummary.remainingCapital ?? Math.max(starting - current.dashboardSummary.allocatedCapital, 0);
@@ -512,11 +771,24 @@ function buildProposalMarkdown(proposal: BusinessProposal, evidence: ResearchEvi
   ].join("\n");
 }
 
-function buildOpportunityHuntState(current: AppDataState, message: string, chatMessageId: string) {
+function buildOpportunityHuntState(
+  current: AppDataState,
+  message: string,
+  chatMessageId: string,
+  depth: OpportunityHuntDepth,
+  ids?: { huntId: string; proposalId: string },
+  publicResearch?: {
+    run: PublicResearchRun;
+    fetches: PublicResearchFetch[];
+    citations: EvidenceCitation[];
+    candidates: CandidateBusinessIdea[];
+    scorecards: CandidateScorecard[];
+  },
+) {
   const now = new Date().toISOString();
   const fiverrMode = isFiverrPrompt(message);
-  const huntId = id("opportunity-hunt");
-  const proposalId = id("business-proposal");
+  const huntId = ids?.huntId ?? id("opportunity-hunt");
+  const proposalId = ids?.proposalId ?? id("business-proposal");
   const destinationStaticId = id("production-destination");
   const destinationNewsletterId = id("production-destination");
   const destinationFiverrId = id("production-destination");
@@ -525,6 +797,20 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
   const contentLandingId = id("content-inventory");
   const contentArticleId = id("content-inventory");
   const contentFiverrGigId = id("content-inventory");
+  const winningCandidate = publicResearch?.candidates.find((candidate) => candidate.status === "winner") ?? publicResearch?.candidates[0];
+  const winningScorecard = winningCandidate ? publicResearch?.scorecards.find((scorecard) => scorecard.candidateId === winningCandidate.id) : undefined;
+  const citationEvidence: ResearchEvidence[] = (publicResearch?.citations ?? []).slice(0, 8).map((citation) => ({
+    id: id("research-evidence"),
+    huntId,
+    proposalId,
+    agentId: "agent-researcher",
+    title: citation.title,
+    url: citation.url,
+    sourceType: citation.sourceType,
+    summary: citation.summary,
+    confidence: citation.confidence,
+    capturedAt: citation.capturedAt,
+  }));
   const budgetPlan = buildBudgetPlan(current, proposalId, {
     requiredSpend: 0,
     recommendedSpend: 0,
@@ -538,7 +824,7 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
       fiverrMode ? "Fiverr account login is manual; Mission Control does not store credentials." : "External publishing destinations remain draft-only until approved.",
     ],
   });
-  const evidence: ResearchEvidence[] = [
+  const fallbackEvidence: ResearchEvidence[] = [
     {
       id: id("research-evidence"),
       huntId,
@@ -592,6 +878,7 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
         ]
       : []),
   ];
+  const evidence: ResearchEvidence[] = citationEvidence.length ? citationEvidence : fallbackEvidence;
   const destinations: ProductionDestination[] = [
     {
       id: destinationStaticId,
@@ -750,6 +1037,7 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
         },
       ]
     : [];
+  const firstFetchedSource = publicResearch?.fetches.find((fetch) => fetch.status === "fetched") ?? publicResearch?.fetches[0];
   const tasks: BusinessTask[] = taskBlueprints.map((task, index) => ({
     id: id("business-task"),
     huntId,
@@ -760,7 +1048,7 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
     status: index < 3 ? "now_working" : "queued",
     progress: index < 3 ? 18 + index * 8 : 0,
     currentArtifact: task.artifact,
-    currentSource: task.source,
+    currentSource: index < 2 && firstFetchedSource ? firstFetchedSource.url : task.source,
     dependency: index === 0 ? undefined : taskBlueprints[index - 1].title,
     expectedOutput: task.expectedOutput,
     approvalRequired: false,
@@ -775,15 +1063,15 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
   const proposal: BusinessProposal = {
     id: proposalId,
     huntId,
-    title: fiverrMode ? "Business Proposal: Fiverr AI Workflow Gig For Freelancers" : "Business Proposal: Practical AI Workflow Kit for Freelancers",
+    title: fiverrMode ? "Business Proposal: Fiverr AI Workflow Gig For Freelancers" : `Business Proposal: ${winningCandidate?.title ?? "Practical AI Workflow Kit for Freelancers"}`,
     recommendedIdea: fiverrMode
       ? "A zero-budget Fiverr service gig that sells a practical AI workflow checklist/setup package for freelancers, drafted locally first and published only after a separate exact Fiverr approval."
-      : "A zero-budget content and template business that teaches freelancers practical AI workflows through a static site, newsletter drafts, and downloadable checklist templates.",
+      : winningCandidate?.summary ?? "A zero-budget content and template business that teaches freelancers practical AI workflows through a static site, newsletter drafts, and downloadable checklist templates.",
     summary: fiverrMode
       ? "The team is validating a Fiverr gig concept with local gig copy, package scope, policy checks, and marketplace requirements before any login, form submission, publishing, messaging, or spend."
-      : "The team is validating a practical AI workflow kit for freelancers because it can be tested with content, templates, and email signup intent before spending money.",
-    businessModel: fiverrMode ? "Online services" : "Digital products",
-    targetAudience: fiverrMode ? "Freelancers and solo service providers who want help turning repeated client work into practical AI-assisted workflows." : "Freelancers, consultants, and solo service providers who want practical AI workflows for client work.",
+      : `TeamLeader1A compared the top 3 zero-budget candidates and selected "${winningCandidate?.title ?? "Practical AI Workflow Kit"}" because it had the strongest mix of demand, no-spend feasibility, and local production readiness.`,
+    businessModel: fiverrMode ? "Online services" : winningCandidate?.businessModel ?? "Digital products",
+    targetAudience: fiverrMode ? "Freelancers and solo service providers who want help turning repeated client work into practical AI-assisted workflows." : winningCandidate?.audience ?? "Freelancers, consultants, and solo service providers who want practical AI workflows for client work.",
     whyMightWork: fiverrMode
       ? [
           "The gig can be drafted and reviewed with zero external spend.",
@@ -791,9 +1079,8 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
           "The offer is service-based, so the first validation target can be profile views, saves, or messages rather than paid ads.",
         ]
       : [
-          "The MVP can be created locally with no required spend.",
-          "The audience has recurring workflow problems and clear search/forum demand.",
-          "The offer can start as free templates and validate email/signup interest before monetization.",
+          ...(winningCandidate?.whyItMightWin ?? ["The MVP can be created locally with no required spend."]),
+          `It won the top-three comparison with a ${winningScorecard?.totalScore ?? 74}/100 total score.`,
         ],
     whyMightFail: fiverrMode
       ? [
@@ -802,9 +1089,8 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
           "Service scope could be too broad unless delivery boundaries are clear.",
         ]
       : [
-          "The AI workflow niche is crowded and may need a sharper positioning angle.",
-          "Search competition may be high for generic AI terms.",
-          "Users may prefer free content unless templates solve a specific painful workflow.",
+          ...(winningCandidate?.whyItMightLose ?? ["The niche is crowded and may need a sharper positioning angle."]),
+          "The evidence is directional until a no-spend validation test confirms real interest.",
         ],
     evidenceIds: evidence.map((item) => item.id),
     seoPlan: fiverrMode
@@ -848,14 +1134,18 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
     budgetPlan,
     externalPlatformRequirementIds: externalPlatformRequirements.map((item) => item.id),
     platformExecutionPackageIds: platformExecutionPackages.map((item) => item.id),
+    publicResearchRunId: publicResearch?.run.id,
+    candidateIdeaIds: publicResearch?.candidates.map((candidate) => candidate.id) ?? [],
+    winningCandidateId: winningCandidate?.id,
+    evidenceCitationIds: publicResearch?.citations.map((citation) => citation.id) ?? [],
     readinessChecklist: [
       { label: "Budget", status: budgetPlan.approvalBlockers.length ? "blocked" : "passed", detail: `${money(budgetPlan.requiredSpend)} required spend, ${money(budgetPlan.businessBudgetCap)} cap, ${money(budgetPlan.portfolioRemainingCapital)} remaining.` },
-      { label: "Evidence", status: evidence.length >= 3 ? "passed" : "needs_review", detail: `${evidence.length} evidence items are attached; live browsing remains separately controlled.` },
+      { label: "Evidence", status: evidence.length >= 3 ? "passed" : "needs_review", detail: `${evidence.length} evidence items are attached from ${depthLabel(depth)} curated public research.` },
       { label: "Platform", status: fiverrMode ? "needs_review" : "passed", detail: fiverrMode ? "Fiverr account/login and exact gig fields must be reviewed before publishing." : "Local draft destination is available." },
       { label: "Compliance", status: "needs_review", detail: "No guarantees, fake reviews, spam, paid promotion, or unsupported claims." },
       { label: "Approval", status: "needs_review", detail: "Business approval starts internal work only; external execution needs a separate approval." },
     ],
-    qualityScore: fiverrMode ? 76 : 74,
+    qualityScore: fiverrMode ? winningScorecard?.totalScore ?? 76 : winningScorecard?.totalScore ?? 74,
     missingRequirements: fiverrMode ? ["User must manually log in to Fiverr before any future publish approval can execute."] : [],
     zeroBudgetValidationTest:
       fiverrMode
@@ -864,10 +1154,10 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
     successMetrics: fiverrMode ? ["Gig package passes policy/claim review", "3 competitor positioning gaps identified", "User approves exact Fiverr fields before publish"] : ["20 qualified email signups or saves", "5 useful qualitative responses", "3 content topics with repeat demand evidence"],
     failureMetrics: fiverrMode ? ["No clear buyer pain", "Gig scope cannot avoid misleading claims", "Required platform action exceeds approval boundary"] : ["No clear audience response", "No low-competition content entry point", "Users reject the core template value"],
     risks: fiverrMode ? ["Fiverr competition", "Platform policy mistakes", "Overbroad delivery scope", "Publishing requires separate approval", "No guaranteed orders or income"] : ["Crowded AI niche", "Potential overclaiming", "Newsletter/publishing actions require explicit approval", "No guaranteed revenue"],
-    validationScore: fiverrMode ? 76 : 74,
+    validationScore: fiverrMode ? winningScorecard?.totalScore ?? 76 : winningScorecard?.totalScore ?? 74,
     nextActions: [
-      "Let agents finish the safe autonomous research pass.",
-      "Review the proposal in Mission Briefs.",
+      `Review the Top 3 + Winner comparison from the ${depthLabel(depth)} public research pass.`,
+      "Inspect citations, scorecards, risks, and budget guard in Mission Briefs.",
       "Approve as Business only if the validation test and boundaries make sense.",
     ],
     teamLeaderRecommendation:
@@ -885,12 +1175,17 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
     sourcePrompt: message,
     status: "researching",
     currentPhase: fiverrMode
-      ? "AgentResearcher, AgentSeo, AgentWriter, and AgentProduction are drafting a Fiverr-ready local package with budget and platform constraints."
-      : "AgentResearcher, AgentSeo, and AgentContent are working in parallel.",
+      ? `${depthLabel(depth)} public research completed; agents are drafting a Fiverr-ready local package with budget and platform constraints.`
+      : `${depthLabel(depth)} public research completed; agents are comparing the Top 3 zero-budget candidates.`,
+    depth,
     zeroBudget: true,
     sourcePack: "broad_public_web",
     assignedAgentIds: opportunityAgentOrder,
     businessProposalId: proposalId,
+    publicResearchRunId: publicResearch?.run.id,
+    candidateIdeaIds: publicResearch?.candidates.map((candidate) => candidate.id) ?? [],
+    evidenceCitationIds: publicResearch?.citations.map((citation) => citation.id) ?? [],
+    executionReceipt: publicResearch?.run.executionReceipt,
     taskIds: tasks.map((task) => task.id),
     evidenceIds: evidence.map((item) => item.id),
     createdFromChatMessageId: chatMessageId,
@@ -929,7 +1224,18 @@ function buildOpportunityHuntState(current: AppDataState, message: string, chatM
     startedAt: now,
     updatedAt: now,
   }));
-  return { hunt, proposal, evidence, destinations, contentInventory, externalPlatformRequirements, platformExecutionPackages, tasks, sessions };
+  return {
+    hunt,
+    proposal,
+    evidence,
+    destinations,
+    contentInventory,
+    externalPlatformRequirements,
+    platformExecutionPackages,
+    tasks,
+    sessions,
+    publicResearch,
+  };
 }
 
 function syncGuildStations(state: AppDataState) {
@@ -3286,16 +3592,24 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   );
 
   const createOpportunityHuntFromMessage = useCallback(
-    async (message: string) => {
+    async (message: string, depth?: OpportunityHuntDepth) => {
       const trimmed = message.trim();
       if (!trimmed) return "";
       const current = dataRef.current;
       const now = new Date().toISOString();
       const userChatId = id("tl-chat-user");
-      const built = buildOpportunityHuntState(current, trimmed, userChatId);
+      const selectedDepth = depth ?? current.userSettings.defaultOpportunityHuntDepth ?? "fast";
+      const ids = { huntId: id("opportunity-hunt"), proposalId: id("business-proposal") };
+      const publicResearch = await buildPublicResearchBundle(current, ids.huntId, ids.proposalId, trimmed, selectedDepth);
+      const built = buildOpportunityHuntState(current, trimmed, userChatId, selectedDepth, ids, publicResearch);
       const nextPreSync: AppDataState = {
         ...current,
         opportunityHunts: [built.hunt, ...current.opportunityHunts],
+        publicResearchRuns: [publicResearch.run, ...current.publicResearchRuns],
+        publicResearchFetches: [...publicResearch.fetches, ...current.publicResearchFetches],
+        evidenceCitations: [...publicResearch.citations, ...current.evidenceCitations],
+        candidateBusinessIdeas: [...publicResearch.candidates, ...current.candidateBusinessIdeas],
+        candidateScorecards: [...publicResearch.scorecards, ...current.candidateScorecards],
         businessProposals: [built.proposal, ...current.businessProposals],
         researchEvidence: [...built.evidence, ...current.researchEvidence],
         productionDestinations: [...built.destinations, ...current.productionDestinations],
@@ -3319,7 +3633,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("tl-chat-opportunity"),
             role: "teamleader",
             content:
-              `I started a live opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. They know the budget cap, remaining capital, and platform boundaries. Safe read-only research and internal planning do not need approval. I will bring you one business proposal to review before anything external happens.`,
+              `I started a ${depthLabel(selectedDepth).toLowerCase()} public opportunity hunt for "${trimmed}". The agents are working now in the Guild Office and Tasks tabs. They know the budget cap, remaining capital, platform boundaries, and public source-pack evidence. I compared the Top 3 candidates and will show one winner before anything external happens.`,
             createdAt: now,
             mode: "local",
             relatedOpportunityHuntId: built.hunt.id,
@@ -3331,7 +3645,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("log-opportunity-hunt"),
             category: "agent",
             title: "TeamLeader1A started opportunity hunt",
-            detail: "Agents began safe autonomous research and internal planning. No publishing, messaging, spending, launch, login automation, or external connector action ran.",
+            detail: `${depthLabel(selectedDepth)} curated public research created ${publicResearch.citations.length} citations and ${publicResearch.candidates.length} candidate ideas. No publishing, messaging, spending, launch, login automation, or external connector action ran.`,
             severity: "success",
             createdAt: now,
           } satisfies ActivityLog,
@@ -3380,6 +3694,50 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     },
     [persistOptimistic],
   );
+
+  const cleanupAcceptanceTestData = useCallback(async () => {
+    const current = dataRef.current;
+    const testHuntIds = new Set(
+      current.opportunityHunts
+        .filter((hunt) => /\b\d{10,}\b/.test(hunt.sourcePrompt) || hunt.sourcePrompt.toLowerCase().includes("acceptance test"))
+        .map((hunt) => hunt.id),
+    );
+    if (testHuntIds.size === 0) return;
+    const proposalIds = new Set(current.businessProposals.filter((proposal) => testHuntIds.has(proposal.huntId)).map((proposal) => proposal.id));
+    const businessIds = new Set(current.approvedBusinesses.filter((business) => proposalIds.has(business.proposalId)).map((business) => business.id));
+    const researchRunIds = new Set(current.publicResearchRuns.filter((run) => testHuntIds.has(run.huntId)).map((run) => run.id));
+    const now = new Date().toISOString();
+    await persistOptimistic({
+      ...current,
+      opportunityHunts: current.opportunityHunts.filter((hunt) => !testHuntIds.has(hunt.id)),
+      businessProposals: current.businessProposals.filter((proposal) => !proposalIds.has(proposal.id)),
+      approvedBusinesses: current.approvedBusinesses.filter((business) => !businessIds.has(business.id)),
+      businessTasks: current.businessTasks.filter((task) => !task.huntId || !testHuntIds.has(task.huntId)),
+      agentWorkSessions: current.agentWorkSessions.filter((session) => !session.huntId || !testHuntIds.has(session.huntId)),
+      publicResearchRuns: current.publicResearchRuns.filter((run) => !researchRunIds.has(run.id)),
+      publicResearchFetches: current.publicResearchFetches.filter((fetch) => !researchRunIds.has(fetch.runId)),
+      evidenceCitations: current.evidenceCitations.filter((citation) => !testHuntIds.has(citation.huntId)),
+      candidateBusinessIdeas: current.candidateBusinessIdeas.filter((candidate) => !testHuntIds.has(candidate.huntId)),
+      candidateScorecards: current.candidateScorecards.filter((scorecard) => !testHuntIds.has(scorecard.huntId)),
+      researchEvidence: current.researchEvidence.filter((evidence) => !evidence.huntId || !testHuntIds.has(evidence.huntId)),
+      productionDestinations: current.productionDestinations.filter((item) => !item.proposalId || !proposalIds.has(item.proposalId)),
+      contentInventoryItems: current.contentInventoryItems.filter((item) => !item.proposalId || !proposalIds.has(item.proposalId)),
+      externalPlatformRequirements: current.externalPlatformRequirements.filter((item) => !item.proposalId || !proposalIds.has(item.proposalId)),
+      platformExecutionPackages: current.platformExecutionPackages.filter((item) => !item.proposalId || !proposalIds.has(item.proposalId)),
+      autonomousImprovementRuns: current.autonomousImprovementRuns.filter((run) => !businessIds.has(run.businessId)),
+      activityLogs: [
+        {
+          id: id("log-cleanup-test-data"),
+          category: "system",
+          title: "Acceptance test data cleaned",
+          detail: `Removed ${testHuntIds.size} timestamped TeamLeader test work sessions. No external action ran.`,
+          severity: "success",
+          createdAt: now,
+        } satisfies ActivityLog,
+        ...current.activityLogs,
+      ].slice(0, 80),
+    });
+  }, [persistOptimistic]);
 
   const approveBusinessProposal = useCallback(
     async (proposalId: string) => {
@@ -3947,7 +4305,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   );
 
   const sendTeamLeaderChatMessage = useCallback(
-    async (message: string, options: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string } = {}) => {
+    async (message: string, options: { requestLiveTurn?: boolean; createMissionDraft?: boolean; questId?: string; opportunityHuntDepth?: OpportunityHuntDepth } = {}) => {
       const trimmed = message.trim();
       if (!trimmed) return;
 
@@ -3994,7 +4352,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
 
       if (shouldStartOpportunityHunt(trimmed)) {
-        await createOpportunityHuntFromMessage(trimmed);
+        await createOpportunityHuntFromMessage(trimmed, options.opportunityHuntDepth);
         return;
       }
 
@@ -5879,6 +6237,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
       createOpportunityHuntFromMessage,
+      cleanupAcceptanceTestData,
       approveBusinessProposal,
       updateBusinessProposalStatus,
       preparePlatformPublishApproval,
@@ -5943,6 +6302,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       requestTeamLeaderTurn,
       sendTeamLeaderChatMessage,
       createOpportunityHuntFromMessage,
+      cleanupAcceptanceTestData,
       approveBusinessProposal,
       updateBusinessProposalStatus,
       preparePlatformPublishApproval,

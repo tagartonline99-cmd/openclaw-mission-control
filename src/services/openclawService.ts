@@ -53,6 +53,24 @@ export type AgentTurnInput = {
   timeoutSeconds?: number;
 };
 
+export type PublicResearchFetchInput = {
+  url: string;
+  sourcePackId?: string;
+  timeoutSeconds?: number;
+};
+
+export type PublicResearchFetchResult = {
+  ok: boolean;
+  url: string;
+  sourcePackId?: string;
+  statusCode?: number | null;
+  title?: string | null;
+  excerpt?: string | null;
+  contentType?: string | null;
+  error?: string | null;
+  fetchedAt: string;
+};
+
 export type OpenClawMcpConfig = Record<
   string,
   {
@@ -313,6 +331,36 @@ export const openclawService = {
         timedOut: false,
       },
     );
+  },
+  async fetchPublicResearch(input: PublicResearchFetchInput): Promise<PublicResearchFetchResult> {
+    if (!isTauriRuntime()) {
+      return {
+        ok: false,
+        url: input.url,
+        sourcePackId: input.sourcePackId,
+        statusCode: null,
+        title: null,
+        excerpt: null,
+        contentType: null,
+        error: "Browser preview uses curated source-pack metadata; desktop Tauri performs real GET-only research fetches.",
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+    try {
+      return await invoke<PublicResearchFetchResult>("public_research_fetch", { request: { ...input, timeoutSeconds: input.timeoutSeconds ?? 12 } });
+    } catch (error) {
+      return {
+        ok: false,
+        url: input.url,
+        sourcePackId: input.sourcePackId,
+        statusCode: null,
+        title: null,
+        excerpt: null,
+        contentType: null,
+        error: error instanceof Error ? error.message : String(error),
+        fetchedAt: new Date().toISOString(),
+      };
+    }
   },
   async sendChannelMessage(input: ChannelMessageInput) {
     return bridge("openclaw_channel_send", { request: { ...input, timeoutSeconds: 60 } }).then((result) =>

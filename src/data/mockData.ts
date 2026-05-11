@@ -52,7 +52,13 @@ import type {
   Quest,
   GuildOfficeStation,
   OpportunityHunt,
+  CandidateBusinessIdea,
+  CandidateScorecard,
+  EvidenceCitation,
+  PublicResearchFetch,
+  PublicResearchRun,
   ResearchEvidence,
+  ResearchSourcePack,
   ResearchSourceCapture,
   SearchConsoleMetric,
   SearchConsoleProperty,
@@ -1414,6 +1420,69 @@ export const missionArtifacts: MissionArtifact[] = [
 export const opportunityHunts: OpportunityHunt[] = [];
 export const businessProposals: BusinessProposal[] = [];
 export const approvedBusinesses: ApprovedBusiness[] = [];
+export const researchSourcePacks: ResearchSourcePack[] = [
+  {
+    id: "source-pack-ai-workflows",
+    name: "Freelancer AI Workflow Demand",
+    category: "community",
+    description: "Public pages that help validate practical AI workflow interest for freelancers and solo operators.",
+    urls: [
+      { url: "https://www.reddit.com/search/?q=freelancer%20ai%20workflow", title: "Reddit public search: freelancer AI workflow", sourceType: "forum", candidateHint: "ai-workflow-kit" },
+      { url: "https://github.com/topics/automation", title: "GitHub public topic: automation", sourceType: "directory", candidateHint: "ai-workflow-kit" },
+    ],
+    safetyNotes: ["Public GET-only research.", "No login, posting, messaging, or form submission."],
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "source-pack-zero-budget-production",
+    name: "Zero-Budget Production Paths",
+    category: "production",
+    description: "Public docs for no-cost local/static production routes.",
+    urls: [
+      { url: "https://docs.github.com/en/pages", title: "GitHub Pages documentation", sourceType: "directory", candidateHint: "static-content-business" },
+      { url: "https://docs.github.com/en/pages/getting-started-with-github-pages/about-github-pages", title: "About GitHub Pages", sourceType: "directory", candidateHint: "static-content-business" },
+    ],
+    safetyNotes: ["Documentation only.", "No account automation or repository publishing."],
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "source-pack-marketplaces",
+    name: "Marketplace Service Signals",
+    category: "marketplace",
+    description: "Public marketplace/category pages used only for local positioning notes.",
+    urls: [
+      { url: "https://www.fiverr.com/categories/programming-tech/ai-services", title: "Fiverr AI services category", sourceType: "marketplace", candidateHint: "fiverr-ai-workflow-gig" },
+      { url: "https://www.etsy.com/market/notion_template", title: "Etsy public market: Notion template", sourceType: "marketplace", candidateHint: "template-pack" },
+    ],
+    safetyNotes: ["Public marketplace pages only.", "No login, buyer messaging, purchases, reviews, or listing submission."],
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "source-pack-local-services",
+    name: "Local Services And Lead Gen Signals",
+    category: "demand",
+    description: "Public directories and review surfaces for local service research without outreach.",
+    urls: [
+      { url: "https://www.yelp.com/search?find_desc=plumbers", title: "Yelp public search: plumbers", sourceType: "directory", candidateHint: "local-service-leadgen" },
+      { url: "https://www.angi.com/companylist/", title: "Angi public company list", sourceType: "directory", candidateHint: "local-service-leadgen" },
+    ],
+    safetyNotes: ["Directory inspection only.", "No scraping contact lists or outreach."],
+    enabled: true,
+    createdAt: now,
+    updatedAt: now,
+  },
+];
+export const publicResearchRuns: PublicResearchRun[] = [];
+export const publicResearchFetches: PublicResearchFetch[] = [];
+export const evidenceCitations: EvidenceCitation[] = [];
+export const candidateBusinessIdeas: CandidateBusinessIdea[] = [];
+export const candidateScorecards: CandidateScorecard[] = [];
 export const businessTasks: BusinessTask[] = [];
 export const agentWorkSessions: AgentWorkSession[] = [];
 export const researchEvidence: ResearchEvidence[] = [];
@@ -2101,6 +2170,7 @@ export const userSettings: UserSettings = {
   openClawEndpoint: "ws://127.0.0.1:18789",
   openClawGatewayPort: 18789,
   openClawGatewayStartMode: "prompt",
+  defaultOpportunityHuntDepth: "fast",
   openClawRoleMap: {
     TeamLeader1A: "main",
     AgentResearcher: "researcher",

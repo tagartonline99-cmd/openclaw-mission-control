@@ -58,6 +58,28 @@ struct McpInstallRequest {
     obsidian_vault_path: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicResearchFetchRequest {
+    url: String,
+    source_pack_id: Option<String>,
+    timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PublicResearchFetchResult {
+    ok: bool,
+    url: String,
+    source_pack_id: Option<String>,
+    status_code: Option<u16>,
+    title: Option<String>,
+    excerpt: Option<String>,
+    content_type: Option<String>,
+    error: Option<String>,
+    fetched_at: String,
+}
+
 fn openclaw_program() -> &'static str {
     if cfg!(windows) {
         "openclaw.cmd"
@@ -118,6 +140,59 @@ fn reject_blocked_intent(value: &str) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn now_rfc3339() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(duration) => format!("{}", duration.as_secs()),
+        Err(_) => "0".into(),
+    }
+}
+
+fn strip_html(value: &str) -> String {
+    let mut output = String::with_capacity(value.len().min(4_000));
+    let mut in_tag = false;
+    for ch in value.chars() {
+        match ch {
+            '<' => in_tag = true,
+            '>' => {
+                in_tag = false;
+                output.push(' ');
+            }
+            _ if !in_tag => output.push(ch),
+            _ => {}
+        }
+        if output.len() > 8_000 {
+            break;
+        }
+    }
+    output
+        .replace("&amp;", "&")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn extract_title(html: &str) -> Option<String> {
+    let lower = html.to_lowercase();
+    let start = lower.find("<title")?;
+    let open_end = lower[start..].find('>')? + start + 1;
+    let end = lower[open_end..].find("</title>")? + open_end;
+    let title = strip_html(&html[open_end..end]);
+    if title.is_empty() {
+        None
+    } else {
+        Some(title.chars().take(180).collect())
+    }
+}
+
+fn excerpt_from_body(body: &str) -> String {
+    let plain = strip_html(body);
+    plain.chars().take(700).collect()
 }
 
 fn validate_agent_message(message: &str) -> Result<(), String> {
@@ -511,6 +586,85 @@ fn openclaw_gateway_start() -> Result<OpenClawBridgeResult, String> {
 }
 
 #[tauri::command]
+async fn public_research_fetch(request: PublicResearchFetchRequest) -> Result<PublicResearchFetchResult, String> {
+    let url = request.url.trim().to_string();
+    validate_url(&url)?;
+    reject_blocked_intent(&url)?;
+    let timeout = Duration::from_secs(clamp_timeout(request.timeout_seconds, 12, 20));
+    let client = reqwest::Client::builder()
+        .timeout(timeout)
+        .user_agent("OpenClaw-Mission-Control/0.1 safe-public-research")
+        .redirect(reqwest::redirect::Policy::limited(4))
+        .build()
+        .map_err(|error| format!("Could not create public research client: {error}"))?;
+
+    let fetched_at = now_rfc3339();
+    match client.get(&url).send().await {
+        Ok(response) => {
+            let status = response.status();
+            let content_type = response
+                .headers()
+                .get(reqwest::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(|value| value.to_string());
+            if !status.is_success() {
+                return Ok(PublicResearchFetchResult {
+                    ok: false,
+                    url,
+                    source_pack_id: request.source_pack_id,
+                    status_code: Some(status.as_u16()),
+                    title: None,
+                    excerpt: None,
+                    content_type,
+                    error: Some(format!("Public source returned HTTP {}", status.as_u16())),
+                    fetched_at,
+                });
+            }
+            let body = response
+                .text()
+                .await
+                .map_err(|error| format!("Could not read public research response: {error}"))?;
+            let lower = body.to_lowercase();
+            if lower.contains("captcha") || lower.contains("sign in to continue") || lower.contains("log in to continue") {
+                return Ok(PublicResearchFetchResult {
+                    ok: false,
+                    url,
+                    source_pack_id: request.source_pack_id,
+                    status_code: Some(status.as_u16()),
+                    title: extract_title(&body),
+                    excerpt: None,
+                    content_type,
+                    error: Some("Source requires interactive login/CAPTCHA or similar blocked access.".into()),
+                    fetched_at,
+                });
+            }
+            Ok(PublicResearchFetchResult {
+                ok: true,
+                url,
+                source_pack_id: request.source_pack_id,
+                status_code: Some(status.as_u16()),
+                title: extract_title(&body),
+                excerpt: Some(excerpt_from_body(&body)),
+                content_type,
+                error: None,
+                fetched_at,
+            })
+        }
+        Err(error) => Ok(PublicResearchFetchResult {
+            ok: false,
+            url,
+            source_pack_id: request.source_pack_id,
+            status_code: None,
+            title: None,
+            excerpt: None,
+            content_type: None,
+            error: Some(format!("Public research fetch failed safely: {error}")),
+            fetched_at,
+        }),
+    }
+}
+
+#[tauri::command]
 fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult, String> {
     validate_agent_message(&request.message)?;
     let agent_profile_id = validate_agent_profile_id(request.agent_profile_id.as_deref())?;
@@ -644,6 +798,7 @@ pub fn run() {
             openclaw_mcp_list,
             openclaw_mcp_install_local_kit,
             openclaw_gateway_start,
+            public_research_fetch,
             openclaw_agent_turn,
             openclaw_url_research,
             openclaw_channel_send

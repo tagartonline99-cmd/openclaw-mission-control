@@ -186,6 +186,10 @@ export type AutonomousImprovementRunStatus = "running" | "paused" | "blocked" | 
 export type BudgetRisk = "within_cap" | "needs_spend_approval" | "over_cap" | "over_remaining" | "missing";
 export type PlatformPublishStatus = "local_draft" | "ready_for_approval" | "approval_requested" | "approved" | "blocked";
 export type ReadinessStatus = "passed" | "missing" | "needs_review" | "blocked";
+export type OpportunityHuntDepth = "quick" | "fast" | "deep";
+export type PublicResearchRunStatus = "queued" | "running" | "completed" | "failed" | "blocked";
+export type PublicResearchFetchStatus = "queued" | "fetched" | "failed" | "blocked" | "skipped";
+export type CandidateBusinessStatus = "candidate" | "winner" | "rejected" | "archived";
 export type MissionBriefSectionKind =
   | "overview"
   | "research"
@@ -246,14 +250,116 @@ export interface OpportunityHunt {
   sourcePrompt: string;
   status: OpportunityHuntStatus;
   currentPhase: string;
+  depth: OpportunityHuntDepth;
   zeroBudget: boolean;
   sourcePack: "broad_public_web";
   assignedAgentIds: MissionAgentId[];
   businessProposalId?: string;
+  publicResearchRunId?: string;
+  candidateIdeaIds?: string[];
+  evidenceCitationIds?: string[];
+  executionReceipt?: string;
   taskIds: string[];
   evidenceIds: string[];
   createdFromChatMessageId?: string;
   startedAt: string;
+  updatedAt: string;
+}
+
+export interface ResearchSourcePack {
+  id: string;
+  name: string;
+  category: "demand" | "seo" | "marketplace" | "production" | "platform" | "community";
+  description: string;
+  urls: Array<{
+    url: string;
+    title: string;
+    sourceType: ResearchEvidence["sourceType"];
+    candidateHint?: string;
+  }>;
+  safetyNotes: string[];
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PublicResearchRun {
+  id: string;
+  huntId: string;
+  depth: OpportunityHuntDepth;
+  status: PublicResearchRunStatus;
+  sourcePackIds: string[];
+  fetchIds: string[];
+  evidenceCitationIds: string[];
+  candidateIdeaIds: string[];
+  startedAt: string;
+  completedAt?: string;
+  summary: string;
+  executionReceipt: string;
+}
+
+export interface PublicResearchFetch {
+  id: string;
+  runId: string;
+  sourcePackId: string;
+  url: string;
+  status: PublicResearchFetchStatus;
+  httpStatus?: number;
+  title?: string;
+  excerpt?: string;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+}
+
+export interface EvidenceCitation {
+  id: string;
+  huntId: string;
+  researchRunId: string;
+  sourcePackId?: string;
+  fetchId?: string;
+  candidateId?: string;
+  title: string;
+  url: string;
+  sourceType: ResearchEvidence["sourceType"];
+  summary: string;
+  excerpt?: string;
+  confidence: number;
+  capturedAt: string;
+}
+
+export interface CandidateScorecard {
+  id: string;
+  huntId: string;
+  candidateId: string;
+  demandScore: number;
+  seoScore: number;
+  zeroBudgetScore: number;
+  productionScore: number;
+  platformRiskScore: number;
+  evidenceScore: number;
+  totalScore: number;
+  notes: string[];
+}
+
+export interface CandidateBusinessIdea {
+  id: string;
+  huntId: string;
+  researchRunId: string;
+  rank: number;
+  status: CandidateBusinessStatus;
+  title: string;
+  businessModel: BusinessModel;
+  audience: string;
+  summary: string;
+  zeroBudgetPath: string;
+  platformNeeds: string[];
+  evidenceCitationIds: string[];
+  scorecardId: string;
+  whyItMightWin: string[];
+  whyItMightLose: string[];
+  nextValidationStep: string;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -371,6 +477,10 @@ export interface BusinessProposal {
   budgetPlan: BudgetPlan;
   externalPlatformRequirementIds: string[];
   platformExecutionPackageIds: string[];
+  publicResearchRunId?: string;
+  candidateIdeaIds?: string[];
+  winningCandidateId?: string;
+  evidenceCitationIds?: string[];
   readinessChecklist: Array<{ label: string; status: ReadinessStatus; detail: string }>;
   qualityScore: number;
   missingRequirements: string[];
@@ -1509,6 +1619,7 @@ export interface UserSettings {
   openClawEndpoint: string;
   openClawGatewayPort: number;
   openClawGatewayStartMode: "prompt" | "manual" | "auto";
+  defaultOpportunityHuntDepth: OpportunityHuntDepth;
   openClawRoleMap: Record<string, string>;
   approvedChannelTargets: string[];
   approvedResearchDomains: string[];

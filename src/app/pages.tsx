@@ -927,7 +927,7 @@ export function OpenClawSystemPage() {
 }
 
 export function SettingsPage() {
-  const { data, adapter, updateSettings, resetLocalData, selectObsidianVault } = useAppData();
+  const { data, adapter, updateSettings, resetLocalData, selectObsidianVault, cleanupAcceptanceTestData } = useAppData();
   const { userSettings, safetyRules } = data;
   const saveSettings = (patch: Partial<typeof userSettings>) => {
     void updateSettings({ ...userSettings, ...patch });
@@ -1017,6 +1017,17 @@ export function SettingsPage() {
               </Select>
             </div>
             <div>
+              <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Default opportunity research depth</p>
+              <Select
+                value={userSettings.defaultOpportunityHuntDepth}
+                onChange={(event) => saveSettings({ defaultOpportunityHuntDepth: event.target.value as typeof userSettings.defaultOpportunityHuntDepth })}
+              >
+                <option value="quick">quick</option>
+                <option value="fast">fast</option>
+                <option value="deep">deep</option>
+              </Select>
+            </div>
+            <div>
               <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Approved research domains</p>
               <Input
                 value={userSettings.approvedResearchDomains.join(", ")}
@@ -1058,6 +1069,13 @@ export function SettingsPage() {
                 <Badge tone={value ? "red" : "slate"}>{String(value)}</Badge>
               </div>
             ))}
+            <div className="rounded-md border border-white/10 bg-black/25 p-3">
+              <p className="text-sm font-semibold text-stone-100">Acceptance test cleanup</p>
+              <p className="mt-1 text-xs leading-5 text-slate-400">Removes timestamped TeamLeader test hunts, proposals, businesses, and receipts only.</p>
+              <Button className="mt-3" variant="outline" onClick={() => void cleanupAcceptanceTestData()}>
+                Clean timestamped test work
+              </Button>
+            </div>
           </CardContent>
         </Card>
       </div>

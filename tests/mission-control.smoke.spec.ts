@@ -1,21 +1,25 @@
 import { expect, test } from "@playwright/test";
 
-test("TeamLeader command creates visible agent work, proposal, business, and production map", async ({ page }) => {
+test("TeamLeader command runs public research, ranks top candidates, creates business, and production map", async ({ page }) => {
   await page.goto("/#/", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Tell TeamLeader1A what to build" })).toBeVisible();
   await expect(page.getByText("TeamLeader1A Chat")).toBeVisible();
+  await expect(page.getByText("Research depth")).toBeVisible();
+  await expect(page.getByRole("combobox").filter({ hasText: /Fast public research/i })).toBeVisible();
 
   await page
     .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
-    .fill("create a Fiverr gig business idea with zero budget");
+    .fill("find me the best online business idea with zero budget");
   await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
-  await expect(page.getByText(/I started a live opportunity hunt/i)).toBeVisible();
+  await expect(page.getByText(/I started a fast public opportunity hunt/i)).toBeVisible();
+  await expect(page.getByText(/Top 3 candidates/i)).toBeVisible();
   await expect(page.getByText(/View Work/i).first()).toBeVisible();
 
   await page.goto("/#/tasks", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Every agent task in one place" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Now Working" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Research zero-budget demand/i })).toBeVisible();
+  await expect(page.getByText(/https:\/\//i).first()).toBeVisible();
 
   await page.goto("/#/guild-office", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Watch the agents work" })).toBeVisible();
@@ -24,19 +28,18 @@ test("TeamLeader command creates visible agent work, proposal, business, and pro
 
   await page.goto("/#/mission-briefs", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Business Proposal Review")).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Business Proposal: Fiverr AI Workflow Gig/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Business Proposal:/i })).toBeVisible();
+  await expect(page.getByText("Top 3 + Winner")).toBeVisible();
+  await expect(page.getByText(/Practical AI Workflow Template Kit|Local Service Lead-Gen|Client Operations Notion/i).first()).toBeVisible();
+  await expect(page.getByText(/safe-public-research/i)).toBeVisible();
   await expect(page.getByText("Budget plan")).toBeVisible();
   await expect(page.getByText(/within hard cap/i)).toBeVisible();
-  await expect(page.getByText("External platform/account needs")).toBeVisible();
-  await expect(page.getByText(/User login required: yes/i)).toBeVisible();
-  await expect(page.getByText(/Credentials stored: no/i)).toBeVisible();
-  await expect(page.getByText(/Prepare Fiverr Publish Approval/i)).toBeVisible();
   await expect(page.getByText("Evidence and links")).toBeVisible();
   await page.getByRole("button", { name: /Approve Business/i }).click();
 
   await page.goto("/#/businesses", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Business proposals you approved" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Fiverr AI Workflow Gig/i })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Practical AI Workflow|Local Service Lead-Gen|Client Operations Notion/i })).toBeVisible();
   await expect(page.getByText("Budget guard")).toBeVisible();
   await expect(page.getByText("External platform requirements")).toBeVisible();
   await expect(page.getByText("Autonomous improvement", { exact: true }).last()).toBeVisible();
@@ -44,8 +47,7 @@ test("TeamLeader command creates visible agent work, proposal, business, and pro
   await page.goto("/#/production", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Business Production And Publishing Map")).toBeVisible();
   await expect(page.getByText(/Publishing destinations are visible/i).first()).toBeVisible();
-  await expect(page.getByText(/Fiverr Gig Draft/i).first()).toBeVisible();
-  await expect(page.getByText(/credentials stored no/i).first()).toBeVisible();
+  await expect(page.getByText(/Static Website \/ Local Draft/i).first()).toBeVisible();
   await expect(page.getByText(/approval required/i).first()).toBeVisible();
 
   await page.goto("/#/approvals", { waitUntil: "domcontentloaded" });
@@ -63,7 +65,22 @@ test("TeamLeader command creates visible agent work, proposal, business, and pro
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Budget-aware platform release/i)).toBeVisible();
+  await expect(page.getByText(/Public research opportunity release/i)).toBeVisible();
+});
+
+test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {
+  await page.goto("/#/", { waitUntil: "domcontentloaded" });
+  await page
+    .getByPlaceholder("Ask TeamLeader1A what to validate, kill, improve, or approve next...")
+    .fill("create a Fiverr gig business idea with zero budget");
+  await page.getByRole("button", { name: /Send to TeamLeader1A/i }).click();
+  await expect(page.getByText(/I started a fast public opportunity hunt/i)).toBeVisible();
+  await page.goto("/#/mission-briefs", { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("heading", { name: /Business Proposal: Fiverr AI Workflow Gig/i })).toBeVisible();
+  await expect(page.getByText("External platform/account needs")).toBeVisible();
+  await expect(page.getByText(/User login required: yes/i)).toBeVisible();
+  await expect(page.getByText(/Credentials stored: no/i)).toBeVisible();
+  await expect(page.getByText(/Prepare Fiverr Publish Approval/i)).toBeVisible();
 });
 
 test("MCP refresh does not expose browser automation in browser fallback", async ({ page }) => {
@@ -72,4 +89,10 @@ test("MCP refresh does not expose browser automation in browser fallback", async
   await expect(page.getByText("Browser Automation MCP", { exact: true })).toBeVisible();
   await expect(page.getByText("deferred").first()).toBeVisible();
   await expect(page.getByText(/Fetch MCP is installed but disabled|approved URL research only/i).first()).toBeVisible();
+});
+
+test("approval-gated URL research blocks private hosts", async ({ page }) => {
+  await page.goto("/#/openclaw-system", { waitUntil: "domcontentloaded" });
+  await page.getByPlaceholder("Approved URLs, comma separated").fill("http://localhost:3000/private");
+  await expect(page.getByText(/Private or local hosts are blocked/i)).toBeVisible();
 });
