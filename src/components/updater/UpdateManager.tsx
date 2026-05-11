@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "Reality Meter release 0.1.22";
+const UPDATER_VERIFICATION_MARKER = "Product Preview Renderer release 0.1.23";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;

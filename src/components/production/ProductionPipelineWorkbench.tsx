@@ -72,6 +72,8 @@ export function ProductionPipelineWorkbench() {
   const previewSections = preview ? data.productPreviewSections.filter((section) => preview.sectionIds.includes(section.id)) : [];
   const activeSection = previewSections.find((section) => section.kind === activeTab) ?? previewSections[0];
   const assetFiles = preview ? data.localAssetFiles.filter((file) => preview.assetFileIds.includes(file.id)) : [];
+  const renderedPreviews = preview ? data.renderedProductPreviews.filter((item) => item.previewId === preview.id) : [];
+  const renderedPreview = renderedPreviews.find((item) => item.status === "ready") ?? renderedPreviews[0];
   const destination = preview?.destinationId ? data.productionDestinations.find((item) => item.id === preview.destinationId) : undefined;
   const platformPackage = preview?.platformPackageId ? data.platformExecutionPackages.find((item) => item.id === preview.platformPackageId) : undefined;
   const publishPayload = preview?.publishPayloadPreviewId ? data.publishPayloadPreviews.find((item) => item.id === preview.publishPayloadPreviewId) : undefined;
@@ -200,7 +202,15 @@ export function ProductionPipelineWorkbench() {
                         </a>
                         <Button variant="secondary" onClick={() => setActiveTab("full_draft")}>
                           <Eye className="h-4 w-4" />
-                          Exact preview
+                          View rendered preview
+                        </Button>
+                        <Button variant="outline" disabled={assetFiles.length === 0} onClick={() => setActiveTab("assets")}>
+                          <FileText className="h-4 w-4" />
+                          Open product file
+                        </Button>
+                        <Button variant="outline" disabled>
+                          <RotateCcw className="h-4 w-4" />
+                          Compare latest revision
                         </Button>
                         <Button variant="outline" onClick={() => void exportProofPack()}>
                           <FileText className="h-4 w-4" />
@@ -243,6 +253,26 @@ export function ProductionPipelineWorkbench() {
                           ))}
                         </div>
                       </div>
+                    </div>
+                    <div className="mt-4 rounded-md border border-teal-300/20 bg-black/30 p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <Badge tone={renderedPreview?.status === "ready" ? "emerald" : "red"}>Rendered Product Preview</Badge>
+                          <h3 className="mt-2 font-display text-xl font-semibold text-stone-100">{renderedPreview?.title ?? "Rendered preview missing"}</h3>
+                          <p className="mt-1 text-sm text-slate-400">
+                            {renderedPreview
+                              ? `${label(renderedPreview.mode)} / local-only preview created ${formatDateTime(renderedPreview.createdAt)}`
+                              : "Publish approval stays locked until a rendered local preview exists."}
+                          </p>
+                        </div>
+                        <Button variant="secondary" disabled={!renderedPreview} onClick={() => setActiveTab("full_draft")}>
+                          <Eye className="h-4 w-4" />
+                          View rendered preview
+                        </Button>
+                      </div>
+                      <pre className="mt-4 max-h-[360px] overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/35 p-4 text-sm leading-6 text-slate-100">
+                        {renderedPreview?.textPreview ?? "No rendered product preview has been generated yet."}
+                      </pre>
                     </div>
                     {lastExportResult ? (
                       <p className="mt-4 rounded-md border border-white/10 bg-black/25 p-3 text-xs text-slate-300">{lastExportResult.message}</p>
@@ -381,7 +411,7 @@ export function ProductionPipelineWorkbench() {
                         {preview.localDraftApproved ? "Local Draft Approved" : "Approve Local Draft"}
                       </Button>
                       <Button
-                        disabled={!preview.localDraftApproved || gate?.status === "pending_approval" || gate?.status === "approved" || preview.claimsSafetyStatus === "blocked"}
+                        disabled={!preview.localDraftApproved || !renderedPreview || gate?.status === "pending_approval" || gate?.status === "approved" || preview.claimsSafetyStatus === "blocked"}
                         onClick={() => void preparePublish()}
                       >
                         <ShieldAlert className="h-4 w-4" />
@@ -392,6 +422,11 @@ export function ProductionPipelineWorkbench() {
                   {!preview.localDraftApproved ? (
                     <p className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm text-amber-100">
                       Prepare Publish Approval is disabled because the product has not been approved as a local draft yet.
+                    </p>
+                  ) : null}
+                  {preview.localDraftApproved && !renderedPreview ? (
+                    <p className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm text-amber-100">
+                      Prepare Publish Approval is disabled because a rendered product preview does not exist yet.
                     </p>
                   ) : null}
                 </>

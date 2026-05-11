@@ -72,6 +72,8 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Product Snapshot").first()).toBeVisible();
   await expect(page.getByText(/See the exact product before any publishing approval/i)).toBeVisible();
   await expect(page.getByText("Product Files", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Rendered Product Preview").first()).toBeVisible();
+  await expect(page.getByText(/FIVERR GIG MOCKUP|LANDING PAGE PREVIEW/i).first()).toBeVisible();
   await expect(page.getByText("Claims & Safety Check").first()).toBeVisible();
   await expect(page.getByText("Publishing Preview")).toBeVisible();
   await expect(page.getByText("Product Proof Pack").first()).toBeVisible();
@@ -106,7 +108,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Reality Meter release/i)).toBeVisible();
+  await expect(page.getByText(/Product Preview Renderer release/i)).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

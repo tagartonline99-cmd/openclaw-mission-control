@@ -82,6 +82,7 @@ import type {
   ProductPreviewSection,
   ProductRevisionRequest,
   PublishPayloadPreview,
+  RenderedProductPreview,
   ApprovalGateState,
   PublicResearchFetch,
   PublicResearchRun,
@@ -1469,7 +1470,58 @@ function buildProductStudioRecords(
     claimsSafetyStatus: "needs_review",
     missingItems: localAssetFiles.length ? [] : ["At least one local product file is required before a publish approval."],
     readinessScore: proposal.validationScore,
+    renderedPreviewIds: [`rendered-${previewId}`],
     approvalGateStateId: gateId,
+    createdAt: now,
+    updatedAt: now,
+  };
+  const renderedPreview: RenderedProductPreview = {
+    id: `rendered-${previewId}`,
+    previewId,
+    businessId,
+    mode: fiverrMode ? "fiverr_mockup" : "landing_page",
+    title: fiverrMode ? `${proposal.title.replace("Business Proposal: ", "")} Fiverr gig mockup` : `${proposal.title.replace("Business Proposal: ", "")} landing page preview`,
+    summary: "Rendered local product preview for inspection before any publish approval can be requested.",
+    textPreview: fiverrMode
+      ? [
+          "FIVERR GIG MOCKUP",
+          "",
+          `Title: ${exactFields["Gig title"] ?? exactFields.Title ?? proposal.title.replace("Business Proposal: ", "")}`,
+          `Category: ${exactFields.Category ?? "Manual category review required"}`,
+          `Tags: ${exactFields.Tags ?? "Add tags before publishing"}`,
+          "",
+          "Description",
+          exactFields.Description ?? fullDraft,
+          "",
+          "Packages / Pricing Draft",
+          exactFields.Packages ?? exactFields.Pricing ?? "Keep zero-budget validation path; pricing needs manual review.",
+          "",
+          "FAQ",
+          exactFields.FAQ ?? "Add buyer-facing FAQ during local review.",
+          "",
+          "Buyer Requirements",
+          exactFields["Buyer requirements"] ?? "Ask buyer for goals, examples, tone, and constraints.",
+          "",
+          "Safety Boundary",
+          "Local preview only. No Fiverr login, form submission, publication, messaging, or purchase occurred.",
+        ].join("\n")
+      : [
+          "LANDING PAGE PREVIEW",
+          "",
+          `Hero: ${exactFields.Headline ?? exactFields["Hero headline"] ?? proposal.title.replace("Business Proposal: ", "")}`,
+          `Subheadline: ${proposal.whyMightWork[0] ?? "Validation-first offer."}`,
+          "",
+          "Offer Sections",
+          fullDraft,
+          "",
+          "CTA",
+          exactFields.CTA ?? "Join the waitlist / request details (manual review required).",
+          "",
+          "Footer / Disclosure",
+          "Local draft only. Review claims, policies, and citations before publishing.",
+        ].join("\n"),
+    sourceSectionIds: sections.map((section) => section.id),
+    status: "ready",
     createdAt: now,
     updatedAt: now,
   };
@@ -1494,7 +1546,7 @@ function buildProductStudioRecords(
     linkedPath: "/#/production",
     updatedAt: now,
   };
-  return { blueprint, preview, sections, draftApproval, gateState };
+  return { blueprint, preview, renderedPreview, sections, draftApproval, gateState };
 }
 
 function buildPublishPayloadPreview(
@@ -4930,6 +4982,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         publishingPackages: [operatingBundle.publishingPackage, ...current.publishingPackages],
         productBlueprints: [productStudio.blueprint, ...current.productBlueprints],
         productPreviews: [productStudio.preview, ...current.productPreviews],
+        renderedProductPreviews: [productStudio.renderedPreview, ...current.renderedProductPreviews],
         productPreviewSections: [...productStudio.sections, ...current.productPreviewSections],
         productDraftApprovals: [productStudio.draftApproval, ...current.productDraftApprovals],
         approvalGateStates: [productStudio.gateState, ...current.approvalGateStates],
@@ -5381,13 +5434,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const existingPending = existingGate?.approvalId ? current.approvalRequests.find((item) => item.id === existingGate.approvalId && item.status === "pending") : undefined;
       if (existingPending) return existingPending.id;
       const now = new Date().toISOString();
+      const renderedPreviewExists = current.renderedProductPreviews.some((item) => item.previewId === preview.id && item.status === "ready");
       const blockedReason = !preview.localDraftApproved
         ? "The local draft must be approved in Product Studio before a publish approval can be requested."
-        : preview.claimsSafetyStatus === "blocked"
-          ? "Claims & Safety Check is blocked. Request a revision before publishing."
-          : preview.missingItems.length
-            ? `Missing product items: ${preview.missingItems.join(", ")}`
-            : "";
+        : !renderedPreviewExists
+          ? "A rendered product preview must exist before a publish approval can be requested."
+          : preview.claimsSafetyStatus === "blocked"
+            ? "Claims & Safety Check is blocked. Request a revision before publishing."
+            : preview.missingItems.length
+              ? `Missing product items: ${preview.missingItems.join(", ")}`
+              : "";
       if (blockedReason) {
         await persistOptimistic({
           ...current,

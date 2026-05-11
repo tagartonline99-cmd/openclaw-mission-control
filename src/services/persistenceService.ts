@@ -1000,6 +1000,111 @@ function productContentSummary(state: AppDataState, business: ApprovedBusiness) 
   return firstContent?.draftContent || proposal?.contentPlan.join("\n") || proposal?.summary || business.teamLeaderRecommendation;
 }
 
+function renderedModeForBlueprint(productType?: ProductBlueprint["productType"]): RenderedProductPreview["mode"] {
+  if (productType === "fiverr_gig") return "fiverr_mockup";
+  if (productType === "article") return "article";
+  if (productType === "newsletter") return "newsletter";
+  if (productType === "template" || productType === "sop") return "template_sop";
+  if (productType === "obsidian_pack") return "obsidian_proof_pack";
+  return "landing_page";
+}
+
+function buildRenderedPreviewText(
+  blueprint: ProductBlueprint | undefined,
+  sections: ProductPreviewSection[],
+  platformPackage: PlatformExecutionPackage | undefined,
+) {
+  const overview = sections.find((section) => section.kind === "overview")?.content ?? "";
+  const draft = sections.find((section) => section.kind === "full_draft")?.content ?? "";
+  const platformFields = sections.find((section) => section.kind === "platform_fields");
+  const fields = platformFields?.fields ?? platformPackage?.exactFields ?? {};
+  if (blueprint?.productType === "fiverr_gig" || platformPackage?.platform.toLowerCase().includes("fiverr")) {
+    return [
+      "FIVERR GIG MOCKUP",
+      "",
+      `Title: ${fields["Gig title"] ?? fields.Title ?? blueprint?.name ?? "Untitled gig"}`,
+      `Category: ${fields.Category ?? fields.category ?? "Manual category review required"}`,
+      `Tags: ${fields.Tags ?? fields.tags ?? "Add tags before publishing"}`,
+      "",
+      "Description",
+      fields.Description ?? fields.description ?? draft,
+      "",
+      "Packages / Pricing Draft",
+      fields.Packages ?? fields.Pricing ?? fields.pricing ?? "Keep zero-budget validation path; pricing needs manual review.",
+      "",
+      "FAQ",
+      fields.FAQ ?? "Add buyer-facing FAQ during local review.",
+      "",
+      "Buyer Requirements",
+      fields["Buyer requirements"] ?? fields.Requirements ?? "Ask buyer for goals, examples, tone, and constraints.",
+      "",
+      "Safety Boundary",
+      "Local preview only. No Fiverr login, form submission, publication, messaging, or purchase occurred.",
+    ].join("\n");
+  }
+
+  if (blueprint?.productType === "article") {
+    return [`ARTICLE PREVIEW`, "", `Title: ${blueprint.name}`, "", draft || overview, "", "CTA / Disclosure", "Review claims and citations before external use."].join("\n");
+  }
+
+  if (blueprint?.productType === "newsletter") {
+    return [`NEWSLETTER ISSUE PREVIEW`, "", `Subject: ${blueprint.name}`, "", draft || overview, "", "Local-only status: not sent."].join("\n");
+  }
+
+  if (blueprint?.productType === "template" || blueprint?.productType === "sop" || blueprint?.productType === "obsidian_pack") {
+    return [`TEMPLATE / SOP PREVIEW`, "", `Name: ${blueprint.name}`, "", draft || overview, "", "Files are local drafts until reviewed."].join("\n");
+  }
+
+  return [
+    "LANDING PAGE PREVIEW",
+    "",
+    `Hero: ${fields.Headline ?? fields["Hero headline"] ?? blueprint?.name ?? "Untitled landing page"}`,
+    `Subheadline: ${fields.Subheadline ?? blueprint?.valueProposition ?? "Validation-first offer."}`,
+    "",
+    "Offer Sections",
+    draft || overview,
+    "",
+    "CTA",
+    fields.CTA ?? "Join the waitlist / request details (manual review required).",
+    "",
+    "Footer / Disclosure",
+    "Local draft only. Review claims, policies, and citations before publishing.",
+  ].join("\n");
+}
+
+function ensureRenderedProductPreviewRecords(state: AppDataState) {
+  const now = nowIso();
+  for (const preview of state.productPreviews) {
+    const existingRendered = state.renderedProductPreviews.filter((item) => item.previewId === preview.id);
+    if (existingRendered.length) {
+      if (!preview.renderedPreviewIds?.length) {
+        preview.renderedPreviewIds = existingRendered.map((item) => item.id);
+      }
+      continue;
+    }
+    const blueprint = state.productBlueprints.find((item) => item.id === preview.blueprintId);
+    const sections = state.productPreviewSections.filter((section) => preview.sectionIds.includes(section.id));
+    const platformPackage = preview.platformPackageId ? state.platformExecutionPackages.find((item) => item.id === preview.platformPackageId) : undefined;
+    const renderedId = `rendered-product-${preview.id}`;
+    const mode = renderedModeForBlueprint(blueprint?.productType);
+    const textPreview = buildRenderedPreviewText(blueprint, sections, platformPackage);
+    state.renderedProductPreviews.push({
+      id: renderedId,
+      previewId: preview.id,
+      businessId: preview.businessId,
+      mode,
+      title: `${blueprint?.name ?? "Product"} rendered preview`,
+      summary: "Rendered local product preview for inspection before any publish approval can be requested.",
+      textPreview,
+      sourceSectionIds: sections.map((section) => section.id),
+      status: textPreview.trim() ? "ready" : "blocked",
+      createdAt: now,
+      updatedAt: now,
+    });
+    preview.renderedPreviewIds = [renderedId];
+  }
+}
+
 function ensureProductPreviewRecords(state: AppDataState) {
   const now = nowIso();
   for (const business of state.approvedBusinesses) {
@@ -1417,6 +1522,7 @@ function normalizePhase6BState(state: AppDataState) {
     };
   });
   ensureProductPreviewRecords(state);
+  ensureRenderedProductPreviewRecords(state);
   ensureRealityReceipts(state);
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;
