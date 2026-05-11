@@ -9,6 +9,7 @@ import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Select } from "../ui/select";
 import { useAppData } from "../../app/AppDataContext";
+import { RealityPill } from "../reality/RealityMeter";
 
 function requestIcon(type: ApprovalRequest["type"]) {
   if (type === "Spend money") return Coins;
@@ -212,6 +213,7 @@ export function ApprovalCenter() {
                     <div>
                       <div className="mb-2 flex flex-wrap gap-2">
                         <Badge tone="amber">{request.type}</Badge>
+                        <RealityPill mode={request.status === "blocked" ? "external_action_blocked" : "pending_external_approval"} />
                         <Badge tone="slate">{actionKind(request).replace("_", " ")}</Badge>
                         <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${riskTone(request.riskLevel)}`}>{request.riskLevel} risk</span>
                         <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${statusTone(request.status)}`}>{request.status}</span>
@@ -291,6 +293,9 @@ export function ApprovalCenter() {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <Badge tone={gate.status === "blocked" ? "red" : gate.status === "ready_to_request_approval" ? "emerald" : "amber"}>{gate.label}</Badge>
+                    <div className="mt-2">
+                      <RealityPill mode={gate.status === "blocked" ? "external_action_blocked" : gate.status === "pending_approval" ? "pending_external_approval" : "local_draft"} />
+                    </div>
                     <h3 className="mt-3 font-display text-lg font-semibold text-stone-100">{business?.name ?? "Product gate"}</h3>
                   </div>
                   <Badge tone="slate">{gate.gate}</Badge>

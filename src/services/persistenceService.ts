@@ -89,6 +89,8 @@ import type {
   AgentArtifact,
   AgentMessage,
   AgentPerformanceMemory,
+  AgentEvidenceItem,
+  AgentEvidenceTrail,
   AgentWorkSession,
   AnalyticsConnector,
   AnalyticsSnapshot,
@@ -98,6 +100,7 @@ import type {
   ApprovedBusiness,
   AllowlistEntry,
   ApprovalRequest,
+  ApprovalActionHint,
   ApprovalDecisionRecord,
   AutopilotJob,
   AutonomousImprovementRun,
@@ -106,7 +109,9 @@ import type {
   Budget,
   BudgetLedgerEntry,
   BusinessIteration,
+  BusinessDailyStatus,
   BusinessMetricSnapshot,
+  BusinessOperatingDecision,
   BusinessOperatingRun,
   BusinessProposal,
   BusinessIdea,
@@ -131,6 +136,8 @@ import type {
   ExternalActionLock,
   ExternalPlatformRequirement,
   ExecutionReceipt,
+  RealityReceipt,
+  ReleasePublishStatus,
   GuildOfficeStation,
   ImprovementProposal,
   JobRun,
@@ -165,8 +172,10 @@ import type {
   ProductDraftApproval,
   ProductPreview,
   ProductPreviewSection,
+  ProductRevisionDiff,
   ProductRevisionRequest,
   PublishPayloadPreview,
+  RenderedProductPreview,
   ApprovalGateState,
   PublicResearchFetch,
   PublicResearchRun,
@@ -255,6 +264,7 @@ export interface AppDataState {
   businessOperatingRuns: BusinessOperatingRun[];
   businessIterations: BusinessIteration[];
   executionReceipts: ExecutionReceipt[];
+  realityReceipts: RealityReceipt[];
   researchQueryPlans: ResearchQueryPlan[];
   opportunityCandidates: OpportunityCandidate[];
   evidenceQualityScores: EvidenceQualityScore[];
@@ -262,11 +272,19 @@ export interface AppDataState {
   publishingPackages: PublishingPackage[];
   productBlueprints: ProductBlueprint[];
   productPreviews: ProductPreview[];
+  renderedProductPreviews: RenderedProductPreview[];
+  productRevisionDiffs: ProductRevisionDiff[];
   productPreviewSections: ProductPreviewSection[];
   productDraftApprovals: ProductDraftApproval[];
   productRevisionRequests: ProductRevisionRequest[];
   publishPayloadPreviews: PublishPayloadPreview[];
   approvalGateStates: ApprovalGateState[];
+  agentEvidenceTrails: AgentEvidenceTrail[];
+  agentEvidenceItems: AgentEvidenceItem[];
+  approvalActionHints: ApprovalActionHint[];
+  businessDailyStatuses: BusinessDailyStatus[];
+  businessOperatingDecisions: BusinessOperatingDecision[];
+  releasePublishStatuses: ReleasePublishStatus[];
   businessMetricSnapshots: BusinessMetricSnapshot[];
   budgetLedgerEntries: BudgetLedgerEntry[];
   autopilotJobs: AutopilotJob[];
@@ -375,6 +393,7 @@ type EntityKey =
   | "businessOperatingRuns"
   | "businessIterations"
   | "executionReceipts"
+  | "realityReceipts"
   | "researchQueryPlans"
   | "opportunityCandidates"
   | "evidenceQualityScores"
@@ -382,11 +401,19 @@ type EntityKey =
   | "publishingPackages"
   | "productBlueprints"
   | "productPreviews"
+  | "renderedProductPreviews"
+  | "productRevisionDiffs"
   | "productPreviewSections"
   | "productDraftApprovals"
   | "productRevisionRequests"
   | "publishPayloadPreviews"
   | "approvalGateStates"
+  | "agentEvidenceTrails"
+  | "agentEvidenceItems"
+  | "approvalActionHints"
+  | "businessDailyStatuses"
+  | "businessOperatingDecisions"
+  | "releasePublishStatuses"
   | "businessMetricSnapshots"
   | "budgetLedgerEntries"
   | "autopilotJobs"
@@ -505,6 +532,7 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "businessOperatingRuns", tableName: "business_operating_runs" },
   { stateKey: "businessIterations", tableName: "business_iterations" },
   { stateKey: "executionReceipts", tableName: "execution_receipts" },
+  { stateKey: "realityReceipts", tableName: "reality_receipts" },
   { stateKey: "researchQueryPlans", tableName: "research_query_plans" },
   { stateKey: "opportunityCandidates", tableName: "opportunity_candidates" },
   { stateKey: "evidenceQualityScores", tableName: "evidence_quality_scores" },
@@ -512,11 +540,19 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "publishingPackages", tableName: "publishing_packages" },
   { stateKey: "productBlueprints", tableName: "product_blueprints" },
   { stateKey: "productPreviews", tableName: "product_previews" },
+  { stateKey: "renderedProductPreviews", tableName: "rendered_product_previews" },
+  { stateKey: "productRevisionDiffs", tableName: "product_revision_diffs" },
   { stateKey: "productPreviewSections", tableName: "product_preview_sections" },
   { stateKey: "productDraftApprovals", tableName: "product_draft_approvals" },
   { stateKey: "productRevisionRequests", tableName: "product_revision_requests" },
   { stateKey: "publishPayloadPreviews", tableName: "publish_payload_previews" },
   { stateKey: "approvalGateStates", tableName: "approval_gate_states" },
+  { stateKey: "agentEvidenceTrails", tableName: "agent_evidence_trails" },
+  { stateKey: "agentEvidenceItems", tableName: "agent_evidence_items" },
+  { stateKey: "approvalActionHints", tableName: "approval_action_hints" },
+  { stateKey: "businessDailyStatuses", tableName: "business_daily_statuses" },
+  { stateKey: "businessOperatingDecisions", tableName: "business_operating_decisions" },
+  { stateKey: "releasePublishStatuses", tableName: "release_publish_statuses" },
   { stateKey: "businessMetricSnapshots", tableName: "business_metric_snapshots" },
   { stateKey: "budgetLedgerEntries", tableName: "budget_ledger_entries" },
   { stateKey: "autopilotJobs", tableName: "autopilot_jobs" },
@@ -619,6 +655,7 @@ export const initialAppDataState: AppDataState = {
   businessOperatingRuns: [],
   businessIterations: [],
   executionReceipts: [],
+  realityReceipts: [],
   researchQueryPlans: [],
   opportunityCandidates: [],
   evidenceQualityScores: [],
@@ -626,11 +663,19 @@ export const initialAppDataState: AppDataState = {
   publishingPackages: [],
   productBlueprints: [],
   productPreviews: [],
+  renderedProductPreviews: [],
+  productRevisionDiffs: [],
   productPreviewSections: [],
   productDraftApprovals: [],
   productRevisionRequests: [],
   publishPayloadPreviews: [],
   approvalGateStates: [],
+  agentEvidenceTrails: [],
+  agentEvidenceItems: [],
+  approvalActionHints: [],
+  businessDailyStatuses: [],
+  businessOperatingDecisions: [],
+  releasePublishStatuses: [],
   businessMetricSnapshots: [],
   budgetLedgerEntries: [],
   autopilotJobs: [],
@@ -1123,6 +1168,145 @@ function ensureProductPreviewRecords(state: AppDataState) {
   }
 }
 
+function upsertRealityReceipt(
+  state: AppDataState,
+  receipt: Omit<RealityReceipt, "createdAt" | "updatedAt"> & { createdAt?: string; updatedAt?: string },
+) {
+  const existingIndex = state.realityReceipts.findIndex((item) => item.id === receipt.id);
+  const now = nowIso();
+  const nextReceipt: RealityReceipt = {
+    ...receipt,
+    createdAt: receipt.createdAt ?? state.realityReceipts[existingIndex]?.createdAt ?? now,
+    updatedAt: receipt.updatedAt ?? now,
+  };
+  if (existingIndex >= 0) {
+    state.realityReceipts[existingIndex] = nextReceipt;
+    return;
+  }
+  state.realityReceipts.push(nextReceipt);
+}
+
+function ensureRealityReceipts(state: AppDataState) {
+  state.realityReceipts ??= [];
+  upsertRealityReceipt(state, {
+    id: "reality-seed-data",
+    mode: "mock_seed_data",
+    sourceType: "system",
+    sourceId: "seed-data",
+    title: "Mock seed data quarantine",
+    summary: "Sample quests and legacy seeded rows are treated as reference data, not proof that agents performed new work.",
+    whatHappened: ["Mission Control preserved starter/sample records so the UI has context on first launch."],
+    whatDidNotHappen: ["Seed data did not browse, publish, spend money, message anyone, or operate a real business."],
+    linkedPath: "/#/advanced",
+  });
+
+  for (const receipt of state.executionReceipts) {
+    const loweredSource = receipt.source?.toLowerCase() ?? "";
+    const mode =
+      receipt.status === "blocked"
+        ? "external_action_blocked"
+        : receipt.approvalRequired || receipt.externalAction
+          ? "pending_external_approval"
+          : loweredSource.includes("browser") || loweredSource.includes("public")
+            ? "real_public_read"
+            : "real_local";
+    upsertRealityReceipt(state, {
+      id: `reality-receipt-${receipt.id}`,
+      mode,
+      sourceType: "system",
+      sourceId: receipt.id,
+      title: receipt.title,
+      summary: receipt.summary,
+      whatHappened: [
+        `${receipt.actionType} recorded as ${receipt.status}.`,
+        `Budget effect: ${receipt.budgetEffect}.`,
+      ],
+      whatDidNotHappen: receipt.externalAction
+        ? ["External action remains behind an exact approval receipt."]
+        : ["No external publishing, spending, messaging, login, form submission, or purchase occurred."],
+      linkedPath: "/#/activity-log",
+      createdAt: receipt.createdAt,
+    });
+    if (!receipt.realityReceiptId) receipt.realityReceiptId = `reality-receipt-${receipt.id}`;
+  }
+
+  for (const artifact of state.browserResearchArtifacts) {
+    upsertRealityReceipt(state, {
+      id: `reality-browser-${artifact.id}`,
+      mode: "real_public_read",
+      sourceType: "research",
+      sourceId: artifact.id,
+      title: artifact.title,
+      summary: artifact.summary,
+      whatHappened: [`Safe browser research artifact recorded for ${artifact.url}.`],
+      whatDidNotHappen: ["No login, form submission, purchase, private host access, unrestricted crawling, or account action occurred."],
+      linkedPath: "/#/mission-briefs",
+      createdAt: artifact.createdAt,
+      updatedAt: artifact.createdAt,
+    });
+  }
+
+  for (const preview of state.productPreviews) {
+    const blueprint = state.productBlueprints.find((item) => item.id === preview.blueprintId);
+    upsertRealityReceipt(state, {
+      id: `reality-product-${preview.id}`,
+      mode: "local_draft",
+      sourceType: "product",
+      sourceId: preview.id,
+      title: blueprint?.name ?? "Local product draft",
+      summary: "Product Studio preview is local-only until the user approves a separate external publishing action.",
+      whatHappened: ["Agents prepared a local product preview for review."],
+      whatDidNotHappen: ["The app did not publish, submit platform forms, spend money, send messages, or run connector automation."],
+      linkedPath: "/#/production",
+      createdAt: preview.createdAt,
+      updatedAt: preview.updatedAt,
+    });
+    if (!preview.realityReceiptId) preview.realityReceiptId = `reality-product-${preview.id}`;
+  }
+
+  for (const approval of state.approvalRequests) {
+    const blocked = approval.status === "blocked";
+    upsertRealityReceipt(state, {
+      id: `reality-approval-${approval.id}`,
+      mode: blocked ? "external_action_blocked" : "pending_external_approval",
+      sourceType: "approval",
+      sourceId: approval.id,
+      title: approval.title,
+      summary: approval.reason,
+      whatHappened: [blocked ? "Safety policy blocked this request." : "An approval record exists for user review."],
+      whatDidNotHappen: ["The external/risky action cannot run without the exact approval being accepted."],
+      linkedPath: "/#/approvals",
+      createdAt: approval.createdAt,
+      updatedAt: approval.createdAt,
+    });
+  }
+
+  for (const command of state.openClawCommands) {
+    const executionMode = command.executionMode ?? "mock";
+    const mode =
+      command.status === "blocked"
+        ? "external_action_blocked"
+        : executionMode === "real_local"
+          ? "real_local"
+          : executionMode === "dry_run"
+            ? "real_local"
+            : "simulated";
+    upsertRealityReceipt(state, {
+      id: `reality-command-${command.id}`,
+      mode,
+      sourceType: "command",
+      sourceId: command.id,
+      title: command.command,
+      summary: command.resultSummary ?? "OpenClaw command record.",
+      whatHappened: [`Command status: ${command.status}.`, `Execution mode: ${executionMode}.`],
+      whatDidNotHappen: ["Blocked commands, --deliver, broadcast, spending, publishing, purchases, and account actions are not run automatically."],
+      linkedPath: "/#/system",
+      createdAt: command.createdAt,
+      updatedAt: command.completedAt ?? command.startedAt ?? command.createdAt,
+    });
+  }
+}
+
 function normalizePhase6BState(state: AppDataState) {
   state.missionDrafts ??= [];
   state.missionRuns ??= [];
@@ -1183,6 +1367,7 @@ function normalizePhase6BState(state: AppDataState) {
   state.businessOperatingRuns ??= [];
   state.businessIterations ??= [];
   state.executionReceipts ??= [];
+  state.realityReceipts ??= [];
   state.researchQueryPlans ??= [];
   state.opportunityCandidates ??= [];
   state.evidenceQualityScores ??= [];
@@ -1190,11 +1375,19 @@ function normalizePhase6BState(state: AppDataState) {
   state.publishingPackages ??= [];
   state.productBlueprints ??= [];
   state.productPreviews ??= [];
+  state.renderedProductPreviews ??= [];
+  state.productRevisionDiffs ??= [];
   state.productPreviewSections ??= [];
   state.productDraftApprovals ??= [];
   state.productRevisionRequests ??= [];
   state.publishPayloadPreviews ??= [];
   state.approvalGateStates ??= [];
+  state.agentEvidenceTrails ??= [];
+  state.agentEvidenceItems ??= [];
+  state.approvalActionHints ??= [];
+  state.businessDailyStatuses ??= [];
+  state.businessOperatingDecisions ??= [];
+  state.releasePublishStatuses ??= [];
   state.businessMetricSnapshots ??= [];
   state.budgetLedgerEntries ??= [];
   state.autopilotJobs ??= [];
@@ -1224,6 +1417,7 @@ function normalizePhase6BState(state: AppDataState) {
     };
   });
   ensureProductPreviewRecords(state);
+  ensureRealityReceipts(state);
   state.agentPerformanceMemories ??= cloneState(initialAppDataState).agentPerformanceMemories;
   state.skillGapRequests ??= cloneState(initialAppDataState).skillGapRequests;
   state.publishingConnectors ??= cloneState(initialAppDataState).publishingConnectors;

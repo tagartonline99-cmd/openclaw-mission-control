@@ -2780,7 +2780,7 @@ dependencies = [
 
 [[package]]
 name = "openclaw-mission-control"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "reqwest",
  "serde",

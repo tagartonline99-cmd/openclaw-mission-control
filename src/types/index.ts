@@ -196,6 +196,23 @@ export type BusinessOperatingRunStatus = "running" | "paused" | "complete" | "bl
 export type BusinessIterationPhase = "research" | "validate" | "produce" | "review" | "improve";
 export type BusinessIterationStatus = "queued" | "running" | "complete" | "blocked";
 export type ExecutionReceiptStatus = "success" | "warning" | "blocked" | "failed" | "pending";
+export type RealityMode =
+  | "real_local"
+  | "real_public_read"
+  | "local_draft"
+  | "simulated"
+  | "mock_seed_data"
+  | "pending_external_approval"
+  | "external_action_blocked";
+export type RealitySourceType =
+  | "teamleader_command"
+  | "agent_task"
+  | "research"
+  | "product"
+  | "approval"
+  | "command"
+  | "business"
+  | "system";
 export type EvidenceQualityGrade = "strong" | "moderate" | "weak" | "unsupported";
 export type LocalAssetFileType = "fiverr_gig" | "landing_page" | "article" | "newsletter" | "template" | "sop" | "obsidian_pack";
 export type LocalAssetFileStatus = "planned" | "preview_only" | "written" | "blocked";
@@ -628,6 +645,8 @@ export interface ApprovedBusiness {
   readinessChecklist: Array<{ label: string; status: ReadinessStatus; detail: string }>;
   risks: string[];
   nextAction: string;
+  dailyStatusId?: string;
+  realityReceiptId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -648,6 +667,8 @@ export interface BusinessTask {
   expectedOutput: string;
   approvalRequired: boolean;
   logs: string[];
+  evidenceTrailId?: string;
+  realityReceiptId?: string;
   startedAt?: string;
   updatedAt: string;
   completedAt?: string;
@@ -769,7 +790,22 @@ export interface ExecutionReceipt {
   approvalRequired: boolean;
   status: ExecutionReceiptStatus;
   nextAction: string;
+  realityReceiptId?: string;
   createdAt: string;
+}
+
+export interface RealityReceipt {
+  id: string;
+  mode: RealityMode;
+  sourceType: RealitySourceType;
+  sourceId: string;
+  title: string;
+  summary: string;
+  whatHappened: string[];
+  whatDidNotHappen: string[];
+  linkedPath?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ResearchQueryPlan {
@@ -879,10 +915,40 @@ export interface ProductPreview {
   claimsSafetyStatus: ReadinessStatus;
   missingItems: string[];
   readinessScore: number;
+  renderedPreviewIds?: string[];
+  realityReceiptId?: string;
   approvalGateStateId?: string;
   publishPayloadPreviewId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface RenderedProductPreview {
+  id: string;
+  previewId: string;
+  businessId: string;
+  mode: "fiverr_mockup" | "landing_page" | "article" | "newsletter" | "template_sop" | "obsidian_proof_pack";
+  title: string;
+  summary: string;
+  renderedHtml?: string;
+  textPreview: string;
+  sourceSectionIds: string[];
+  filePath?: string;
+  status: "draft" | "ready" | "blocked";
+  realityReceiptId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductRevisionDiff {
+  id: string;
+  previewId: string;
+  businessId: string;
+  fromRevisionLabel: string;
+  toRevisionLabel: string;
+  summary: string;
+  changedSections: string[];
+  createdAt: string;
 }
 
 export interface ProductPreviewSection {
@@ -953,6 +1019,98 @@ export interface ApprovalGateState {
   reason: string;
   actionLabel: string;
   linkedPath: string;
+  actionHintIds?: string[];
+  realityReceiptId?: string;
+  updatedAt: string;
+}
+
+export interface AgentEvidenceTrail {
+  id: string;
+  businessId?: string;
+  proposalId?: string;
+  huntId?: string;
+  commandMessageId?: string;
+  agentId: MissionAgentId | "TeamLeader1A";
+  title: string;
+  summary: string;
+  itemIds: string[];
+  status: "complete" | "partial" | "failed" | "running";
+  realityMode: RealityMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentEvidenceItem {
+  id: string;
+  trailId: string;
+  agentId: MissionAgentId | "TeamLeader1A";
+  inputPrompt: string;
+  outputArtifact: string;
+  citationIds: string[];
+  logRefs: string[];
+  nextHandoffAgent?: MissionAgentId | "TeamLeader1A";
+  realityMode: RealityMode;
+  createdAt: string;
+}
+
+export interface ApprovalActionHint {
+  id: string;
+  gateId?: string;
+  approvalId?: string;
+  businessId?: string;
+  previewId?: string;
+  lane: "pending" | "ready_to_request" | "locked" | "blocked";
+  title: string;
+  why: string;
+  missing: string[];
+  fixPath: string;
+  expectedAfterFix: string;
+  realityMode: RealityMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BusinessDailyStatus {
+  id: string;
+  businessId: string;
+  todaysObjective: string;
+  currentExperiment: string;
+  activeTaskIds: string[];
+  latestEvidenceIds: string[];
+  latestProductPreviewId?: string;
+  metricSnapshotId?: string;
+  budgetLedgerEntryIds: string[];
+  lastDecisionId?: string;
+  nextBestAction: string;
+  realityReceiptId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface BusinessOperatingDecision {
+  id: string;
+  businessId: string;
+  decision: "continue" | "revise" | "pause" | "kill" | "scale_later";
+  rationale: string;
+  metricSnapshotId?: string;
+  budgetEffect: string;
+  requiresExternalApproval: boolean;
+  approvalId?: string;
+  createdAt: string;
+}
+
+export interface ReleasePublishStatus {
+  id: string;
+  version: string;
+  gitCommit?: string;
+  gitTag?: string;
+  signedArtifacts: string[];
+  latestJsonPath?: string;
+  githubReleaseUrl?: string;
+  uploadStatus: "not_started" | "prepared" | "blocked_auth" | "uploaded" | "verified" | "failed";
+  updaterVerified: boolean;
+  notes: string[];
+  createdAt: string;
   updatedAt: string;
 }
 

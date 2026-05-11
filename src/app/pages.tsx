@@ -48,6 +48,7 @@ import { AgentOrchestrationWorkbench } from "../components/orchestration/AgentOr
 import { RealPilotWorkbench } from "../components/pilot/RealPilotWorkbench";
 import { ProductionPipelineWorkbench } from "../components/production/ProductionPipelineWorkbench";
 import { QuestBoard } from "../components/quests/QuestBoard";
+import { RealityMeter, RealityPill } from "../components/reality/RealityMeter";
 import { SecondBrainPanel } from "../components/second-brain/SecondBrainPanel";
 import { BusinessTasksBoard } from "../components/tasks/BusinessTasksBoard";
 import { UpdateManager } from "../components/updater/UpdateManager";
@@ -142,6 +143,7 @@ export function DashboardPage() {
           </div>
         }
       />
+      <RealityMeter scope="dashboard" compact />
       <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
         Local persistence adapter: {adapter}. Simulated queues only run while this app is open and never execute external actions.
       </div>
@@ -208,6 +210,7 @@ export function CommandPage() {
         description="This is the main control surface. When you command TeamLeader1A, the work appears in Tasks, Guild Office, Mission Briefs, and Businesses so you can see the agents moving."
         action={<Badge tone="teal"><MessageSquare className="h-3.5 w-3.5" /> TeamLeader1A only</Badge>}
       />
+      <RealityMeter scope="TeamLeader command screen" />
       <div className="grid gap-4 md:grid-cols-4">
         <MetricCard label="Active work" value={activeHunt ? activeHunt.status.replace(/_/g, " ") : "none"} detail={activeHunt?.currentPhase ?? "Send a TeamLeader command to start."} icon={<Sparkles className="h-4 w-4" />} tone="teal" />
         <MetricCard label="Agents working" value={activeTasks} detail="Visible in the Tasks tab and Guild Office." icon={<Activity className="h-4 w-4" />} tone="amber" />
@@ -255,6 +258,7 @@ export function TasksPage() {
         description="Tasks are created from TeamLeader1A commands and grouped by what is happening now, queued, blocked, approval-needed, and done."
         action={<Badge tone="teal"><ListChecks className="h-3.5 w-3.5" /> Live task tab</Badge>}
       />
+      <RealityMeter scope="agent task queue" compact />
       <NowCommandCenter compact />
       <BusinessTasksBoard />
     </div>
@@ -284,6 +288,7 @@ export function BusinessesPage() {
         description="Only approved TeamLeader1A proposals appear here. Each business shows its production, content, publishing destination, risks, validation score, and next action."
         action={<Badge tone="teal"><BriefcaseBusiness className="h-3.5 w-3.5" /> Business OS</Badge>}
       />
+      <RealityMeter scope="approved businesses" compact />
       <NowCommandCenter compact />
       <BusinessesWorkbench />
     </div>
@@ -313,6 +318,7 @@ export function MissionBriefPage() {
         description="Review mission drafts, approve exact local OpenClaw agent turns, and inspect the unified brief with research, SEO, content, production, validation, risks, logs, and next approval-gated actions."
         action={<Badge tone="teal"><Workflow className="h-3.5 w-3.5" /> Batch local turns</Badge>}
       />
+      <RealityMeter scope="mission briefs" compact />
       <MissionBriefWorkbench />
     </div>
   );
@@ -520,6 +526,7 @@ export function ProductionPipelinePage() {
         title="Production asset pipeline"
         description="Create local landing pages, briefs, lead magnets, templates, newsletters, and product drafts with claim checks before anything goes public."
       />
+      <RealityMeter scope="Product Studio" />
       <ProductionPipelineWorkbench />
     </div>
   );
@@ -876,6 +883,7 @@ export function ApprovalsPage() {
         title="Approval gates for risky actions"
         description="No money, publishing, launching, scaling, external automation, capability connection, or OpenClaw external command proceeds without user approval."
       />
+      <RealityMeter scope="approval inbox" compact />
       <ApprovalCenter />
     </div>
   );
@@ -892,6 +900,7 @@ export function ActivityLogPage() {
         title="Activity, decisions, and lessons"
         description="A durable feed of agent activity, decisions, failures, wins, approvals, OpenClaw events, Obsidian exports, and experiment updates."
       />
+      <RealityMeter scope="activity ledger" compact />
       <Card>
         <CardContent className="space-y-3 p-4">
           {activityLogs.map((log) => (
@@ -904,7 +913,10 @@ export function ActivityLogPage() {
                     <p className="text-xs uppercase text-slate-500">{log.category} / {formatDateTime(log.createdAt)}</p>
                   </div>
                 </div>
-                <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${statusTone(log.severity)}`}>{log.severity}</span>
+                <div className="flex flex-wrap items-center gap-2">
+                  <RealityPill mode={log.category === "system" ? "simulated" : log.category === "approval" ? "pending_external_approval" : "real_local"} />
+                  <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${statusTone(log.severity)}`}>{log.severity}</span>
+                </div>
               </div>
               <p className="mt-3 text-sm leading-6 text-slate-300">{log.detail}</p>
               {log.relatedMissionRunId ? (
@@ -933,6 +945,7 @@ export function OpenClawSystemPage() {
         title="OpenClaw integration architecture"
         description="Phase 5 connects to the local OpenClaw CLI with per-action approval gates for gateway start, TeamLeader1A turns, approved URL research, and channel messaging."
       />
+      <RealityMeter scope="OpenClaw system" compact />
       <OpenClawPanel />
       <UpdateManager compact />
     </div>
