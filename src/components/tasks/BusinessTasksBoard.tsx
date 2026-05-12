@@ -25,9 +25,28 @@ function taskAgentName(agentId: string) {
 export function BusinessTasksBoard() {
   const { data } = useAppData();
   const [teamLeaderOnly, setTeamLeaderOnly] = useState(true);
+  const displayTasks = useMemo(() => {
+    const completedHuntIds = new Set(
+      data.opportunityHunts
+        .filter((hunt) => ["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status) || /finished the proposal|review it in mission briefs|proposal draft exists/i.test(hunt.currentPhase ?? ""))
+        .map((hunt) => hunt.id),
+    );
+    const completedProposalIds = new Set(
+      data.businessProposals
+        .filter((proposal) => ["ready_for_review", "approved", "revision_requested", "rejected"].includes(proposal.status))
+        .map((proposal) => proposal.id),
+    );
+    return data.businessTasks.map((task) => {
+      const staleFinished =
+        task.status !== "done" &&
+        ((task.huntId && completedHuntIds.has(task.huntId)) || (task.proposalId && completedProposalIds.has(task.proposalId))) &&
+        !task.approvalRequired;
+      return staleFinished ? { ...task, status: "done" as const, progress: 100 } : task;
+    });
+  }, [data.businessProposals, data.businessTasks, data.opportunityHunts]);
   const visibleTasks = useMemo(
-    () => teamLeaderOnly ? data.businessTasks.filter((task) => task.huntId || task.proposalId || task.businessId) : data.businessTasks,
-    [data.businessTasks, teamLeaderOnly],
+    () => teamLeaderOnly ? displayTasks.filter((task) => task.huntId || task.proposalId || task.businessId) : displayTasks,
+    [displayTasks, teamLeaderOnly],
   );
   const [selectedTaskId, setSelectedTaskId] = useState(visibleTasks[0]?.id ?? "");
   const selectedTask = visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks[0];

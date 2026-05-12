@@ -162,14 +162,19 @@ async function waitForWrittenProductFiles(startedAtMs, timeoutMs = 1_200_000) {
   return { status: "timeout", written: 0, rootPath: "", error: "Timed out waiting for real product files on disk." };
 }
 
-function readReadyProposalProof(beforeCount) {
+function readReadyProposalProof(beforeCount, stamp = "") {
   try {
     const db = new DatabaseSync(sqlitePath, { readOnly: true });
     try {
+      const huntRows = stamp
+        ? db.prepare("SELECT payload FROM opportunity_hunts WHERE payload LIKE ?").all(`%${stamp}%`)
+        : [];
+      const stampedHuntIds = new Set(huntRows.map((row) => JSON.parse(row.payload).id));
       const rows = db.prepare("SELECT payload FROM business_proposals").all();
       const proposals = rows
         .map((row) => JSON.parse(row.payload))
         .filter((proposal) => proposal.status === "ready_for_review")
+        .filter((proposal) => stampedHuntIds.size === 0 || stampedHuntIds.has(proposal.huntId))
         .sort((a, b) => String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")));
       if (!proposals.length) return false;
       return {
@@ -186,14 +191,14 @@ function readReadyProposalProof(beforeCount) {
   }
 }
 
-async function waitForReadyProposal(beforeCount, timeoutMs = 180_000) {
+async function waitForReadyProposal(beforeCount, timeoutMs = 180_000, stamp = "") {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const proof = readReadyProposalProof(beforeCount);
+    const proof = readReadyProposalProof(beforeCount, stamp);
     if (proof?.isNew) return proof;
     await delay(2_000);
   }
-  return readReadyProposalProof(beforeCount);
+  return readReadyProposalProof(beforeCount, stamp);
 }
 
 async function route(client, hash, text) {
@@ -225,6 +230,25 @@ async function click(client, text, index = 0) {
   await client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: box.x, y: box.y, button: "none" });
   await client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: box.x, y: box.y, button: "left", clickCount: 1 });
   await client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: box.x, y: box.y, button: "left", clickCount: 1 });
+}
+
+async function domClick(client, text, index = 0) {
+  const ok = await client.evaluate(`
+    (() => {
+      const buttons = [...document.querySelectorAll("button")]
+        .filter((button) => button.innerText.includes(${JSON.stringify(text)}) && !button.disabled && button.getClientRects().length > 0);
+      const button = buttons[${index}];
+      if (!button) return false;
+      button.scrollIntoView({ block: "center" });
+      button.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      button.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, button: 0 }));
+      button.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, button: 0 }));
+      button.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, button: 0 }));
+      button.click();
+      return true;
+    })()
+  `);
+  assert(ok, `Could not activate ${text}`);
 }
 
 async function setFirstSelect(client, value) {
@@ -350,7 +374,7 @@ async function main() {
       "quick opportunity hunt start",
       60_000,
     );
-    const proposalProof = await waitForReadyProposal(Number(beforeProposalRows), 180_000);
+    const proposalProof = await waitForReadyProposal(Number(beforeProposalRows), 180_000, stamp);
     assert(proposalProof.status === "ready_for_review", `Expected an approval-ready proposal, got ${JSON.stringify(proposalProof)}`);
 
     console.log("check tasks");
@@ -377,7 +401,7 @@ async function main() {
       60_000,
     );
     const productStartMs = Date.now();
-    await click(client, "Approve Business");
+    await domClick(client, "Approve Business");
     const productProof = await waitForWrittenProductFiles(productStartMs, 1_200_000);
     assert(productProof.status === "complete", `Product Factory did not complete: ${JSON.stringify(productProof)}`);
     assert(productProof.written >= 7, `Expected written product files, got ${JSON.stringify(productProof)}`);
@@ -393,6 +417,56 @@ async function main() {
       "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('product build status') && text.includes('real openclaw build complete') && text.includes('exact product preview') && text.includes('real local files written') && text.includes('product qa gate') && text.includes('product files passed qa checks') && text.includes('mission-control-products'); })()",
       "real Product Studio output",
       120_000,
+    );
+    await domClick(client, "Approve Local Draft");
+    await waitFor(
+      client,
+      "document.body.innerText.includes('Local Draft Approved')",
+      "local draft approval recorded",
+      60_000,
+    );
+    await domClick(client, "Prepare Publish Approval");
+    await route(client, "/approvals", "Approval gates for risky actions");
+    const beforePublishPacketRows = await client.evaluate(`(async () => {
+      const invoke = window.__TAURI_INTERNALS__?.invoke;
+      if (!invoke) return 0;
+      const db = await invoke("plugin:sql|load", { db: "sqlite:openclaw-mission-control.db" });
+      const rows = await invoke("plugin:sql|select", {
+        db,
+        query: "SELECT id FROM product_file_records WHERE payload LIKE ?",
+        values: ["%approved-publish-packet.md%"],
+      });
+      return rows.length;
+    })()`);
+    await waitFor(
+      client,
+      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('publish approval') && text.includes('publish externally') && text.includes('approve locally'); })()",
+      "publish approval appears",
+      60_000,
+    );
+    await domClick(client, "Approve locally");
+    await waitFor(
+      client,
+      `(async () => {
+        const invoke = window.__TAURI_INTERNALS__?.invoke;
+        if (!invoke) return false;
+        const db = await invoke("plugin:sql|load", { db: "sqlite:openclaw-mission-control.db" });
+        const rows = await invoke("plugin:sql|select", {
+          db,
+          query: "SELECT id FROM product_file_records WHERE payload LIKE ?",
+          values: ["%approved-publish-packet.md%"],
+        });
+        return rows.length > ${Number(beforePublishPacketRows)};
+      })()`,
+      "approved publish packet execution receipt",
+      60_000,
+    );
+    await route(client, "/production", "Product Studio");
+    await waitFor(
+      client,
+      "(() => { const text = document.body.innerText.toLowerCase(); return text.includes('approved-publish-packet.md') && text.includes('approved-publish-payload.json'); })()",
+      "approved publish packet files visible",
+      60_000,
     );
 
     console.log("check sqlite rows");
@@ -459,7 +533,7 @@ async function main() {
 
     console.log("check updater marker/version");
     await route(client, "/settings", "Auto Updates");
-    await waitFor(client, "document.body.innerText.toLowerCase().includes('product qa gate release')", `${expectedVersion} updater marker`);
+    await waitFor(client, "document.body.innerText.toLowerCase().includes('approved publish packet release')", `${expectedVersion} updater marker`);
     evidence.appVersion = await waitFor(
       client,
       `(async () => {

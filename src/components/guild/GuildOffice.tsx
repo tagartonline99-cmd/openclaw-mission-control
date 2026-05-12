@@ -16,6 +16,7 @@ const stationIcons: Record<string, React.ReactNode> = {
   "station-content": <Sparkles className="h-5 w-5 text-amber-100" />,
   "station-writer": <PenLine className="h-5 w-5 text-stone-100" />,
   "station-production": <Hammer className="h-5 w-5 text-emerald-100" />,
+  "station-factcheck": <ShieldCheck className="h-5 w-5 text-emerald-100" />,
   "station-publish": <Lock className="h-5 w-5 text-red-100" />,
   "station-action": <ShieldCheck className="h-5 w-5 text-teal-100" />,
 };

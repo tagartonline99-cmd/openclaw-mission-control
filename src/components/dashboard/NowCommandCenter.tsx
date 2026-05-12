@@ -9,7 +9,22 @@ import { ClarityBadge, clarityLabelFromStatus } from "./ClarityBadge";
 export function NowCommandCenter({ compact = false }: { compact?: boolean }) {
   const { data } = useAppData();
   const activeHunt = data.opportunityHunts.find((hunt) => !["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status)) ?? data.opportunityHunts[0];
-  const activeTasks = data.businessTasks.filter((task) => task.status === "now_working");
+  const completedHuntIds = new Set(
+    data.opportunityHunts
+      .filter((hunt) => ["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status) || /finished the proposal|review it in mission briefs|proposal draft exists/i.test(hunt.currentPhase ?? ""))
+      .map((hunt) => hunt.id),
+  );
+  const completedProposalIds = new Set(
+    data.businessProposals
+      .filter((proposal) => ["ready_for_review", "approved", "revision_requested", "rejected"].includes(proposal.status))
+      .map((proposal) => proposal.id),
+  );
+  const activeTasks = data.businessTasks.filter(
+    (task) =>
+      task.status === "now_working" &&
+      !(task.huntId && completedHuntIds.has(task.huntId)) &&
+      !(task.proposalId && completedProposalIds.has(task.proposalId)),
+  );
   const latestProposal = data.businessProposals[0];
   const latestBusiness = data.approvedBusinesses[0];
   const latestPreview = latestBusiness ? data.productPreviews.find((preview) => preview.businessId === latestBusiness.id) : data.productPreviews[0];

@@ -200,7 +200,22 @@ export function DashboardPage() {
 export function CommandPage() {
   const { data } = useAppData();
   const activeHunt = data.opportunityHunts.find((hunt) => !["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status)) ?? data.opportunityHunts[0];
-  const activeTasks = data.businessTasks.filter((task) => task.status === "now_working").length;
+  const completedHuntIds = new Set(
+    data.opportunityHunts
+      .filter((hunt) => ["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status) || /finished the proposal|review it in mission briefs|proposal draft exists/i.test(hunt.currentPhase ?? ""))
+      .map((hunt) => hunt.id),
+  );
+  const completedProposalIds = new Set(
+    data.businessProposals
+      .filter((proposal) => ["ready_for_review", "approved", "revision_requested", "rejected"].includes(proposal.status))
+      .map((proposal) => proposal.id),
+  );
+  const activeTasks = data.businessTasks.filter(
+    (task) =>
+      task.status === "now_working" &&
+      !(task.huntId && completedHuntIds.has(task.huntId)) &&
+      !(task.proposalId && completedProposalIds.has(task.proposalId)),
+  ).length;
   const readyProposals = data.businessProposals.filter((proposal) => proposal.status === "ready_for_review").length;
   const activeBusinesses = data.approvedBusinesses.filter((business) => business.status === "active").length;
 

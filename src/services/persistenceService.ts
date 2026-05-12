@@ -852,6 +852,35 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+const reviewCompleteHuntStatuses = new Set<OpportunityHunt["status"]>([
+  "ready_to_review",
+  "approved_as_business",
+  "rejected",
+]);
+
+const reviewCompleteProposalStatuses = new Set<BusinessProposal["status"]>([
+  "ready_for_review",
+  "approved",
+  "revision_requested",
+  "rejected",
+]);
+
+const unfinishedTaskStatuses = new Set<BusinessTask["status"]>(["now_working", "queued"]);
+
+function agentDisplayName(agentId: string) {
+  const labels: Record<string, string> = {
+    teamleader1a: "TeamLeader1A",
+    "agent-researcher": "AgentResearcher",
+    "agent-seo": "AgentSeo",
+    "agent-content": "AgentContent",
+    "agent-writer": "AgentWriter",
+    "agent-production": "AgentProduction",
+    "agent-publish": "AgentPublish",
+    "agent-action": "AgentAction",
+  };
+  return labels[agentId] ?? agentId;
+}
+
 function getRecordId(record: unknown) {
   const id = (record as { id?: unknown }).id;
   return typeof id === "string" ? id : crypto.randomUUID();
@@ -1741,6 +1770,111 @@ function ensureCanonicalOpenClawRoster(state: AppDataState) {
   state.agents = [...restoredCanonicalAgents, ...customAgents];
 }
 
+function ensureCompleteGuildOfficeStations(state: AppDataState) {
+  const baselineStations = cloneState(initialAppDataState).guildOfficeStations;
+  const savedStations = Array.isArray(state.guildOfficeStations) ? state.guildOfficeStations : [];
+  const savedById = new Map(savedStations.map((station) => [station.id, station]));
+  const canonicalIds = new Set(baselineStations.map((station) => station.id));
+  const now = nowIso();
+
+  const restoredStations = baselineStations.map((station) => {
+    const saved = savedById.get(station.id);
+    if (!saved) return { ...station, updatedAt: now };
+    return {
+      ...station,
+      ...saved,
+      name: station.name,
+      room: station.room,
+      agentId: station.agentId,
+      status: saved.status ?? station.status,
+      motion: saved.motion ?? station.motion,
+      currentTask: saved.currentTask || station.currentTask,
+      lastOutput: saved.lastOutput || station.lastOutput,
+      progress: Number.isFinite(saved.progress) ? saved.progress : station.progress,
+      updatedAt: saved.updatedAt ?? now,
+    };
+  });
+  const customStations = savedStations.filter((station) => !canonicalIds.has(station.id));
+  state.guildOfficeStations = [...restoredStations, ...customStations];
+}
+
+function huntHasReachedProposalReview(state: AppDataState, hunt: OpportunityHunt) {
+  if (reviewCompleteHuntStatuses.has(hunt.status)) return true;
+  const proposal = state.businessProposals.find((item) => item.huntId === hunt.id || item.id === hunt.businessProposalId);
+  if (proposal && reviewCompleteProposalStatuses.has(proposal.status)) return true;
+  return /finished the proposal|review it in mission briefs|proposal draft exists/i.test(hunt.currentPhase ?? "");
+}
+
+function reconcileCompletedOpportunityWork(state: AppDataState) {
+  const completedHuntIds = new Set(
+    state.opportunityHunts
+      .filter((hunt) => huntHasReachedProposalReview(state, hunt))
+      .map((hunt) => hunt.id),
+  );
+  if (completedHuntIds.size === 0) return;
+
+  const now = nowIso();
+  const reconciledTaskIds = new Set<string>();
+  state.businessTasks = state.businessTasks.map((task) => {
+    if (!task.huntId || !completedHuntIds.has(task.huntId) || !unfinishedTaskStatuses.has(task.status) || task.approvalRequired) return task;
+    reconciledTaskIds.add(task.id);
+    const completionLog = `${agentDisplayName(task.agentId)} completed ${task.currentArtifact || task.expectedOutput}; reconciled from finished TeamLeader proposal.`;
+    return {
+      ...task,
+      status: "done",
+      progress: 100,
+      logs: [completionLog, ...task.logs.filter((log) => log !== completionLog)].slice(0, 6),
+      completedAt: task.completedAt ?? now,
+      updatedAt: now,
+    };
+  });
+
+  if (reconciledTaskIds.size === 0) return;
+
+  state.agentWorkSessions = state.agentWorkSessions.map((session) => {
+    if (!session.taskId || !reconciledTaskIds.has(session.taskId)) return session;
+    const task = state.businessTasks.find((item) => item.id === session.taskId);
+    return {
+      ...session,
+      status: "idle",
+      motion: "idle",
+      currentTask: "Finished and sent artifact to TeamLeader1A.",
+      currentOutput: `${task?.currentArtifact || "Artifact"} ready`,
+      progress: 100,
+      updatedAt: now,
+    };
+  });
+
+  state.guildOfficeStations = state.guildOfficeStations.map((station) => {
+    if (!station.taskId || !reconciledTaskIds.has(station.taskId)) return station;
+    const task = state.businessTasks.find((item) => item.id === station.taskId);
+    return {
+      ...station,
+      status: "idle",
+      motion: "idle",
+      currentTask: "Finished and sent artifact to TeamLeader1A.",
+      lastOutput: `${task?.currentArtifact || "Artifact"} ready`,
+      progress: 100,
+      updatedAt: now,
+    };
+  });
+
+  const alreadyLogged = state.activityLogs.some((log) => log.id === "log-work-state-reconciled");
+  if (!alreadyLogged) {
+    state.activityLogs = [
+      {
+        id: "log-work-state-reconciled",
+        category: "agent",
+        title: "Agent work state reconciled",
+        detail: "Mission Control cleared stale Now Working tasks after TeamLeader1A had already finished the proposal. No external action ran.",
+        severity: "success",
+        createdAt: now,
+      } satisfies ActivityLog,
+      ...state.activityLogs,
+    ].slice(0, 80);
+  }
+}
+
 function normalizePhase6BState(state: AppDataState) {
   ensureCanonicalOpenClawRoster(state);
   state.missionDrafts ??= [];
@@ -1804,6 +1938,7 @@ function normalizePhase6BState(state: AppDataState) {
   state.businessTasks ??= [];
   state.agentWorkSessions ??= [];
   state.guildOfficeStations ??= cloneState(initialAppDataState).guildOfficeStations;
+  ensureCompleteGuildOfficeStations(state);
   state.researchEvidence ??= [];
   state.productionDestinations ??= [];
   state.contentInventoryItems ??= [];
@@ -1870,6 +2005,8 @@ function normalizePhase6BState(state: AppDataState) {
       readinessChecklist: business.readinessChecklist ?? proposal?.readinessChecklist ?? [],
     };
   });
+  reconcileCompletedOpportunityWork(state);
+  ensureCompleteGuildOfficeStations(state);
   ensureProductPreviewRecords(state);
   ensureRenderedProductPreviewRecords(state);
   ensureAgentEvidenceTrails(state);

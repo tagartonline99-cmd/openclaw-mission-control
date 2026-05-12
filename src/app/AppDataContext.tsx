@@ -3320,12 +3320,24 @@ function buildOpportunityHuntState(
 }
 
 function syncGuildStations(state: AppDataState) {
+  const savedById = new Map(state.guildOfficeStations.map((station) => [station.id, station]));
+  const canonicalIds = new Set(initialAppDataState.guildOfficeStations.map((station) => station.id));
+  const completeStations = [
+    ...initialAppDataState.guildOfficeStations.map((station) => ({
+      ...station,
+      ...(savedById.get(station.id) ?? {}),
+      name: station.name,
+      room: station.room,
+      agentId: station.agentId,
+    })),
+    ...state.guildOfficeStations.filter((station) => !canonicalIds.has(station.id)),
+  ];
   const latestSessionsByAgent = new Map<MissionAgentId, AgentWorkSession>();
   for (const session of state.agentWorkSessions) {
     const existing = latestSessionsByAgent.get(session.agentId);
     if (!existing || existing.updatedAt < session.updatedAt) latestSessionsByAgent.set(session.agentId, session);
   }
-  return state.guildOfficeStations.map((station) => {
+  return completeStations.map((station) => {
     if (station.id === "station-factcheck") {
       const latest = [...state.factCheckRuns].sort((a, b) => (b.completedAt ?? b.startedAt).localeCompare(a.completedAt ?? a.startedAt))[0];
       if (!latest) return station;
@@ -4447,6 +4459,9 @@ function learningFromQuestState(state: AppDataState, questId: string): { card: L
 
 function approvalDecisionDetail(status: ApprovalStatus, request?: ApprovalRequest) {
   if (!request?.payload) {
+    if (status === "approved" && request?.type === "Publish externally") {
+      return `TeamLeader1A recorded approval for ${request.title}. Mission Control prepared the approved local publish packet only; no external platform action, login, form submission, connector execution, messaging, purchase, or spending ran.`;
+    }
     return `TeamLeader1A recorded a local ${status} decision. No external action was executed.`;
   }
   if (status === "approved") {
@@ -4686,11 +4701,180 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         await persist(blockedState);
         return;
       }
+      const publishPacket =
+        status === "approved" && !existingApproval.payload && existingApproval.type === "Publish externally" && existingApproval.publishPayloadPreviewId
+          ? await (async () => {
+              const payloadPreview = current.publishPayloadPreviews.find((item) => item.id === existingApproval.publishPayloadPreviewId);
+              const preview = existingApproval.productPreviewId ? current.productPreviews.find((item) => item.id === existingApproval.productPreviewId) : undefined;
+              const business = payloadPreview ? current.approvedBusinesses.find((item) => item.id === payloadPreview.businessId) : undefined;
+              const blueprint = preview ? current.productBlueprints.find((item) => item.id === preview.blueprintId) : undefined;
+              const manifest = preview?.fileManifestId ? current.productFileManifests.find((item) => item.id === preview.fileManifestId) : undefined;
+              if (!payloadPreview || !preview || !manifest) return null;
+              const packetMarkdown = [
+                `# Approved Publish Packet: ${blueprint?.name ?? business?.name ?? payloadPreview.platform}`,
+                "",
+                `Approved at: ${now}`,
+                `Approval ID: ${existingApproval.id}`,
+                `Platform: ${payloadPreview.platform}`,
+                `Product: ${blueprint?.name ?? business?.name ?? "Product"}`,
+                "",
+                "## Exact Fields To Review",
+                ...Object.entries(payloadPreview.exactFields).map(([key, value]) => [`### ${key}`, value].join("\n")),
+                "",
+                "## User Boundary",
+                `- User login required: ${payloadPreview.userLoginRequired ? "yes, manual only" : "no connector login configured"}.`,
+                `- Credentials stored: ${payloadPreview.credentialsStored ? "yes" : "no"}.`,
+                `- Budget boundary: ${payloadPreview.budgetBoundary}.`,
+                "",
+                "## What Mission Control Did",
+                "- Recorded the user's approval for the exact frozen publish payload.",
+                "- Wrote this local publish packet into the product folder.",
+                "- Preserved the exact fields for manual review or a later separately approved connector executor.",
+                "",
+                "## What Did Not Happen",
+                ...payloadPreview.whatWillNotHappen.map((item) => `- ${item}`),
+                "- No external platform page was opened or submitted by this approval.",
+                "- No login automation, form submission, connector execution, messaging, purchase, or spend happened.",
+                "",
+                "## Rollback / Manual Correction Notes",
+                ...payloadPreview.rollbackNotes.map((item) => `- ${item}`),
+                "",
+                "## Next Step",
+                "If you want Mission Control to automate a platform action later, create a separate exact executor approval after manually confirming account access, destination, fields, and safety boundaries.",
+              ].join("\n");
+              const packetJson = JSON.stringify({
+                approvalId: existingApproval.id,
+                approvedAt: now,
+                platform: payloadPreview.platform,
+                product: blueprint?.name ?? business?.name,
+                exactFields: payloadPreview.exactFields,
+                userLoginRequired: payloadPreview.userLoginRequired,
+                credentialsStored: payloadPreview.credentialsStored,
+                budgetBoundary: payloadPreview.budgetBoundary,
+                whatWillNotHappen: payloadPreview.whatWillNotHappen,
+                rollbackNotes: payloadPreview.rollbackNotes,
+              }, null, 2);
+              const files = [
+                { fileName: "approved-publish-packet.md", title: "Approved publish packet", kind: "publish_packet", content: packetMarkdown },
+                { fileName: "approved-publish-payload.json", title: "Approved publish payload JSON", kind: "publish_payload", content: packetJson },
+              ];
+              const packetWriteInput = {
+                rootPath: manifest.rootPath,
+                files: files.map((file) => ({ fileName: file.fileName, content: file.content })),
+              };
+              const timeoutResult = {
+                ok: false,
+                mode: "failed" as const,
+                rootPath: manifest.rootPath,
+                written: packetWriteInput.files.map((file) => ({
+                  fileName: file.fileName,
+                  path: `${manifest.rootPath}\\${file.fileName}`,
+                  ok: false,
+                  error: "Timed out writing approved publish packet.",
+                })),
+                message: "Timed out writing approved publish packet. No external platform action ran.",
+              };
+              const writeResult = await Promise.race([
+                productFileService.writeFiles(packetWriteInput),
+                new Promise<typeof timeoutResult>((resolve) => window.setTimeout(() => resolve(timeoutResult), 15_000)),
+              ]);
+              const fileRecords: ProductFileRecord[] = files.map((file) => {
+                const written = writeResult.written.find((item) => item.fileName === file.fileName);
+                const quality = productFileQualityCheck(file, { type: "micro_product" } as ProductTrack);
+                return {
+                  id: id("product-file"),
+                  manifestId: manifest.id,
+                  runId: manifest.runId,
+                  businessId: manifest.businessId,
+                  proposalId: manifest.proposalId,
+                  trackId: manifest.trackId,
+                  fileName: file.fileName,
+                  title: file.title,
+                  kind: file.kind,
+                  path: written?.path ?? `${manifest.rootPath}\\${file.fileName}`,
+                  content: file.content,
+                  status: writeResult.mode === "tauri-file" && written?.ok ? "written" : "blocked",
+                  runtimeMode: writeResult.mode === "tauri-file" && written?.ok ? "local_file" : "blocked",
+                  qualityStatus: quality.status === "blocked" ? "warning" : quality.status,
+                  qualityScore: quality.score,
+                  qualityChecks: quality.checks,
+                  qualityIssues: quality.issues,
+                  createdAt: now,
+                  updatedAt: now,
+                };
+              });
+              const receipt: ExecutionReceipt = {
+                id: id("execution-receipt"),
+                businessId: preview.businessId,
+                proposalId: preview.proposalId,
+                actionType: "approved_publish_packet_prepared",
+                title: "Approved publish packet prepared",
+                summary: `${payloadPreview.platform} approval produced local packet files in ${manifest.rootPath}. No external platform action ran.`,
+                source: "Approval Inbox",
+                artifactIds: [existingApproval.id, payloadPreview.id, ...fileRecords.map((file) => file.id)],
+                budgetEffect: payloadPreview.budgetBoundary,
+                externalAction: false,
+                approvalRequired: true,
+                status: fileRecords.every((file) => file.status === "written") ? "success" : "failed",
+                nextAction: "Open Product Studio and review the approved publish packet before any later connector executor approval.",
+                createdAt: now,
+              };
+              return { payloadPreview, preview, manifest, fileRecords, receipt, writeResult };
+            })()
+          : null;
       const next: AppDataState = {
         ...current,
         approvalRequests: current.approvalRequests.map((request) =>
-          request.id === approvalId ? { ...request, status, safetyEvaluation: safetyEvaluation ?? request.safetyEvaluation } : request,
+          request.id === approvalId
+            ? {
+                ...request,
+                status,
+                safetyEvaluation: safetyEvaluation ?? request.safetyEvaluation,
+                executionResult: publishPacket
+                  ? {
+                      ok: publishPacket.fileRecords.every((file) => file.status === "written"),
+                      summary: publishPacket.receipt.summary,
+                      completedAt: now,
+                    }
+                  : request.executionResult,
+              }
+            : request,
         ),
+        productFileRecords: publishPacket ? [...publishPacket.fileRecords, ...current.productFileRecords] : current.productFileRecords,
+        productFileManifests: publishPacket
+          ? current.productFileManifests.map((manifest) =>
+              manifest.id === publishPacket.manifest.id
+                ? {
+                    ...manifest,
+                    fileIds: [...publishPacket.fileRecords.map((file) => file.id), ...manifest.fileIds],
+                    updatedAt: now,
+                  }
+                : manifest,
+            )
+          : current.productFileManifests,
+        localAssetFiles: publishPacket
+          ? [
+              ...publishPacket.fileRecords.map((file) => ({
+                id: id("local-asset-file"),
+                businessId: file.businessId,
+                title: file.title,
+                type: "platform_fields" as const,
+                platform: publishPacket.payloadPreview.platform,
+                intendedPath: file.path,
+                fileName: file.fileName,
+                content: file.content,
+                status: file.status === "written" ? "written" as const : "blocked" as const,
+                createdAt: now,
+                updatedAt: now,
+              })),
+              ...current.localAssetFiles,
+            ]
+          : current.localAssetFiles,
+        publishPayloadPreviews: publishPacket
+          ? current.publishPayloadPreviews.map((payload) =>
+              payload.id === publishPacket.payloadPreview.id ? { ...payload, updatedAt: now } : payload,
+            )
+          : current.publishPayloadPreviews,
         approvalGateStates: current.approvalGateStates.map((gate) =>
           gate.id === existingApproval.approvalGateStateId
             ? {
@@ -4698,7 +4882,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
                 status: status === "approved" ? "approved" : status === "rejected" ? "rejected" : status === "blocked" ? "blocked" : gate.status,
                 label: status === "approved" ? "Approved" : status === "rejected" ? "Rejected" : status === "blocked" ? "Blocked" : gate.label,
                 reason:
-                  status === "approved"
+                  status === "approved" && publishPacket
+                    ? "The exact publish request was approved and a local approved publish packet was written. No external connector or platform action ran."
+                    : status === "approved"
                     ? "The exact publish request was approved. Execution still remains limited to the approved payload and connector availability."
                     : status === "rejected"
                       ? "The exact publish request was rejected. Request a revision or prepare a new approval later."
@@ -4733,7 +4919,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           }),
           ...current.approvalDecisionRecords,
         ],
+        executionReceipts: publishPacket ? [publishPacket.receipt, ...current.executionReceipts] : current.executionReceipts,
         activityLogs: [
+          ...(publishPacket
+            ? [{
+                id: id("log-approved-publish-packet"),
+                category: "approval" as const,
+                title: publishPacket.fileRecords.every((file) => file.status === "written") ? "Approved publish packet prepared" : "Approved publish packet write failed safely",
+                detail: publishPacket.receipt.summary,
+                severity: publishPacket.fileRecords.every((file) => file.status === "written") ? "success" as const : "danger" as const,
+                createdAt: now,
+                relatedQuestId: existingApproval.questId,
+              }]
+            : []),
           {
             id: `approval-log-${Date.now()}`,
             category: "approval",
