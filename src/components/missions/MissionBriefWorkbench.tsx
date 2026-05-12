@@ -169,6 +169,7 @@ export function MissionBriefWorkbench() {
   const initialId = requestedRunId ?? requestedDraftId ?? firstRun?.id ?? firstDraft?.id ?? "";
   const [selectedId, setSelectedId] = useState(initialId);
   const [repairNotice, setRepairNotice] = useState("");
+  const [approvingProposalId, setApprovingProposalId] = useState("");
 
   const draftFromSelection = useMemo(
     () => data.missionDrafts.find((draft) => draft.id === (requestedDraftId ?? selectedId)) ?? data.missionDrafts.find((draft) => draft.id === selectedId),
@@ -263,6 +264,18 @@ export function MissionBriefWorkbench() {
     void sendTeamLeaderChatMessage(instruction, { opportunityHuntDepth: selectedResearchRun?.depth ?? "fast" });
   }
 
+  async function handleApproveBusiness() {
+    if (!selectedProposal || approvingProposalId) return;
+    setApprovingProposalId(selectedProposal.id);
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+    try {
+      const businessId = await approveBusinessProposal(selectedProposal.id);
+      if (businessId) window.location.hash = "#/businesses";
+    } finally {
+      setApprovingProposalId("");
+    }
+  }
+
   return (
     <div className="space-y-5">
       <Card>
@@ -290,11 +303,11 @@ export function MissionBriefWorkbench() {
                 <div className="flex flex-wrap gap-2">
                   <Button
                     variant="secondary"
-                    disabled={!canApproveBusiness}
-                    onClick={() => void approveBusinessProposal(selectedProposal.id)}
+                    disabled={!canApproveBusiness || approvingProposalId === selectedProposal.id}
+                    onClick={() => void handleApproveBusiness()}
                   >
-                    <CheckCircle2 className="h-4 w-4" />
-                    Approve Business
+                    {approvingProposalId === selectedProposal.id ? <Play className="h-4 w-4 animate-pulse" /> : <CheckCircle2 className="h-4 w-4" />}
+                    {approvingProposalId === selectedProposal.id ? "Starting Product Factory..." : "Approve Business"}
                   </Button>
                   <Button variant="outline" disabled={selectedProposal.status === "approved"} onClick={() => void updateBusinessProposalStatus(selectedProposal.id, "revision_requested")}>
                     <RotateCcw className="h-4 w-4" />

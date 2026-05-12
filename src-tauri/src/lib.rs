@@ -1407,9 +1407,9 @@ fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult
             guarded_message,
             "--json".into(),
             "--timeout".into(),
-            clamp_timeout(request.timeout_seconds, 300, 900).to_string(),
+            clamp_timeout(request.timeout_seconds, 45, 180).to_string(),
         ],
-        clamp_timeout(request.timeout_seconds, 300, 900) + 15,
+        clamp_timeout(request.timeout_seconds, 45, 180) + 15,
     )
 }
 

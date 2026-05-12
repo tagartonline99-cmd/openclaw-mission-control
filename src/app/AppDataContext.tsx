@@ -2098,7 +2098,7 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
       agentRole: agentName,
       message: prompt,
       missionRunId: runId,
-      timeoutSeconds: 240,
+      timeoutSeconds: 75,
     });
     const completedAt = new Date().toISOString();
     const commandId = id("cmd-product-agent");
@@ -6516,6 +6516,36 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         updatedAt: now,
       };
       const operatingBundle = buildBusinessOperatingBundle(current, proposal, businessId, questId, now);
+      await persistOptimistic({
+        ...current,
+        teamLeaderChatMessages: [
+          ...current.teamLeaderChatMessages,
+          {
+            id: id("tl-chat-business-approval-started"),
+            role: "teamleader",
+            content: `Approval received for "${proposal.title.replace("Business Proposal: ", "")}". I am promoting it into an active business and starting the Real Product Factory now. This may take a few minutes, but the app should stay responsive. No publishing, spending, messaging, login, forms, purchases, or connector action will run.`,
+            createdAt: now,
+            mode: "local",
+            relatedBusinessProposalId: proposalId,
+          } satisfies TeamLeaderChatMessage,
+        ].slice(-120),
+        activityLogs: [
+          {
+            id: id("log-business-approval-started"),
+            category: "quest",
+            title: "Business approval received",
+            detail: "Mission Control started the local business promotion and Real Product Factory. External actions remain locked.",
+            severity: "info",
+            createdAt: now,
+            relatedQuestId: proposal.questId,
+          } satisfies ActivityLog,
+          ...current.activityLogs,
+        ].slice(0, 80),
+        dashboardSummary: {
+          ...current.dashboardSummary,
+          latestTeamLeaderRecommendation: `Business approval received for ${proposal.title.replace("Business Proposal: ", "")}. Real Product Factory is starting locally; external actions remain locked.`,
+        },
+      });
       const productProduction = await buildRealProductProductionBundle(current, proposal, businessId, questId, now);
       const productStudio = buildProductStudioRecords(current, proposal, businessId, now, productProduction.localAssetFiles, operatingBundle.publishingPackage, productProduction);
       const productRun: ProductProductionRun = { ...productProduction.run, previewId: productStudio.preview.id };

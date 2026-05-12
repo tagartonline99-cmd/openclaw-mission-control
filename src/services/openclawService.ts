@@ -370,7 +370,7 @@ export const openclawService = {
     );
   },
   async runAgentTurn(input: AgentTurnInput) {
-    return bridge("openclaw_agent_turn", { request: { ...input, timeoutSeconds: input.timeoutSeconds ?? 300 } }).then((result) =>
+    return bridge("openclaw_agent_turn", { request: { ...input, timeoutSeconds: input.timeoutSeconds ?? 120 } }).then((result) =>
       result ?? {
         ok: false,
         command: ["mock://openclaw_agent_turn"],
@@ -382,7 +382,7 @@ export const openclawService = {
     );
   },
   async runTeamLeaderTurn(message: string) {
-    return this.runAgentTurn({ agentProfileId: "main", agentRole: "TeamLeader1A", message, timeoutSeconds: 300 });
+    return this.runAgentTurn({ agentProfileId: "main", agentRole: "TeamLeader1A", message, timeoutSeconds: 120 });
   },
   async runUrlResearch(input: UrlResearchInput) {
     return bridge("openclaw_url_research", { request: { ...input, timeoutSeconds: 300 } }).then((result) =>

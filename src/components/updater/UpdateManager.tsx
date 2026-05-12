@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-const UPDATER_VERIFICATION_MARKER = "Approved Publish Packet release 0.1.37";
+const UPDATER_VERIFICATION_MARKER = "Approve Business responsiveness hotfix 0.1.38";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;
