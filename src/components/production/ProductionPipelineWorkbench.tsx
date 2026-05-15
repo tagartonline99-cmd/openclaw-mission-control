@@ -56,6 +56,23 @@ function includeSelected<T extends { id: string }>(items: T[], selectedId: strin
   return [selected, ...capped.filter((item) => item.id !== selected.id).slice(0, Math.max(0, limit - 1))];
 }
 
+function productFileRank(fileName: string, requiredFileNames: string[] = []) {
+  const normalized = fileName.replace(/\\/g, "/").toLowerCase();
+  const index = requiredFileNames.findIndex((item) => item.replace(/\\/g, "/").toLowerCase() === normalized);
+  if (index >= 0) return index;
+  if (normalized === "readme.md") return 0;
+  if (normalized === "start-here.md") return 1;
+  return 1_000;
+}
+
+function compactProductName(name: string, trackType?: string) {
+  if (trackType === "digital_template_pack" && /client onboarding|meeting notes|proposal|delivery/i.test(name)) {
+    return "AI Client Workflow Template Pack";
+  }
+  if (name.length <= 72) return name;
+  return `${name.slice(0, 69).trim()}...`;
+}
+
 export function ProductionPipelineWorkbench() {
   const {
     data,
@@ -143,7 +160,14 @@ export function ProductionPipelineWorkbench() {
     : productionRun?.fileManifestId
       ? data.productFileManifests.find((manifest) => manifest.id === productionRun.fileManifestId)
       : undefined;
-  const productFiles = productManifest ? data.productFileRecords.filter((file) => productManifest.fileIds.includes(file.id)) : [];
+  const productFiles = productManifest
+    ? data.productFileRecords
+        .filter((file) => productManifest.fileIds.includes(file.id))
+        .sort((left, right) => {
+          const rankDelta = productFileRank(left.fileName, productionRun?.requiredFileNames) - productFileRank(right.fileName, productionRun?.requiredFileNames);
+          return rankDelta || left.fileName.localeCompare(right.fileName);
+        })
+    : [];
   const visibleProductFiles = showAllProductFiles ? productFiles : productFiles.slice(0, PRODUCT_FILE_LIMIT);
   const hiddenProductFileCount = productFiles.length - visibleProductFiles.length;
   const productArtifacts = productionRun ? data.productAgentArtifacts.filter((artifact) => productionRun.artifactIds.includes(artifact.id)) : [];
@@ -155,8 +179,13 @@ export function ProductionPipelineWorkbench() {
   const buildComplete = productionRun?.status === "complete" && productionRun.runtimeMode === "real_openclaw" && productFiles.length > 0 && productFiles.every((file) => file.status === "written");
   const latestProductFile = productFiles[0];
   const primaryProductFile =
+    productFiles.find((file) => file.fileName === "README.md") ??
+    productFiles.find((file) => file.fileName === "START-HERE.md") ??
     productFiles.find((file) => /fiverr|gig|landing|newsletter|article|template|sop|checklist/i.test(file.fileName)) ??
     latestProductFile;
+  const productDisplayName = compactProductName(blueprint?.name ?? selectedBusiness?.name ?? "Local product", productTrack?.type);
+  const acceptedRequiredCount = productionRun?.requiredFileNames?.length ?? productFiles.length;
+  const hasAcceptedManifest = Boolean(productManifest?.fileIds?.length && productFiles.length);
   const latestProductArtifact = productArtifacts[productArtifacts.length - 1];
   const blockedReason = productionRun?.buildError ?? readinessGate?.blockedReasons?.join(" ") ?? "No product files were accepted.";
   const blockedPreviewText = buildBlocked
@@ -288,6 +317,9 @@ export function ProductionPipelineWorkbench() {
           <div className="rounded-md border border-teal-300/20 bg-black/25 p-3 text-sm text-teal-100">
             Current-first Product Studio view: the selected business, current product run, and newest file records render first; older history stays available behind view-all controls.
           </div>
+          <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm leading-6 text-amber-50">
+            Product Studio treats the Product Factory manifest as the source of truth. Only the accepted manifest files count as the product proof pack; any older files left in the same folder are legacy leftovers and are not part of the accepted product.
+          </div>
           {data.approvedBusinesses.length === 0 ? (
             <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
               No approved business product yet. Ask TeamLeader1A for a business proposal, then approve one from Mission Briefs.
@@ -375,7 +407,10 @@ export function ProductionPipelineWorkbench() {
                             <Badge tone="red">External Action Blocked</Badge>
                           )}
                         </div>
-                        <h3 className="mt-3 font-display text-3xl font-semibold text-stone-50">{blueprint.name}</h3>
+                        <h3 className="mt-3 font-display text-3xl font-semibold text-stone-50">{productDisplayName}</h3>
+                        {productDisplayName !== blueprint.name ? (
+                          <p className="mt-1 text-xs uppercase tracking-wide text-slate-500">Original proposal: {blueprint.name}</p>
+                        ) : null}
                         <p className="mt-2 text-sm leading-6 text-slate-200">{blueprint.valueProposition}</p>
                       </div>
                       <div className="grid min-w-[260px] gap-2 text-sm">
@@ -390,9 +425,13 @@ export function ProductionPipelineWorkbench() {
                           <FileText className="h-4 w-4" />
                           Open product file
                         </Button>
-                        <Button variant="outline" disabled={buildBlocked || !productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
+                          <Button variant="outline" disabled={buildBlocked || !productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
                           <FolderOpen className="h-4 w-4" />
                           Open folder
+                        </Button>
+                        <Button variant="outline" disabled={!primaryProductFile?.path || buildBlocked} onClick={() => void openProductFile(primaryProductFile?.path)}>
+                          <FileText className="h-4 w-4" />
+                          Open README / Start file
                         </Button>
                         <Button variant="outline" disabled>
                           <RotateCcw className="h-4 w-4" />
@@ -426,6 +465,18 @@ export function ProductionPipelineWorkbench() {
                         <p className="mt-2 text-sm leading-6 text-slate-200">{latestReceipt?.title ?? "No receipt yet"}</p>
                       </div>
                     </div>
+                    {hasAcceptedManifest ? (
+                      <div className="mt-4 rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3 text-sm leading-6 text-emerald-50">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="emerald">Accepted Product Pack</Badge>
+                          <Badge tone="emerald">{productFiles.length}/{acceptedRequiredCount} files</Badge>
+                          <Badge tone="slate">Legacy folder files excluded</Badge>
+                        </div>
+                        <p className="mt-2 text-slate-200">
+                          Review the files listed in Product Studio. The OS folder may contain older root-level files from previous test runs, but they do not count unless they appear in this accepted manifest.
+                        </p>
+                      </div>
+                    ) : null}
                     <div className="mt-4 grid gap-3 lg:grid-cols-2">
                       <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
                         <p className="text-xs font-semibold uppercase text-emerald-100">What exists</p>
@@ -433,7 +484,7 @@ export function ProductionPipelineWorkbench() {
                           {(buildBlocked ? ["No real product files created yet"] : productFiles.length ? visibleProductFiles.map((file) => file.fileName) : assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, PRODUCT_FILE_LIMIT).map((item) => (
                             <p key={item}>- {item}</p>
                           ))}
-                          {hiddenProductFileCount > 0 ? <p>- {hiddenProductFileCount} older file(s) capped</p> : null}
+                          {hiddenProductFileCount > 0 ? <p>- {hiddenProductFileCount} accepted manifest file(s) hidden by the compact view</p> : null}
                         </div>
                       </div>
                       <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
@@ -611,7 +662,7 @@ export function ProductionPipelineWorkbench() {
                   <div className="grid gap-3 xl:grid-cols-4">
                     <div className="rounded-md border border-white/10 bg-black/25 p-3 xl:col-span-2">
                       <p className="text-xs font-semibold uppercase text-slate-500">What the product is</p>
-                      <h3 className="mt-2 font-display text-2xl font-semibold text-stone-100">{blueprint.name}</h3>
+                      <h3 className="mt-2 font-display text-2xl font-semibold text-stone-100">{productDisplayName}</h3>
                       <p className="mt-2 text-sm leading-6 text-slate-300">{blueprint.offerDeliverable}</p>
                     </div>
                     <div className="rounded-md border border-white/10 bg-black/25 p-3">
@@ -637,7 +688,7 @@ export function ProductionPipelineWorkbench() {
                       <p className="mt-2 text-sm leading-6 text-slate-300">{preview.missingItems.length ? preview.missingItems.join(" / ") : "Nothing blocking local draft review."}</p>
                     </div>
                     <div className="rounded-md border border-white/10 bg-black/25 p-3">
-                      <p className="text-xs font-semibold uppercase text-slate-500">Product Files</p>
+                      <p className="text-xs font-semibold uppercase text-slate-500">Accepted Product Files</p>
                       <p className="mt-2 text-2xl font-semibold text-stone-50">{productFiles.length || assetFiles.length}</p>
                     </div>
                     <div className="rounded-md border border-red-300/20 bg-red-500/8 p-3">
@@ -652,7 +703,7 @@ export function ProductionPipelineWorkbench() {
                         <Badge tone={productManifest?.status === "written" ? "emerald" : "red"}>Local Product Files</Badge>
                         <h3 className="mt-2 font-display text-xl font-semibold text-stone-100">{productManifest?.rootPath ?? "No product folder yet"}</h3>
                         <p className="mt-1 text-sm text-slate-400">
-                          {buildBlocked ? "No real local files were accepted for this product build." : "These are the real local files created for the product. External publishing is separate and locked."}
+                          {buildBlocked ? "No real local files were accepted for this product build." : "These accepted manifest files are the product. Other files in the same OS folder are legacy leftovers unless listed here."}
                         </p>
                       </div>
                       <Button variant="outline" disabled={buildBlocked || !productManifest?.rootPath} onClick={() => void openProductFile(productManifest?.rootPath)}>
@@ -680,7 +731,7 @@ export function ProductionPipelineWorkbench() {
                         </div>
                         {hiddenProductFileCount > 0 ? (
                           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
-                            <span>Showing current product files first; {hiddenProductFileCount} older file(s) are capped.</span>
+                            <span>Showing accepted manifest files first; {hiddenProductFileCount} accepted file(s) are hidden by the compact view.</span>
                             <Button variant="outline" size="sm" onClick={() => setShowAllProductFiles((value) => !value)}>
                               {showAllProductFiles ? "Show fewer files" : "View all product files"}
                             </Button>
@@ -834,7 +885,7 @@ export function ProductionPipelineWorkbench() {
                   <Badge tone={productionRun?.runtimeMode === "real_openclaw" ? "emerald" : productionRun?.runtimeMode === "fallback_local" ? "amber" : "slate"}>{runtimeLabel}</Badge>
                   <Badge tone="red">External Action Blocked</Badge>
                 </div>
-                <h2 className="mt-2 font-display text-2xl font-semibold text-stone-50">{blueprint.name}</h2>
+                <h2 className="mt-2 font-display text-2xl font-semibold text-stone-50">{productDisplayName}</h2>
                 <p className="mt-1 text-sm text-slate-400">
                   Inspect the exact local product before any publish approval can be requested.
                 </p>

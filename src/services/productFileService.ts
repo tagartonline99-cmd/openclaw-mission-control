@@ -1,4 +1,4 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export type ProductFileWriteInput = {
   rootPath: string;
@@ -24,10 +24,20 @@ function joinPath(rootPath: string, fileName: string) {
   return `${rootPath.replace(/[\\\/]+$/, "")}\\${fileName.replace(/^[\\\/]+/, "")}`;
 }
 
-function parentPath(path: string) {
-  const normalized = path.replace(/[\\\/]+$/, "");
-  const index = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
-  return index > 0 ? normalized.slice(0, index) : normalized;
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(timeoutMs / 1000)} seconds.`)), timeoutMs);
+    promise.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 export function slugifyProductName(value: string) {
@@ -62,29 +72,16 @@ export const productFileService = {
     }
 
     try {
-      const fs = await import("@tauri-apps/plugin-fs");
-      await fs.mkdir(input.rootPath, { recursive: true });
-      const results = [];
-      for (const file of input.files) {
-        const path = joinPath(input.rootPath, file.fileName);
-        try {
-          await fs.mkdir(parentPath(path), { recursive: true });
-          await fs.writeTextFile(path, file.content);
-          results.push({ fileName: file.fileName, path, ok: true });
-        } catch (error) {
-          results.push({ fileName: file.fileName, path, ok: false, error: error instanceof Error ? error.message : String(error) });
-        }
-      }
-      const ok = results.every((file) => file.ok);
-      return {
-        ok,
-        mode: ok ? "tauri-file" : "failed",
-        rootPath: input.rootPath,
-        written: results,
-        message: ok
-          ? `Wrote ${results.length} real product file(s) to ${input.rootPath}.`
-          : "Some product files could not be written. See file records for details.",
-      };
+      return await withTimeout(
+        invoke<ProductFileWriteResult>("write_product_files", {
+          request: {
+            rootPath: input.rootPath,
+            files: input.files,
+          },
+        }),
+        45_000,
+        "Product file write",
+      );
     } catch (error) {
       return {
         ok: false,

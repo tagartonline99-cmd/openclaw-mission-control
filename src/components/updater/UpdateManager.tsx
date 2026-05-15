@@ -11,7 +11,7 @@ import { Progress } from "../ui/progress";
 
 type Status = "idle" | "checking" | "available" | "current" | "installing" | "error";
 
-export const UPDATER_VERIFICATION_MARKER = "Product Factory stabilization 0.1.54";
+export const UPDATER_VERIFICATION_MARKER = "Product Studio clarity 0.1.55";
 
 function progressPercent(downloaded: number, total?: number) {
   if (!total || total <= 0) return 0;

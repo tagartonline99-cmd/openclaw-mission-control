@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "OpenClaw Mission Control",
-  "version": "0.1.54",
+  "version": "0.1.55",
   "identifier": "com.openclaw.missioncontrol",
   "build": {
     "beforeDevCommand": "npm.cmd run dev",

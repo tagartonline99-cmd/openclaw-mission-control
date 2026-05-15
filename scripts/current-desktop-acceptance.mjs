@@ -888,7 +888,7 @@ async function main() {
     await route(client, "/settings", "Auto Updates");
     await waitFor(
       client,
-      `document.body.innerText.toLowerCase().includes(${JSON.stringify(`product factory stabilization ${expectedVersion}`)})`,
+      `document.body.innerText.toLowerCase().includes(${JSON.stringify(`product studio clarity ${expectedVersion}`)})`,
       `${expectedVersion} updater marker`,
     );
     evidence.appVersion = await waitFor(

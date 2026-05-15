@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::net::TcpStream;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
@@ -67,6 +67,39 @@ struct PublicResearchFetchRequest {
     url: String,
     source_pack_id: Option<String>,
     timeout_seconds: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductFileWriteRequest {
+    root_path: String,
+    files: Vec<ProductFileWriteItem>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductFileWriteItem {
+    file_name: String,
+    content: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductFileWriteStatus {
+    file_name: String,
+    path: String,
+    ok: bool,
+    error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProductFileWriteResult {
+    ok: bool,
+    mode: String,
+    root_path: String,
+    written: Vec<ProductFileWriteStatus>,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -1302,6 +1335,114 @@ fn append_result(label: &str, result: &OpenClawBridgeResult, stdout: &mut String
     }
 }
 
+fn mission_control_products_root() -> Result<PathBuf, String> {
+    Ok(user_home_dir()?
+        .join(".openclaw")
+        .join("mission-control-products"))
+}
+
+fn normalized_windows_path_text(path: &Path) -> String {
+    path.to_string_lossy()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+fn ensure_product_root_allowed(root_path: &str) -> Result<PathBuf, String> {
+    reject_control_chars(root_path, "Product root path")?;
+    let root = PathBuf::from(root_path);
+    if !root.is_absolute() {
+        return Err("Product root path must be absolute.".into());
+    }
+    let allowed_root = mission_control_products_root()?;
+    let allowed = normalized_windows_path_text(&allowed_root);
+    let requested = normalized_windows_path_text(&root);
+    if requested != allowed && !requested.starts_with(&format!("{allowed}\\")) {
+        return Err(format!(
+            "Product files may only be written under {}.",
+            allowed_root.display()
+        ));
+    }
+    Ok(root)
+}
+
+fn ensure_safe_product_file_name(file_name: &str) -> Result<PathBuf, String> {
+    reject_control_chars(file_name, "Product file name")?;
+    let trimmed = file_name.trim();
+    if trimmed.is_empty() {
+        return Err("Product file name cannot be empty.".into());
+    }
+    let path = PathBuf::from(trimmed.replace('/', "\\"));
+    if path.is_absolute() {
+        return Err(format!("Product file name must be relative: {trimmed}"));
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {}
+            _ => return Err(format!("Unsafe product file path segment in {trimmed}")),
+        }
+    }
+    Ok(path)
+}
+
+#[tauri::command]
+async fn write_product_files(request: ProductFileWriteRequest) -> Result<ProductFileWriteResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = ensure_product_root_allowed(&request.root_path)?;
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("Could not create product root {}: {error}", root.display()))?;
+
+        let file_count = request.files.len();
+        let mut written = Vec::with_capacity(request.files.len());
+        for file in request.files {
+            let relative = match ensure_safe_product_file_name(&file.file_name) {
+                Ok(path) => path,
+                Err(error) => {
+                    written.push(ProductFileWriteStatus {
+                        file_name: file.file_name,
+                        path: String::new(),
+                        ok: false,
+                        error: Some(error),
+                    });
+                    continue;
+                }
+            };
+            let path = root.join(relative);
+            let path_text = path.to_string_lossy().to_string();
+            let result = (|| -> Result<(), String> {
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)
+                        .map_err(|error| format!("Could not create product folder {}: {error}", parent.display()))?;
+                }
+                fs::write(&path, file.content)
+                    .map_err(|error| format!("Could not write product file {}: {error}", path.display()))?;
+                Ok(())
+            })();
+            written.push(ProductFileWriteStatus {
+                file_name: file.file_name,
+                path: path_text,
+                ok: result.is_ok(),
+                error: result.err(),
+            });
+        }
+
+        let ok = written.iter().all(|item| item.ok);
+        Ok(ProductFileWriteResult {
+            ok,
+            mode: if ok { "tauri-file".into() } else { "failed".into() },
+            root_path: root.to_string_lossy().to_string(),
+            written,
+            message: if ok {
+                format!("Wrote {file_count} real product file(s) to {}.", root.display())
+            } else {
+                "Some product files could not be written. See file records for details.".into()
+            },
+        })
+    })
+    .await
+    .map_err(|error| format!("Product file writer worker failed: {error}"))?
+}
+
 fn user_home_dir() -> Result<PathBuf, String> {
     env::var_os("USERPROFILE")
         .or_else(|| env::var_os("HOME"))
@@ -2154,6 +2295,7 @@ pub fn run() {
             tavily_test_connection,
             tavily_search,
             tavily_extract,
+            write_product_files,
             openclaw_agent_turn,
             openclaw_url_research,
             openclaw_channel_send

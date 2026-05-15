@@ -101,7 +101,8 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Real OpenClaw Build Blocked").first()).toBeVisible();
   await expect(page.getByText(/Tauri desktop runtime is required|No fallback product is accepted/i).first()).toBeVisible();
   await expect(page.getByText(/See the exact product before any publishing approval/i)).toBeVisible();
-  await expect(page.getByText("Product Files", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Accepted Product Files", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText(/Product Studio treats the Product Factory manifest as the source of truth/i)).toBeVisible();
   await expect(page.getByText("Local Product Files").first()).toBeVisible();
   await expect(page.getByText("Rendered Product Preview").first()).toBeVisible();
   await expect(page.getByText(/REAL PRODUCT BUILD BLOCKED|FIVERR GIG LOCAL PREVIEW|LANDING PAGE PREVIEW/i).first()).toBeVisible();
@@ -153,7 +154,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Performance pass: capped historical rendering / current-first views")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Product Factory stabilization 0\.1\.54/i).first()).toBeVisible();
+  await expect(page.getByText(/Product Studio clarity 0\.1\.55/i).first()).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {
