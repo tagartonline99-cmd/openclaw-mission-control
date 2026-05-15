@@ -24,6 +24,12 @@ function joinPath(rootPath: string, fileName: string) {
   return `${rootPath.replace(/[\\\/]+$/, "")}\\${fileName.replace(/^[\\\/]+/, "")}`;
 }
 
+function parentPath(path: string) {
+  const normalized = path.replace(/[\\\/]+$/, "");
+  const index = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
+  return index > 0 ? normalized.slice(0, index) : normalized;
+}
+
 export function slugifyProductName(value: string) {
   const slug = value
     .toLowerCase()
@@ -62,6 +68,7 @@ export const productFileService = {
       for (const file of input.files) {
         const path = joinPath(input.rootPath, file.fileName);
         try {
+          await fs.mkdir(parentPath(path), { recursive: true });
           await fs.writeTextFile(path, file.content);
           results.push({ fileName: file.fileName, path, ok: true });
         } catch (error) {

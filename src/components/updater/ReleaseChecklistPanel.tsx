@@ -11,6 +11,7 @@ const requiredAssets = [
   `OpenClaw Mission Control_${version}_x64-setup.exe.sig`,
   `OpenClaw Mission Control_${version}_x64_en-US.msi`,
 ];
+const performanceMarker = "Performance pass: capped historical rendering / current-first views";
 
 export function ReleaseChecklistPanel() {
   return (
@@ -35,6 +36,10 @@ export function ReleaseChecklistPanel() {
             <p className="text-xs font-semibold uppercase text-teal-100">Updater verification</p>
             <p className="mt-2 text-sm leading-6 text-teal-50">Signed artifacts are prepared locally before upload.</p>
           </div>
+        </div>
+        <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3">
+          <p className="text-xs font-semibold uppercase text-teal-100">Runtime stability marker</p>
+          <p className="mt-2 text-sm leading-6 text-teal-50">{performanceMarker}</p>
         </div>
         <div className="rounded-md border border-white/10 bg-black/25 p-3">
           <p className="flex items-center gap-2 text-xs font-semibold uppercase text-slate-500">

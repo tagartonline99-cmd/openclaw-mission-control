@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Activity, CheckCircle2, Eye, FileText, FolderOpen, Hammer, Lock, PackageCheck, RefreshCw, RotateCcw, ShieldAlert, Sparkles, X } from "lucide-react";
 import { useAppData } from "../../app/AppDataContext";
 import { formatCurrency, formatDateTime, statusTone } from "../../utils/formatting";
@@ -38,6 +39,23 @@ const previewTabs = [
   { id: "revision_requests", label: "Revision Requests" },
 ] as const;
 
+const BUSINESS_OPTION_LIMIT = 12;
+const PRODUCT_FILE_LIMIT = 8;
+const PRODUCT_ARTIFACT_LIMIT = 6;
+const LEGACY_PRODUCTION_PACK_LIMIT = 6;
+const PRODUCT_TEXT_LIMIT = 14_000;
+
+function byNewestUpdatedAt<T extends { updatedAt?: string; createdAt?: string; startedAt?: string }>(left: T, right: T) {
+  return (right.updatedAt ?? right.createdAt ?? right.startedAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? left.startedAt ?? "");
+}
+
+function includeSelected<T extends { id: string }>(items: T[], selectedId: string | undefined, limit: number) {
+  const selected = selectedId ? items.find((item) => item.id === selectedId) : undefined;
+  const capped = items.slice(0, limit);
+  if (!selected || capped.some((item) => item.id === selected.id)) return capped;
+  return [selected, ...capped.filter((item) => item.id !== selected.id).slice(0, Math.max(0, limit - 1))];
+}
+
 export function ProductionPipelineWorkbench() {
   const {
     data,
@@ -63,14 +81,43 @@ export function ProductionPipelineWorkbench() {
   const [legacyOpen, setLegacyOpen] = useState(false);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [showAllBusinesses, setShowAllBusinesses] = useState(false);
+  const [showAllProductFiles, setShowAllProductFiles] = useState(false);
+  const [showAllLegacyPacks, setShowAllLegacyPacks] = useState(false);
+  const [searchParams] = useSearchParams();
+  const linkedBusinessId = searchParams.get("business") ?? "";
   const selectedQuest = data.quests.find((quest) => quest.id === questId);
   const siteProject = data.siteProjects.find((site) => site.questIds.includes(questId));
   const clusters = data.seoKeywordClusters.filter((cluster) => cluster.questId === questId);
   const siteContentItems = siteProject ? data.contentItems.filter((item) => item.siteProjectId === siteProject.id) : [];
   const siteDiffs = siteProject ? data.publishingDiffs.filter((diff) => diff.siteProjectId === siteProject.id) : [];
   const affiliateOffers = data.affiliateOffers.filter((offer) => offer.questId === questId);
-  const selectedBusiness = data.approvedBusinesses.find((business) => business.id === businessId) ?? data.approvedBusinesses[0];
-  const preview = selectedBusiness ? data.productPreviews.find((item) => item.businessId === selectedBusiness.id) : undefined;
+  const sortedBusinesses = useMemo(() => [...data.approvedBusinesses].sort(byNewestUpdatedAt), [data.approvedBusinesses]);
+  const latestCompleteProductBusinessId = useMemo(() => {
+    const completeRun = [...data.productProductionRuns]
+      .filter((run) => run.status === "complete" && run.runtimeMode === "real_openclaw")
+      .sort(byNewestUpdatedAt)[0];
+    return completeRun?.businessId ?? sortedBusinesses[0]?.id ?? "";
+  }, [data.productProductionRuns, sortedBusinesses]);
+  useEffect(() => {
+    if (linkedBusinessId && data.approvedBusinesses.some((business) => business.id === linkedBusinessId)) {
+      setBusinessId(linkedBusinessId);
+      return;
+    }
+    if (!latestCompleteProductBusinessId) return;
+    if (businessId !== latestCompleteProductBusinessId) {
+      setBusinessId(latestCompleteProductBusinessId);
+    }
+  }, [businessId, data.approvedBusinesses, latestCompleteProductBusinessId, linkedBusinessId]);
+  const selectedBusiness = data.approvedBusinesses.find((business) => business.id === businessId) ?? sortedBusinesses[0];
+  const visibleBusinesses = showAllBusinesses
+    ? sortedBusinesses
+    : includeSelected(sortedBusinesses, selectedBusiness?.id, BUSINESS_OPTION_LIMIT);
+  const hiddenBusinessCount = data.approvedBusinesses.length - visibleBusinesses.length;
+  const selectedBusinessPreviews = selectedBusiness
+    ? data.productPreviews.filter((item) => item.businessId === selectedBusiness.id).sort(byNewestUpdatedAt)
+    : [];
+  const preview = selectedBusinessPreviews[0];
   const blueprint = preview ? data.productBlueprints.find((item) => item.id === preview.blueprintId) : undefined;
   const gate = preview?.approvalGateStateId ? data.approvalGateStates.find((item) => item.id === preview.approvalGateStateId) : undefined;
   const previewSections = preview ? data.productPreviewSections.filter((section) => preview.sectionIds.includes(section.id)) : [];
@@ -97,38 +144,63 @@ export function ProductionPipelineWorkbench() {
       ? data.productFileManifests.find((manifest) => manifest.id === productionRun.fileManifestId)
       : undefined;
   const productFiles = productManifest ? data.productFileRecords.filter((file) => productManifest.fileIds.includes(file.id)) : [];
+  const visibleProductFiles = showAllProductFiles ? productFiles : productFiles.slice(0, PRODUCT_FILE_LIMIT);
+  const hiddenProductFileCount = productFiles.length - visibleProductFiles.length;
   const productArtifacts = productionRun ? data.productAgentArtifacts.filter((artifact) => productionRun.artifactIds.includes(artifact.id)) : [];
+  const visibleProductArtifacts = productArtifacts.slice(0, PRODUCT_ARTIFACT_LIMIT);
   const productReceipts = productionRun ? data.productGenerationReceipts.filter((receipt) => productionRun.receiptIds.includes(receipt.id)) : [];
   const readinessGate = productionRun ? data.productReadinessGates.find((item) => item.runId === productionRun.id) : undefined;
-  const buildBlocked = productionRun?.status === "blocked" || preview?.status === "blocked" || readinessGate?.status === "blocked";
-  const buildComplete = productionRun?.status === "complete" && productFiles.length > 0 && productFiles.every((file) => file.status === "written");
+  const fallbackNotAccepted = productionRun?.status === "fallback_complete" || productionRun?.status === "blocked_fallback_available" || productionRun?.runtimeMode === "fallback_local";
+  const buildBlocked = fallbackNotAccepted || productionRun?.status === "blocked" || preview?.status === "blocked" || readinessGate?.status === "blocked";
+  const buildComplete = productionRun?.status === "complete" && productionRun.runtimeMode === "real_openclaw" && productFiles.length > 0 && productFiles.every((file) => file.status === "written");
   const latestProductFile = productFiles[0];
   const primaryProductFile =
     productFiles.find((file) => /fiverr|gig|landing|newsletter|article|template|sop|checklist/i.test(file.fileName)) ??
     latestProductFile;
   const latestProductArtifact = productArtifacts[productArtifacts.length - 1];
+  const blockedReason = productionRun?.buildError ?? readinessGate?.blockedReasons?.join(" ") ?? "No product files were accepted.";
+  const blockedPreviewText = buildBlocked
+    ? [
+        "REAL PRODUCT BUILD BLOCKED",
+        "",
+        "No product files were created or accepted.",
+        "",
+        `Why blocked: ${blockedReason}`,
+        "",
+        fallbackNotAccepted
+          ? "Fallback Local - Not Accepted. Retry the real gateway-backed Product Factory before local draft approval or publish approval."
+          : "Next action: retry the failed agent/runtime path after fixing the diagnostic above.",
+      ].join("\n")
+    : "";
   const productFullText = productFiles.length
-    ? productFiles.map((file) => [`# ${file.title}`, `Path: ${file.path}`, `Mode: ${label(file.runtimeMode)}`, "", file.content].join("\n")).join("\n\n---\n\n")
+    ? [
+        ...visibleProductFiles.map((file) => [`# ${file.title}`, `Path: ${file.path}`, `Mode: ${label(file.runtimeMode)}`, "", file.content].join("\n")),
+        ...(hiddenProductFileCount > 0 ? [`${hiddenProductFileCount} older product file(s) are capped in the current-first view.`] : []),
+      ].join("\n\n---\n\n")
     : activeSection?.content ?? renderedPreview?.textPreview ?? "No product content is available yet.";
+  const renderedPreviewText = (buildBlocked ? blockedPreviewText : renderedPreview?.textPreview ?? "").slice(0, PRODUCT_TEXT_LIMIT);
   const inlineProductPreviewText = (
+    blockedPreviewText ||
     renderedPreview?.textPreview?.trim() ||
     primaryProductFile?.content?.trim() ||
     productFullText.trim()
-  ).slice(0, 14_000);
+  ).slice(0, PRODUCT_TEXT_LIMIT);
   const productQualityIssues = productFiles.flatMap((file) => (file.qualityIssues ?? []).map((issue) => `${file.fileName}: ${issue}`));
   const productQualityBlocked = productFiles.filter((file) => file.qualityStatus === "blocked").length;
   const productQualityAverage = productFiles.length
     ? Math.round(productFiles.reduce((total, file) => total + (file.qualityScore ?? 0), 0) / productFiles.length)
     : 0;
-  const runtimeLabel = buildComplete ? "real openclaw + local files" : productionRun?.runtimeMode ? label(productionRun.runtimeMode) : preview?.generatedByAgents ? "real product factory" : "not generated yet";
+  const runtimeLabel = fallbackNotAccepted ? "Fallback Local - Not Accepted" : buildComplete ? "real openclaw + local files" : productionRun?.runtimeMode ? label(productionRun.runtimeMode) : preview?.generatedByAgents ? "real product factory" : "not generated yet";
   const monitorStatus = buildBlocked
-    ? "Real OpenClaw Build Blocked"
+    ? fallbackNotAccepted ? "Fallback Local - Not Accepted" : "Real OpenClaw Build Blocked"
     : buildComplete
       ? "Real OpenClaw Build Complete"
       : productionRun
         ? "Working now"
         : "Waiting for product generation";
-  const blockedReason = productionRun?.buildError ?? readinessGate?.blockedReasons?.join(" ") ?? "No product files were accepted.";
+  const sortedProductionPacks = useMemo(() => [...data.productionPacks].sort(byNewestUpdatedAt), [data.productionPacks]);
+  const visibleProductionPacks = showAllLegacyPacks ? sortedProductionPacks : sortedProductionPacks.slice(0, LEGACY_PRODUCTION_PACK_LIMIT);
+  const hiddenProductionPackCount = data.productionPacks.length - visibleProductionPacks.length;
 
   async function createPack() {
     if (!questId) return;
@@ -213,6 +285,9 @@ export function ProductionPipelineWorkbench() {
               Product Studio is local-only. Local draft approval means you accept the draft for the next step; it does not publish, spend, message, log in, submit forms, purchase, or execute connectors.
             </p>
           </div>
+          <div className="rounded-md border border-teal-300/20 bg-black/25 p-3 text-sm text-teal-100">
+            Current-first Product Studio view: the selected business, current product run, and newest file records render first; older history stays available behind view-all controls.
+          </div>
           {data.approvedBusinesses.length === 0 ? (
             <p className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
               No approved business product yet. Ask TeamLeader1A for a business proposal, then approve one from Mission Briefs.
@@ -223,10 +298,19 @@ export function ProductionPipelineWorkbench() {
                 <div>
                   <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Approved business</p>
                   <Select value={selectedBusiness?.id ?? ""} onChange={(event) => setBusinessId(event.target.value)}>
-                    {data.approvedBusinesses.map((business) => (
+                    {visibleBusinesses.map((business) => (
                       <option key={business.id} value={business.id}>{business.name}</option>
                     ))}
                   </Select>
+                  {hiddenBusinessCount > 0 ? (
+                    <button
+                      type="button"
+                      className="mt-2 text-xs font-semibold text-teal-100 hover:text-teal-50"
+                      onClick={() => setShowAllBusinesses((value) => !value)}
+                    >
+                      {showAllBusinesses ? "Show recent businesses" : `View all ${data.approvedBusinesses.length} businesses`}
+                    </button>
+                  ) : null}
                 </div>
                 <div className="rounded-md border border-white/10 bg-black/25 p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -346,9 +430,10 @@ export function ProductionPipelineWorkbench() {
                       <div className="rounded-md border border-emerald-300/20 bg-emerald-400/8 p-3">
                         <p className="text-xs font-semibold uppercase text-emerald-100">What exists</p>
                         <div className="mt-2 space-y-1 text-sm text-slate-200">
-                          {(buildBlocked ? ["No real product files created yet"] : productFiles.length ? productFiles.map((file) => file.fileName) : assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, 8).map((item) => (
+                          {(buildBlocked ? ["No real product files created yet"] : productFiles.length ? visibleProductFiles.map((file) => file.fileName) : assetFiles.length ? assetFiles.map((file) => file.title) : previewSections.map((section) => section.title)).slice(0, PRODUCT_FILE_LIMIT).map((item) => (
                             <p key={item}>- {item}</p>
                           ))}
+                          {hiddenProductFileCount > 0 ? <p>- {hiddenProductFileCount} older file(s) capped</p> : null}
                         </div>
                       </div>
                       <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
@@ -394,7 +479,7 @@ export function ProductionPipelineWorkbench() {
                       </pre>
                       {productFiles.length ? (
                         <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                          {productFiles.slice(0, 8).map((file) => (
+                          {visibleProductFiles.map((file) => (
                             <button
                               key={file.id}
                               className="rounded-md border border-white/10 bg-black/30 p-3 text-left text-sm hover:border-teal-200/35 hover:bg-teal-400/8"
@@ -430,7 +515,7 @@ export function ProductionPipelineWorkbench() {
                       </div>
                       {productFiles.length ? (
                         <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                          {productFiles.slice(0, 8).map((file) => (
+                          {visibleProductFiles.map((file) => (
                             <div key={`${file.id}-qa`} className="rounded-md border border-white/10 bg-black/30 p-3 text-sm">
                               <div className="flex items-center justify-between gap-2">
                                 <p className="font-semibold text-stone-100">{file.fileName}</p>
@@ -444,6 +529,14 @@ export function ProductionPipelineWorkbench() {
                               </div>
                             </div>
                           ))}
+                        </div>
+                      ) : null}
+                      {hiddenProductFileCount > 0 ? (
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
+                          <span>Current-first file view: showing {visibleProductFiles.length} of {productFiles.length} product files.</span>
+                          <Button variant="outline" size="sm" onClick={() => setShowAllProductFiles((value) => !value)}>
+                            {showAllProductFiles ? "Show fewer files" : "View all product files"}
+                          </Button>
                         </div>
                       ) : null}
                       {productQualityIssues.length ? (
@@ -473,7 +566,7 @@ export function ProductionPipelineWorkbench() {
                         </div>
                       </div>
                       <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                        {productArtifacts.slice(0, 6).map((artifact) => (
+                        {visibleProductArtifacts.map((artifact) => (
                           <div key={artifact.id} className="rounded-md border border-white/10 bg-black/30 p-3">
                             <div className="flex items-center justify-between gap-2">
                               <p className="font-semibold text-stone-100">{artifact.agentName}</p>
@@ -507,7 +600,7 @@ export function ProductionPipelineWorkbench() {
                         </Button>
                       </div>
                       <pre className="mt-4 max-h-[360px] overflow-auto whitespace-pre-wrap rounded-md border border-white/10 bg-black/35 p-4 text-sm leading-6 text-slate-100">
-                        {renderedPreview?.textPreview ?? "No rendered product preview has been generated yet."}
+                        {renderedPreviewText ?? "No rendered product preview has been generated yet."}
                       </pre>
                     </div>
                     {lastExportResult ? (
@@ -568,22 +661,32 @@ export function ProductionPipelineWorkbench() {
                       </Button>
                     </div>
                     {productFiles.length ? (
-                      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {productFiles.map((file) => (
-                          <div key={file.id} className="rounded-md border border-white/10 bg-black/35 p-3">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="font-semibold text-stone-100">{file.fileName}</p>
-                              <Badge tone={file.status === "written" && file.qualityStatus !== "blocked" ? "emerald" : "red"}>{label(file.qualityStatus ?? file.status)}</Badge>
+                      <>
+                        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                          {visibleProductFiles.map((file) => (
+                            <div key={file.id} className="rounded-md border border-white/10 bg-black/35 p-3">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="font-semibold text-stone-100">{file.fileName}</p>
+                                <Badge tone={file.status === "written" && file.qualityStatus !== "blocked" ? "emerald" : "red"}>{label(file.qualityStatus ?? file.status)}</Badge>
+                              </div>
+                              <p className="mt-2 text-xs uppercase text-slate-500">{label(file.runtimeMode)}</p>
+                              <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-300">{file.content}</p>
+                              <Button className="mt-3" size="sm" variant="outline" onClick={() => void openProductFile(file.path)}>
+                                <FileText className="h-4 w-4" />
+                                Open file
+                              </Button>
                             </div>
-                            <p className="mt-2 text-xs uppercase text-slate-500">{label(file.runtimeMode)}</p>
-                            <p className="mt-2 line-clamp-3 text-sm leading-6 text-slate-300">{file.content}</p>
-                            <Button className="mt-3" size="sm" variant="outline" onClick={() => void openProductFile(file.path)}>
-                              <FileText className="h-4 w-4" />
-                              Open file
+                          ))}
+                        </div>
+                        {hiddenProductFileCount > 0 ? (
+                          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
+                            <span>Showing current product files first; {hiddenProductFileCount} older file(s) are capped.</span>
+                            <Button variant="outline" size="sm" onClick={() => setShowAllProductFiles((value) => !value)}>
+                              {showAllProductFiles ? "Show fewer files" : "View all product files"}
                             </Button>
                           </div>
-                        ))}
-                      </div>
+                        ) : null}
+                      </>
                     ) : (
                       <p className="mt-4 rounded-md border border-amber-300/20 bg-amber-400/8 p-3 text-sm text-amber-100">
                         No real product file records exist yet. Retry the full product build to run OpenClaw production agents and write local files.
@@ -755,7 +858,7 @@ export function ProductionPipelineWorkbench() {
                   <div className="space-y-3">
                     <h3 className="font-display text-xl font-semibold text-stone-100">Product Files</h3>
                     {productFiles.length ? (
-                      productFiles.map((file) => (
+                      visibleProductFiles.map((file) => (
                         <div key={file.id} className="rounded-md border border-white/10 bg-black/30 p-4">
                           <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
@@ -792,7 +895,10 @@ export function ProductionPipelineWorkbench() {
                     {activeTab === "full_draft" && renderedPreview ? (
                       <div className="mt-4 rounded-md border border-teal-300/20 bg-teal-400/8 p-4">
                         <p className="text-xs font-semibold uppercase text-teal-100">Rendered preview</p>
-                        <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-100">{renderedPreview.textPreview}</pre>
+                        <pre className="mt-3 whitespace-pre-wrap text-sm leading-6 text-slate-100">{renderedPreviewText}</pre>
+                        {renderedPreview.textPreview.length > PRODUCT_TEXT_LIMIT ? (
+                          <p className="mt-3 text-xs text-teal-100">Rendered preview text is capped in this modal; open the product file for the full artifact.</p>
+                        ) : null}
                       </div>
                     ) : null}
                     <pre className="mt-4 whitespace-pre-wrap rounded-md border border-white/10 bg-black/30 p-4 text-sm leading-6 text-slate-200">
@@ -1010,7 +1116,15 @@ export function ProductionPipelineWorkbench() {
 
       <div className="grid gap-5 xl:grid-cols-[1fr_420px]">
         <div className="space-y-4">
-          {data.productionPacks.map((pack) => {
+          {hiddenProductionPackCount > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
+              <span>Recent-first legacy production view: showing {visibleProductionPacks.length} of {data.productionPacks.length} packs.</span>
+              <Button variant="outline" size="sm" onClick={() => setShowAllLegacyPacks((value) => !value)}>
+                {showAllLegacyPacks ? "Show fewer packs" : "View all legacy packs"}
+              </Button>
+            </div>
+          ) : null}
+          {visibleProductionPacks.map((pack) => {
             const quest = data.quests.find((item) => item.id === pack.questId);
             const assets = data.productionAssets.filter((asset) => pack.assetIds.includes(asset.id));
             return (
@@ -1069,9 +1183,9 @@ export function ProductionPipelineWorkbench() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {data.productionPacks[0] ? (
+            {sortedProductionPacks[0] ? (
               <>
-                {data.productionPacks[0].reviewChecklist.map((check) => (
+                {sortedProductionPacks[0].reviewChecklist.map((check) => (
                   <div key={check} className="flex gap-2 rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
                     <FileText className="mt-0.5 h-4 w-4 shrink-0 text-amber-100" />
                     {check}
@@ -1081,7 +1195,7 @@ export function ProductionPipelineWorkbench() {
                   <Lock className="mb-2 h-4 w-4" />
                   Approval is still required for publishing, launch, outreach, external automation, spend, and live OpenClaw commands.
                 </div>
-                <p className="text-xs text-slate-500">Updated {formatDateTime(data.productionPacks[0].updatedAt)}</p>
+                <p className="text-xs text-slate-500">Updated {formatDateTime(sortedProductionPacks[0].updatedAt)}</p>
               </>
             ) : (
               <p className="text-sm text-slate-300">Create a pack to see Claims & Safety Check and production QA controls.</p>

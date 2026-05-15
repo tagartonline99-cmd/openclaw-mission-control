@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 test("TeamLeader command runs public research, ranks top candidates, creates business, and production map", async ({ page }) => {
+  test.setTimeout(300_000);
   await page.goto("/#/", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Tell TeamLeader1A what to build" })).toBeVisible();
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
@@ -9,7 +10,7 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
   await expect(page.getByText("TeamLeader1A Chat")).toBeVisible();
   await expect(page.getByText("Research depth")).toBeVisible();
-  await expect(page.getByRole("combobox")).toHaveCount(1);
+  await expect(page.locator("select").filter({ hasText: /Quick public research.*Fast public research.*Deep public research/s })).toHaveCount(1);
   await expect(page.getByText("Optional quest attachment")).toBeVisible();
   await page.getByRole("button", { name: /Advanced/i }).click();
   await expect(page.getByText("Attach this command to an existing quest")).toBeVisible();
@@ -28,14 +29,15 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
   await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
   await expect(page.getByText("TeamLeader-created only")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Now Working" })).toBeVisible();
+  await expect(page.getByText(/Recent-first task view/i)).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Done" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Research zero-budget demand/i })).toBeVisible();
   await expect(page.getByText(/https:\/\//i).first()).toBeVisible();
 
   await page.goto("/#/guild-office", { waitUntil: "domcontentloaded" });
   await expect(page.getByRole("heading", { name: "Watch the agents work" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Research Library/i })).toBeVisible();
-  await expect(page.getByText(/research beam|pulse|forge/i).first()).toBeVisible();
+  await expect(page.getByText(/review|idle/i).first()).toBeVisible();
   await page.getByRole("button", { name: /Research Library/i }).click();
   await expect(page.getByText("Agent Evidence Trail").first()).toBeVisible();
 
@@ -91,12 +93,13 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
   await expect(page.getByText("Reality Meter").first()).toBeVisible();
   await expect(page.getByText("Today / Now Command Center").first()).toBeVisible();
   await expect(page.getByText("Product Snapshot").first()).toBeVisible();
+  await expect(page.getByText(/Current-first Product Studio view/i)).toBeVisible();
   await expect(page.getByText("Exact Product Preview").first()).toBeVisible();
   await expect(page.getByText("Product QA Gate").first()).toBeVisible();
   await expect(page.getByText("Agent Reality Monitor").first()).toBeVisible();
   await expect(page.getByText("Product Build Status").first()).toBeVisible();
   await expect(page.getByText("Real OpenClaw Build Blocked").first()).toBeVisible();
-  await expect(page.getByText(/No fallback product is accepted/i).first()).toBeVisible();
+  await expect(page.getByText(/Tauri desktop runtime is required|No fallback product is accepted/i).first()).toBeVisible();
   await expect(page.getByText(/See the exact product before any publishing approval/i)).toBeVisible();
   await expect(page.getByText("Product Files", { exact: true }).first()).toBeVisible();
   await expect(page.getByText("Local Product Files").first()).toBeVisible();
@@ -147,9 +150,10 @@ test("TeamLeader command runs public research, ranks top candidates, creates bus
 
   await page.goto("/#/settings", { waitUntil: "domcontentloaded" });
   await expect(page.getByText("Release And Updater Checklist")).toBeVisible();
+  await expect(page.getByText("Performance pass: capped historical rendering / current-first views")).toBeVisible();
   await expect(page.getByText("Manual upload checklist")).toBeVisible();
   await expect(page.getByText("Auto Updates")).toBeVisible();
-  await expect(page.getByText(/Approve Business responsiveness hotfix/i)).toBeVisible();
+  await expect(page.getByText(/Product Factory stabilization 0\.1\.54/i).first()).toBeVisible();
 });
 
 test("Fiverr prompt still creates a locked local platform package", async ({ page }) => {

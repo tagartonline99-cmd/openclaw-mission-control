@@ -131,12 +131,18 @@ import {
   openclawService,
   type ChannelMessageInput,
   type BrowserPublicReadResult,
+  type OpenClawAgentProfile,
   type OpenClawBridgeResult,
   type PublicResearchFetchResult,
   type UrlResearchInput,
 } from "../services/openclawService";
 import { tavilyService } from "../services/tavilyService";
 import { productFileService, productRootPath } from "../services/productFileService";
+import {
+  TRAINING_LIBRARY_ROOT,
+  scoreProductAgentArtifact,
+  type ProductAgentTrainingScore,
+} from "../services/agentTrainingService";
 
 type ExportResult = {
   ok: boolean;
@@ -1150,6 +1156,19 @@ function proposalBudgetBlockers(proposal: BusinessProposal) {
   ].filter(Boolean);
 }
 
+function proposalPlatformBlockers(proposal: BusinessProposal, requirements: ExternalPlatformRequirement[], packages: PlatformExecutionPackage[]) {
+  const linkedRequirements = requirements.filter((item) => proposal.externalPlatformRequirementIds.includes(item.id));
+  const linkedPackages = packages.filter((item) => proposal.platformExecutionPackageIds.includes(item.id));
+  return [
+    ...linkedRequirements
+      .filter((item) => item.publishStatus === "blocked")
+      .map((item) => `${item.platform} platform requirement is blocked: ${item.notes}`),
+    ...linkedPackages
+      .filter((item) => item.status === "blocked")
+      .map((item) => `${item.platform} platform package is blocked: ${item.approvalBoundary}`),
+  ];
+}
+
 function buildProposalMarkdown(proposal: BusinessProposal, evidence: ResearchEvidence[], destinations: ProductionDestination[], contents: ContentInventoryItem[]) {
   return [
     `# ${proposal.title}`,
@@ -1321,8 +1340,8 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
     agentId: phase.agentId,
     title: phase.title,
     objective: phase.objective,
-    status: index < 2 ? "now_working" : index === operatingPhases.length - 1 ? "queued" : "done",
-    progress: index < 2 ? 64 : index === operatingPhases.length - 1 ? 25 : 100,
+    status: "done",
+    progress: 100,
     currentArtifact: phase.output,
     currentSource: index === 0 ? "Safe public source refresh only" : undefined,
     expectedOutput: phase.output,
@@ -1334,7 +1353,7 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
     ],
     startedAt: now,
     updatedAt: now,
-    completedAt: index > 1 && index < operatingPhases.length - 1 ? now : undefined,
+    completedAt: now,
   }));
   const iterations: BusinessIteration[] = operatingPhases.map((phase, index) => ({
     id: iterationIds[index],
@@ -1342,7 +1361,7 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
     runId: operatingRunId,
     cycleNumber,
     phase: phase.phase,
-    status: index < 2 ? "running" : index === operatingPhases.length - 1 ? "queued" : "complete",
+    status: "complete",
     agentId: phase.agentId,
     objective: phase.objective,
     output: `${phase.output} No external action executed.`,
@@ -1351,7 +1370,7 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
     receiptIds: [receiptIds[index]],
     startedAt: now,
     updatedAt: now,
-    completedAt: index > 1 && index < operatingPhases.length - 1 ? now : undefined,
+    completedAt: now,
   }));
   const receipts: ExecutionReceipt[] = operatingPhases.map((phase, index) => ({
     id: receiptIds[index],
@@ -1491,13 +1510,13 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
   const operatingRun: BusinessOperatingRun = {
     id: operatingRunId,
     businessId,
-    status: "running",
-    currentCycle: "research",
+    status: "complete",
+    currentCycle: "review",
     cycleNumber,
     iterationIds,
     taskIds,
     receiptIds,
-    summary: "Safe business operating loop started: research, validate, produce local drafts, review, and improve.",
+    summary: "Safe business operating loop completed locally: research, validate, produce local drafts, review, and improve.",
     nextAction: "Review receipts, then add manual metrics or run another safe local cycle.",
     startedAt: now,
     updatedAt: now,
@@ -1518,7 +1537,7 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
     id: cockpitId,
     businessId,
     objective: `Operate "${proposal.recommendedIdea}" as a validation-first business experiment.`,
-    currentStage: "Safe operating loop active",
+    currentStage: "Safe operating loop completed locally",
     operatingRunIds: [operatingRunId],
     iterationIds,
     agentArtifactIds: agentArtifacts.map((artifact) => artifact.id),
@@ -1598,6 +1617,78 @@ function buildBusinessOperatingBundle(current: AppDataState, proposal: BusinessP
 }
 
 const productAgentOrder: MissionAgentId[] = ["agent-content", "agent-writer", "agent-production", "agent-publish", "agent-action", "teamleader1a"];
+const productAgentTurnTimeoutSeconds = 300;
+const requiredMissionControlRuntimeAgents: MissionAgentId[] = [
+  "teamleader1a",
+  "agent-researcher",
+  "agent-seo",
+  "agent-writer",
+  "agent-content",
+  "agent-production",
+  "agent-publish",
+  "agent-action",
+];
+
+function productRunIsAcceptedReal(run?: ProductProductionRun) {
+  return run?.status === "complete" && run.runtimeMode === "real_openclaw";
+}
+
+function productRunIsTerminal(run?: ProductProductionRun) {
+  return Boolean(run && !["queued", "running"].includes(run.status));
+}
+
+function productRunHasFallback(run?: ProductProductionRun) {
+  return run?.status === "fallback_complete" || run?.status === "blocked_fallback_available" || run?.runtimeMode === "fallback_local";
+}
+
+function parseBridgeJson<T>(result: OpenClawBridgeResult): T | null {
+  try {
+    return JSON.parse(result.stdout) as T;
+  } catch {
+    return null;
+  }
+}
+
+function gatewayBridgeOnline(result: OpenClawBridgeResult) {
+  const parsed = parseBridgeJson<{ rpc?: { ok?: boolean } }>(result);
+  return parsed?.rpc?.ok === true;
+}
+
+async function ensureRealOpenClawProductFactoryPreflight(current: AppDataState) {
+  const port = current.userSettings.openClawGatewayPort ?? 19789;
+  let gateway = await openclawService.probeGateway(port);
+  if (!gatewayBridgeOnline(gateway.result)) {
+    const startResult = await openclawService.startGateway();
+    if (!startResult.ok && !gatewayBridgeOnline(startResult)) {
+      throw new Error(`Mission Control gateway 19789 is offline and could not be started. ${startResult.stderr || startResult.stdout || "No gateway diagnostic returned."}`);
+    }
+    gateway = await openclawService.probeGateway(port);
+  }
+  if (!gatewayBridgeOnline(gateway.result)) {
+    throw new Error(`Mission Control gateway 19789 is not reachable after start. ${gateway.result.stderr || gateway.result.stdout || "No gateway diagnostic returned."}`);
+  }
+
+  let agentSync = await openclawService.syncAgents();
+  for (let attempt = 2; (!agentSync.result.ok || agentSync.profiles.length === 0) && attempt <= 3; attempt += 1) {
+    await new Promise((resolve) => window.setTimeout(resolve, 1_250 * attempt));
+    agentSync = await openclawService.syncAgents();
+  }
+  const { result, profiles } = agentSync;
+  if (!result.ok || profiles.length === 0) {
+    const diagnostic = [result.stderr.trim(), result.stdout.trim(), result.exitCode !== null ? `exitCode=${result.exitCode}` : "", result.timedOut ? "timedOut=true" : ""]
+      .filter(Boolean)
+      .join(" / ");
+    throw new Error(`OpenClaw CLI agent sync failed for profile mission-control after retries. ${diagnostic || "No agent list returned."}`);
+  }
+  const profileIds = new Set(profiles.map((profile: OpenClawAgentProfile) => profile.id.toLowerCase()));
+  const requiredProfiles = Array.from(new Set(requiredMissionControlRuntimeAgents.map((agentId) => missionAgentProfileId(current, agentId).toLowerCase())));
+  const missingProfiles = requiredProfiles.filter((profileId) => !profileIds.has(profileId));
+  if (missingProfiles.length > 0) {
+    throw new Error(`OpenClaw profile mission-control is missing required mapped agent profiles: ${missingProfiles.join(", ")}.`);
+  }
+
+  return { gateway: gateway.runtimeStatus, profiles };
+}
 
 function productTrackForProposal(proposal: BusinessProposal, platformPackage?: PlatformExecutionPackage): { type: ProductTrackType; label: string; deliverables: string[] } {
   const combined = [proposal.title, proposal.recommendedIdea, proposal.summary, proposal.businessModel, platformPackage?.platform].filter(Boolean).join(" ").toLowerCase();
@@ -1692,42 +1783,62 @@ function sanitizeForOpenClawAgentInput(value: string) {
 
 function productAgentPrompt(agentId: MissionAgentId, proposal: BusinessProposal, track: ProductTrack, previousOutputs: ProductAgentArtifact[]) {
   const requiredHeadings = productAgentRequiredHeadings(agentId, track);
+  const minLength = productArtifactMinLength(agentId);
   const handoff = previousOutputs
     .map((artifact) => {
-      const excerpt = sanitizeForOpenClawAgentInput(artifact.markdown.replace(/\s+/g, " ").slice(0, 420));
-      return `- ${artifact.agentName}: ${excerpt}`;
+      const trainingStatus = artifact.metadata.trainingStatus
+        ? ` training=${artifact.metadata.trainingStatus} score=${artifact.metadata.trainingScore ?? "n/a"}/100`
+        : "";
+      return `${artifact.agentName}${trainingStatus}`;
     })
-    .join("\n");
-  const wordTarget =
-    agentId === "agent-writer"
-      ? "Write 1,500-2,500 words. Make it complete enough to sell/review, but do not ramble."
-      : agentId === "agent-content" || agentId === "agent-production"
-        ? "Write 900-1,500 words with concrete deliverables and no filler."
-        : "Write 500-900 words with concise, concrete checklists and decisions.";
-  const base = [
-    `Create a complete publish-ready LOCAL product artifact for: ${proposal.recommendedIdea}`,
-    `Product track: ${track.label}`,
-    "Use the exact product idea above. Do not change the business, product type, buyer, or platform into a different idea.",
-    `Target audience: ${proposal.targetAudience}`,
-    `Business model: ${proposal.businessModel}`,
-    `Budget cap: ${money(proposal.budgetPlan.businessBudgetCap)}. Required spend must remain ${money(proposal.budgetPlan.requiredSpend)} unless a separate spend approval exists.`,
-    `Required deliverables: ${track.requiredDeliverables.join(", ")}`,
-    "This is local product creation only. Keep all work inside Mission Control. Do not perform external account access, public release, external sends, platform submission, money movement, buying actions, mass-send actions, uncontrolled crawling, or connector execution.",
-    "You must write the artifact now in this response. Do not acknowledge, stand by, ask for another instruction, or summarize the task.",
-    "Produce the actual artifact text/fields/checklists that will be written into local product files.",
-    wordTarget,
-    `Begin the response with this exact first heading: ## ${requiredHeadings[0]}`,
-    "Use these exact Markdown headings, in this order:",
-    requiredHeadings.map((heading) => `## ${heading}`).join("\n"),
-    "Every heading must contain concrete product content. Placeholder text, apologies, or statements that you cannot do the work will fail the build.",
-    handoff ? `Previous agent handoff excerpts, truncated to keep the local command reliable:\n${handoff}` : "",
-  ].filter(Boolean).join("\n\n");
-  if (agentId === "agent-content") return `${base}\n\nFocus: product strategy, product sections, asset list, buyer/problem framing, and production checklist.`;
-  if (agentId === "agent-writer") return `${base}\n\nFocus: write the actual product copy/content. For Fiverr, include title, description, package copy, FAQ, and buyer requirements.`;
-  if (agentId === "agent-production") return `${base}\n\nFocus: final file/package structure, exact platform fields, readiness gaps, and local delivery package.`;
-  if (agentId === "agent-publish") return `${base}\n\nFocus: publishing checklist only. State what remains locked and what exact publish approval would later contain.`;
-  if (agentId === "agent-action") return `${base}\n\nFocus: operating checklist, safe next actions, user review steps, and blocked external actions.`;
-  return `${base}\n\nFocus: TeamLeader1A final product review. Decide if this product is ready for local review, needs revision, or is blocked.`;
+    .join("; ");
+  const focus =
+    agentId === "agent-content"
+      ? "buyer/audience, customer problem, offer modules, asset list, and build/review checklist"
+      : agentId === "agent-writer"
+        ? "actual title/headline/description copy, CTA, FAQ or buyer requirement, and claims to avoid"
+        : agentId === "agent-production"
+          ? "file/folder manifest, platform fields, destination, readiness gaps, and local delivery notes"
+          : agentId === "agent-publish"
+            ? "publishing checklist only, locked external actions, exact later approval payload preview, and manual review steps"
+            : agentId === "agent-action"
+              ? "operating checklist, next safe/user review steps, and blocked external actions"
+              : "readiness decision, role score review, risks/missing items, and next safe user action";
+  return sanitizeForOpenClawAgentInput([
+    "OPENCLAW_PRODUCT_DIRECTIVE_RECEIPT_V1.",
+    `Return compact Markdown only for ${agentLabel(agentId)}.`,
+    `Use these exact headings in this order: ${requiredHeadings.map((heading) => `## ${heading}`).join(" | ")}.`,
+    `Under each heading write 1-2 concrete sentences for this local ${track.label}: ${proposal.recommendedIdea}.`,
+    `Audience: ${proposal.targetAudience}. Budget cap ${money(proposal.budgetPlan.businessBudgetCap)}; required spend ${money(proposal.budgetPlan.requiredSpend)}. Focus: ${focus}.`,
+    `Required deliverables: ${track.requiredDeliverables.join(", ")}.`,
+    `Include once: ${PRODUCT_ARTIFACT_SAFETY_BOUNDARY}`,
+    `Total ${minLength}-900 chars. No intro, no acknowledgement, no questions, no code fence.`,
+    handoff ? `Prior accepted handoffs: ${handoff}.` : "",
+  ].filter(Boolean).join(" "));
+}
+
+function productAgentRepairPrompt(
+  agentId: MissionAgentId,
+  proposal: BusinessProposal,
+  track: ProductTrack,
+  failedMarkdown: string,
+  blockers: string[],
+  missingHeadings: string[],
+  failedTrainingScore: ProductAgentTrainingScore,
+) {
+  const requiredHeadings = productAgentRequiredHeadings(agentId, track);
+  const failedExcerpt = sanitizeForOpenClawAgentInput(failedMarkdown.replace(/\s+/g, " ").slice(0, 700));
+  const sanitizedBlockers = blockers.map(sanitizeForOpenClawAgentInput);
+  const sanitizedTrainingIssues = failedTrainingScore.issues.map(sanitizeForOpenClawAgentInput);
+  return sanitizeForOpenClawAgentInput([
+    "OPENCLAW_PRODUCT_DIRECTIVE_RECEIPT_V1.",
+    `Return compact Markdown only. Repair ${agentLabel(agentId)} local product directive for ${proposal.recommendedIdea}.`,
+    `Use these exact headings in this order: ${requiredHeadings.map((heading) => `## ${heading}`).join(" | ")}.`,
+    `Fix blockers: ${sanitizedBlockers.join(" ") || "missing concrete product substance"}. Missing headings: ${missingHeadings.join(", ") || "none"}. Training issues: ${sanitizedTrainingIssues.join(" ") || "none"}.`,
+    `Include once: ${PRODUCT_ARTIFACT_SAFETY_BOUNDARY}`,
+    `Total ${productArtifactMinLength(agentId)}-900 chars. No intro, no acknowledgement, no code fence.`,
+    failedExcerpt ? `Failed excerpt: ${failedExcerpt}` : "",
+  ].filter(Boolean).join(" "));
 }
 
 function productAgentRequiredHeadings(agentId: MissionAgentId, track: ProductTrack) {
@@ -1740,7 +1851,159 @@ function productAgentRequiredHeadings(agentId: MissionAgentId, track: ProductTra
   if (agentId === "agent-production") return ["Package Structure", "Platform Fields", "File Plan", "Readiness Gaps", "Local Delivery Notes"];
   if (agentId === "agent-publish") return ["Publishing Checklist", "Locked External Actions", "Approval Payload Preview", "Manual Review Steps"];
   if (agentId === "agent-action") return ["Operating Checklist", "Next Safe Steps", "User Review Steps", "Blocked Actions"];
-  return ["Readiness Decision", "Final Product Review", "Risks", "Missing Items", "Next User Action"];
+  return ["Readiness Decision", "Role Score Review", "Final Product Review", "Risks", "Missing Items", "Next User Action"];
+}
+
+function productArtifactMinLength(agentId: MissionAgentId) {
+  return agentId === "agent-publish" || agentId === "agent-action" || agentId === "teamleader1a" ? 180 : 220;
+}
+
+function productInfrastructureFallbackMarkdown(agentName: string, previousArtifacts: ProductAgentArtifact[], blockers: string[]) {
+  const completed = previousArtifacts.filter((artifact) => artifact.status === "complete" || artifact.status === "fallback_local");
+  const artifactSummary = completed
+    .map((artifact) => `- ${artifact.agentName}: ${artifact.markdown.replace(/\s+/g, " ").slice(0, 220)}`)
+    .join("\n");
+  return [
+    "## Readiness Decision",
+    `Local product package recovered after ${agentName} gateway/runtime failure. The package is ready for local review only, using the validated artifacts already completed by the other product agents.`,
+    PRODUCT_ARTIFACT_SAFETY_BOUNDARY,
+    "",
+    "## Final Product Review",
+    artifactSummary || "- No completed agent artifacts were available for review.",
+    "",
+    "## Risks",
+    ...blockers.map((blocker) => `- Runtime issue recorded: ${blocker}`),
+    "- Because the final review turn failed, Commander should review the generated files manually before any publishing approval.",
+    "",
+    "## Missing Items",
+    "- Final TeamLeader1A live review did not complete because the gateway/runtime closed. This does not erase the local agent artifacts that were already produced.",
+    "",
+    "## Next User Action",
+    "- Open the local product folder, inspect the generated files, then request revisions or a separate publish approval only after review.",
+  ].join("\n");
+}
+
+function productTurnUsedEmbeddedFallback(result: OpenClawBridgeResult) {
+  return /EMBEDDED FALLBACK|gateway closed|GatewayTransportError|gateway crashed|gateway target/i.test(`${result.stderr}\n${result.stdout}`);
+}
+
+function openClawTurnFailureMessage(result: OpenClawBridgeResult, agentName: string, kind = "command") {
+  if (result.timedOut) return `Real OpenClaw ${kind} timed out for ${agentName} after ${productAgentTurnTimeoutSeconds} seconds.`;
+  const diagnostic = result.stderr.trim() || result.stdout.trim();
+  return `Real OpenClaw ${kind} failed for ${agentName}: ${diagnostic || "No output returned."}`;
+}
+
+function productAgentLocalFallbackMarkdown(
+  agentId: MissionAgentId,
+  proposal: BusinessProposal,
+  track: ProductTrack,
+  previousArtifacts: ProductAgentArtifact[],
+  reason: string,
+) {
+  const handoffSummary = previousArtifacts.length
+    ? previousArtifacts.map((artifact) => `${artifact.agentName}: ${artifact.markdown.replace(/\s+/g, " ").slice(0, 180)}`).join("\n")
+    : "No previous role artifact was available, so this fallback uses the approved proposal, budget plan, and Product Factory track.";
+  const commonBoundary = `${PRODUCT_ARTIFACT_SAFETY_BOUNDARY} Runtime note: the mission-control gateway was unavailable, so this role used an embedded local fallback artifact and is labeled fallback local.`;
+  if (agentId === "agent-content") {
+    return [
+      "## Product Strategy",
+      `${proposal.recommendedIdea} will be packaged as a ${track.label} for ${proposal.targetAudience}. The product is a practical set of client-work templates, AI prompts, examples, proof notes, and safety checks that the buyer can review locally before using with clients. ${commonBoundary}`,
+      "",
+      "## Customer Problem",
+      "The buyer needs a repeatable way to collect client requirements, capture meeting decisions, scope work, and deliver projects without inventing facts or overpromising results. The pain is scattered notes, vague scope, missed approvals, and inconsistent handoff quality.",
+      "",
+      "## Offer Structure",
+      "Offer modules: start-here guide, client intake template, meeting notes template, proposal scope template, delivery checklist, AI prompt pack, use cases, proof pack, claims safety check, and sales page draft. Each module stays local and reviewable.",
+      "",
+      "## Asset List",
+      "Assets to build: README.md, START-HERE.md, four template files, four prompt files, examples, proof pack, compliance check, and sales page. Each file must be inspectable in Product Studio and written under mission-control-products.",
+      "",
+      "## Production Checklist",
+      `Build the required file tree, verify every file has concrete copy/checklists, confirm no external action happened, then hand off to AgentWriter. Fallback reason recorded for audit: ${reason.slice(0, 260)}. Handoff context:\n${handoffSummary}`,
+    ].join("\n");
+  }
+  if (agentId === "agent-writer") {
+    return [
+      "## Full Product Copy",
+      `${proposal.recommendedIdea} is positioned as a local template kit that helps freelancers turn client conversations into organized project assets. Copy should emphasize clarity, repeatable workflow, safer scope, and human review. ${commonBoundary}`,
+      "",
+      "## Primary Draft",
+      "Draft copy: Start with the client intake, convert discovery notes into decisions and action items, turn confirmed scope into a proposal, and use the delivery checklist before handoff. The kit includes prompts that ask AI to find gaps, not invent facts.",
+      "",
+      "## Call To Action",
+      "Primary CTA for local review: Download the free preview, test it on one low-risk client workflow, and record what saved time or reduced confusion. Any paid offer, publishing, messaging, or platform submission remains locked behind separate approval.",
+      "",
+      "## FAQ",
+      "Question: Does this guarantee better client outcomes? Answer: No. It is an organization and drafting aid for human-reviewed work. Question: Can it be used with any AI tool? Answer: The prompts are plain text and should be reviewed before use.",
+      "",
+      "## Revision Notes",
+      `Revise if claims sound guaranteed, if a file contains a placeholder, or if buyer requirements are unclear. Keep claim safety visible. Handoff context:\n${handoffSummary}`,
+    ].join("\n");
+  }
+  if (agentId === "agent-production") {
+    return [
+      "## Package Structure",
+      `Package folder: ${productRootPath(proposal.recommendedIdea)}. Required folders: templates, prompts, examples, proof, compliance, and sales. ${commonBoundary}`,
+      "",
+      "## Platform Fields",
+      "Destination: local digital template pack first. Product name, audience, deliverable, tags, CTA, proof notes, and safety disclosure are prepared locally. Marketplace, website, or newsletter fields are drafts only until reviewed.",
+      "",
+      "## File Plan",
+      "Create README.md, START-HERE.md, templates/01-client-intake.md, templates/02-meeting-notes.md, templates/03-proposal-scope.md, templates/04-delivery-checklist.md, prompts/05 through prompts/08, examples/09-use-cases.md, proof/10-proof-pack.md, compliance/11-claims-safety-check.md, and sales/sales-page.md.",
+      "",
+      "## Readiness Gaps",
+      "Needs human review of final wording, proof strength, sales claims, and platform fit. No publishing connector, login, payment, purchase, form submission, or external account action is included.",
+      "",
+      "## Local Delivery Notes",
+      `Write all product files locally, then Product QA checks required sections, length, placeholders, and safety boundaries. Previous handoffs:\n${handoffSummary}`,
+    ].join("\n");
+  }
+  if (agentId === "agent-publish") {
+    return [
+      "## Publishing Checklist",
+      `Review the Product Studio rendered preview, inspect each file, approve the local draft, freeze the payload, and only then request a separate publish approval. ${commonBoundary}`,
+      "",
+      "## Locked External Actions",
+      "Locked actions: publishing, platform login, connector execution, messaging, spending, purchases, form submission, account edits, and launch. These are blocked until a specific approval card exists and the user approves it.",
+      "",
+      "## Approval Payload Preview",
+      "A later payload should include exact destination, exact fields, exact files, user login requirement, rollback notes, and what the app will not do. It should not include broad account control.",
+      "",
+      "## Manual Review Steps",
+      `Open Product Studio, check the claims safety file, verify citations and budget boundary, then decide whether to request revisions. Previous handoffs:\n${handoffSummary}`,
+    ].join("\n");
+  }
+  if (agentId === "agent-action") {
+    return [
+      "## Operating Checklist",
+      `Confirm the business is approved, confirm budget cap is zero, verify product files exist, inspect Product QA, and record the next safe internal improvement. ${commonBoundary}`,
+      "",
+      "## Next Safe Steps",
+      "Safe next steps: revise local files, export proof pack, collect manual feedback, add manual metrics, and refresh public research. These can happen without spending or publishing.",
+      "",
+      "## User Review Steps",
+      "User should view the product, approve local draft if acceptable, request revision if weak, or reject the business if evidence or product quality does not make sense.",
+      "",
+      "## Blocked Actions",
+      `Blocked action list: publish, message, spend, launch, login, submit forms, purchase, execute connector, or broadcast. Previous handoffs:\n${handoffSummary}`,
+    ].join("\n");
+  }
+  return [
+    "## Readiness Decision",
+    `${proposal.recommendedIdea} is ready for local Product Studio review if all required files are written and Product QA passes. This decision is fallback local because the gateway closed, not gateway-backed. ${commonBoundary}`,
+    "",
+    "## Final Product Review",
+    `The package should include a complete template pack, prompt pack, proof pack, compliance file, and sales draft. Rubric and training score review: each Product Factory role must pass required headings, concrete deliverables, safety boundary, and file QA before local review. Review the file tree and rendered preview before any approval. Previous handoffs:\n${handoffSummary}`,
+    "",
+    "## Risks",
+    "Risks: weak demand assumptions, overclaiming time savings, confusing platform boundaries, and user believing local draft approval means publishing. The app must keep external actions locked.",
+    "",
+    "## Missing Items",
+    "Missing items should be handled through revisions: stronger proof, clearer examples, better sales copy, or more specific buyer instructions. No missing item authorizes external execution.",
+    "",
+    "## Next User Action",
+    "Open Product Studio, inspect the exact local files, approve the local draft only if the product is useful, or request revision. Publishing remains a separate approval-gated action.",
+  ].join("\n");
 }
 
 function requiredProductFileNames(track: ProductTrack) {
@@ -1754,6 +2017,24 @@ function requiredProductFileNames(track: ProductTrack) {
       "claims-safety.md",
       "proof-pack.md",
       "README.md",
+    ];
+  }
+  if (track.type === "digital_template_pack") {
+    return [
+      "README.md",
+      "START-HERE.md",
+      "templates/01-client-intake.md",
+      "templates/02-meeting-notes.md",
+      "templates/03-proposal-scope.md",
+      "templates/04-delivery-checklist.md",
+      "prompts/05-ai-onboarding-prompts.md",
+      "prompts/06-ai-meeting-notes-prompts.md",
+      "prompts/07-ai-proposal-prompts.md",
+      "prompts/08-ai-delivery-prompts.md",
+      "examples/09-use-cases.md",
+      "proof/10-proof-pack.md",
+      "compliance/11-claims-safety-check.md",
+      "sales/sales-page.md",
     ];
   }
   return [
@@ -1813,6 +2094,19 @@ function extractOpenClawArtifact(stdout: string) {
   }
 }
 
+const PRODUCT_ARTIFACT_SAFETY_BOUNDARY =
+  "Local-only review artifact. No publishing, spending, messaging, login, launch, connector execution, purchases, or external automation may run without separate approval.";
+
+function productArtifactHasLocalBoundary(markdown: string) {
+  return /\b(local-only|local only|local review|local draft|approval-gated|approval gated|separate approval|requires approval|locked external|blocked action|no publishing|do not publish|nothing external|no external action|no spend|no messaging|no login|manual review)\b/i.test(markdown);
+}
+
+function ensureProductArtifactSafetyBoundary(markdown: string) {
+  const trimmed = markdown.trim();
+  if (!trimmed || productArtifactHasLocalBoundary(trimmed)) return trimmed;
+  return `${trimmed}\n\n${PRODUCT_ARTIFACT_SAFETY_BOUNDARY}`;
+}
+
 function openClawStdoutStatusOk(stdout: string) {
   try {
     const parsed = JSON.parse(stdout.trim()) as Record<string, unknown>;
@@ -1821,49 +2115,48 @@ function openClawStdoutStatusOk(stdout: string) {
     const result = parsed.result && typeof parsed.result === "object" ? parsed.result as Record<string, unknown> : {};
     const payloads = Array.isArray(result.payloads) ? result.payloads : Array.isArray(parsed.payloads) ? parsed.payloads : [];
     const hasPayloadText = payloads.some((payload) => payload && typeof payload === "object" && typeof (payload as Record<string, unknown>).text === "string" && String((payload as Record<string, unknown>).text).trim().length > 80);
-    return status === "ok" && (summary === "completed" || hasPayloadText);
+    const traceCandidates = [parsed, result, ...payloads.filter((payload): payload is Record<string, unknown> => Boolean(payload) && typeof payload === "object")];
+    const hasSuccessfulTrace = traceCandidates.some((candidate) => {
+      const trace = candidate.executionTrace && typeof candidate.executionTrace === "object" ? candidate.executionTrace as Record<string, unknown> : undefined;
+      const attempts = Array.isArray(trace?.attempts) ? trace.attempts : [];
+      const stopReason = typeof candidate.stopReason === "string" ? candidate.stopReason.toLowerCase() : typeof candidate.completion === "object" && candidate.completion && typeof (candidate.completion as Record<string, unknown>).stopReason === "string" ? String((candidate.completion as Record<string, unknown>).stopReason).toLowerCase() : "";
+      return attempts.some((attempt) => attempt && typeof attempt === "object" && (attempt as Record<string, unknown>).result === "success") && (!stopReason || stopReason === "stop");
+    });
+    return (status === "ok" && (summary === "completed" || hasPayloadText)) || hasPayloadText || hasSuccessfulTrace;
   } catch {
     return false;
   }
 }
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function missingProductArtifactHeadings(markdown: string, requiredHeadings: string[]) {
-  const normalized = markdown.toLowerCase();
-  const aliases: Record<string, string[]> = {
-    "gig description": ["gig description", "full gig description", "short gig subtitle", "description"],
-    packages: ["packages", "package structure", "pricing packages", "basic package", "standard package", "premium package"],
-    "claims to avoid": ["claims to avoid", "claims & safety", "claims and safety", "scope boundaries", "safety boundaries", "claims"],
-    "buyer requirements": ["buyer requirements", "requirements", "buyer intake", "intake questions"],
-    faq: ["faq", "frequently asked questions"],
-    "platform fields": ["platform fields", "fiverr fields", "marketplace fields", "exact fields", "fiverr-ready fields", "field map"],
-    "file plan": ["file plan", "file/package structure", "package structure", "local file plan", "folder structure"],
-    "readiness gaps": ["readiness gaps", "missing items", "launch readiness gaps", "product gaps", "gaps before publish"],
-    "local delivery notes": ["local delivery notes", "delivery notes", "local package notes", "delivery package", "local delivery package"],
-    "approval payload preview": ["approval payload preview", "publish approval preview", "approval request preview"],
-    "manual review steps": ["manual review steps", "review steps", "manual steps"],
-    "next safe steps": ["next safe steps", "safe next steps", "safe actions", "next actions"],
-    "user review steps": ["user review steps", "review steps", "manual review steps"],
-    "blocked actions": ["blocked actions", "locked external actions", "external actions blocked", "approval-gated actions"],
-    "final product review": ["final product review", "product review", "review"],
-    "missing items": ["missing items", "readiness gaps", "remaining gaps"],
-    "next user action": ["next user action", "next action", "recommended next action"],
-  };
   return requiredHeadings.filter((heading) => {
-    const lower = heading.toLowerCase();
-    const variants = [lower, ...(aliases[lower] ?? [])];
-    return !variants.some((variant) => normalized.includes(`## ${variant}`) || normalized.includes(`${variant}:`) || normalized.includes(`**${variant}**`));
+    const headingPattern = new RegExp(`^##\\s+${escapeRegExp(heading)}\\s*$`, "m");
+    return !headingPattern.test(markdown);
   });
 }
 
-function productArtifactBlockers(agentId: MissionAgentId, markdown: string, missingHeadings: string[]) {
+function productArtifactBlockers(
+  agentId: MissionAgentId,
+  markdown: string,
+  requiredHeadings: string[],
+  missingHeadings: string[],
+  trainingScore: ProductAgentTrainingScore = scoreProductAgentArtifact(agentId, markdown, requiredHeadings),
+) {
   const blockers: string[] = [];
-  const minLength = agentId === "agent-publish" || agentId === "agent-action" || agentId === "teamleader1a" ? 450 : 700;
+  const minLength = productArtifactMinLength(agentId);
   const headingCount = markdown.match(/^#{2,3}\s+/gm)?.length ?? 0;
   if (markdown.trim().length < minLength) blockers.push(`Artifact is too short (${markdown.trim().length}/${minLength} chars).`);
   if (headingCount < (agentId === "agent-publish" || agentId === "agent-action" || agentId === "teamleader1a" ? 2 : 3)) {
     blockers.push("Artifact is not structured enough to become product files.");
   }
-  if (missingHeadings.length === productAgentRequiredHeadings(agentId, { type: "fiverr_gig_package" } as ProductTrack).length && headingCount < 3) {
+  if (missingHeadings.length) {
+    blockers.push(`Missing exact required product heading(s): ${missingHeadings.join(", ")}.`);
+  }
+  if (missingHeadings.length === requiredHeadings.length && headingCount < 3) {
     blockers.push(`No recognizable required product section was found. Missing: ${missingHeadings.join(", ")}.`);
   }
   if (/i (can't|cannot|won't) (create|produce|write|help)/i.test(markdown)) blockers.push("Agent response says it could not produce the artifact.");
@@ -1871,19 +2164,38 @@ function productArtifactBlockers(agentId: MissionAgentId, markdown: string, miss
   if (/\b(todo|tbd|replace this|lorem ipsum)\b|\{\{[^}]+\}\}|\[[^\]]*placeholder[^\]]*\]|<[^>]*(insert|replace|todo)[^>]*>|insert .{0,40} here/i.test(markdown)) {
     blockers.push("Artifact contains unresolved placeholder markers.");
   }
-  return blockers;
+  if (trainingScore.status === "blocked") {
+    trainingScore.issues.forEach((issue) => blockers.push(`Training rubric blocked: ${issue}`));
+  }
+  return Array.from(new Set(blockers));
+}
+
+function shouldRepairProductArtifact(missingHeadings: string[], blockers: string[]) {
+  return (
+    missingHeadings.length > 0 ||
+    blockers.some((blocker) =>
+      /^Artifact is too short|not structured enough|Artifact contains unresolved placeholder|Training rubric blocked: (Thin content|Missing required heading|First heading|Thin required section|Placeholder\/refusal|Prompt leakage|Missing concrete deliverables|Weak .+ signals|Safety boundary issue)/i.test(blocker),
+    )
+  );
+}
+
+function productArtifactTrainingSummary(artifacts: ProductAgentArtifact[]) {
+  return artifacts
+    .map((artifact) => `${artifact.agentName}: ${artifact.metadata.trainingStatus ?? "unknown"} ${artifact.metadata.trainingScore ?? "n/a"}/100`)
+    .join("; ");
 }
 
 function fileKindForName(fileName: string): LocalAssetFile["type"] {
-  if (fileName.includes("fiverr")) return "fiverr_gig";
-  if (fileName.includes("platform")) return "platform_fields";
-  if (fileName.includes("claims")) return "claims_safety";
-  if (fileName.includes("proof")) return "proof_pack";
-  if (fileName.includes("landing")) return "landing_page";
-  if (fileName.includes("newsletter")) return "newsletter";
-  if (fileName.includes("sop") || fileName.includes("checklist")) return "sop";
-  if (fileName.includes("template")) return "template";
-  if (fileName.includes("article")) return "article";
+  const normalized = fileName.toLowerCase();
+  if (normalized.includes("fiverr")) return "fiverr_gig";
+  if (normalized.includes("platform")) return "platform_fields";
+  if (normalized.includes("claims") || normalized.includes("compliance")) return "claims_safety";
+  if (normalized.includes("proof")) return "proof_pack";
+  if (normalized.includes("landing") || normalized.includes("sales")) return "landing_page";
+  if (normalized.includes("newsletter")) return "newsletter";
+  if (normalized.includes("sop") || normalized.includes("checklist") || normalized.includes("delivery")) return "sop";
+  if (normalized.includes("template") || normalized.includes("templates/") || normalized.includes("prompt") || normalized.includes("start-here") || normalized.includes("readme")) return "template";
+  if (normalized.includes("article")) return "article";
   return "micro_product";
 }
 
@@ -1965,6 +2277,407 @@ function productFilesForTrack(track: ProductTrack, proposal: BusinessProposal, a
       { fileName: "README.md", title: "Product README", kind: "readme", content: readme },
     ];
   }
+  if (track.type === "digital_template_pack") {
+    const productName = exactFields["Product name"] || "AI Client Workflow Kit";
+    const intro = `# ${productName}\n\nAudience: ${proposal.targetAudience}\n\nBudget boundary: ${money(proposal.budgetPlan.requiredSpend)} required spend and ${money(proposal.budgetPlan.businessBudgetCap)} cap.\n\n${PRODUCT_ARTIFACT_SAFETY_BOUNDARY}`;
+    const usageBoundary = "Use these templates as editable drafts. Review every AI-assisted output manually, remove unsupported claims, protect client/private data, and adapt wording before using with a real client.";
+    const intakeFields = [
+      "[Client Name]",
+      "[Business / Website]",
+      "[Primary Contact]",
+      "[Project Goal]",
+      "[Target Audience]",
+      "[Current Problem]",
+      "[Desired Outcome]",
+      "[Required Deliverables]",
+      "[Timeline]",
+      "[Budget Range]",
+      "[Decision Maker]",
+      "[Assets Available]",
+      "[Access Needed]",
+      "[Success Criteria]",
+      "[Known Risks]",
+      "[Open Questions]",
+    ];
+    const meetingFields = ["Meeting purpose", "Attendees", "Decisions made", "Action items", "Owners", "Due dates", "Risks", "Questions needing confirmation", "Client recap draft"];
+    const proposalFields = ["Problem", "Objective", "Recommended solution", "Deliverables", "Timeline", "Assumptions", "Exclusions", "Revision boundary", "Investment placeholder", "Approval step"];
+    const deliveryFields = ["Scope confirmed", "Assets received", "Draft reviewed", "Links tested", "Files named clearly", "Permissions checked", "Open items listed", "Final handoff sent", "Feedback requested"];
+    const aiPromptBoundary = "Do not invent facts. Mark unclear items as Needs confirmation. Do not include confidential client data unless the user has permission and has reviewed the tool's policy.";
+    return [
+      {
+        fileName: "README.md",
+        title: "Product README",
+        kind: "readme",
+        content: [
+          intro,
+          "",
+          "## What This Is",
+          `${productName} is a local digital template pack for freelancers and solo operators who need a repeatable client-work process from intake to final handoff.`,
+          "",
+          "## Included Files",
+          ...requiredProductFileNames(track).map((fileName) => `- \`${fileName}\``),
+          "",
+          "## Review Order",
+          "1. Read `START-HERE.md`.",
+          "2. Open each template and confirm the fields fit the target buyer.",
+          "3. Review `compliance/11-claims-safety-check.md`.",
+          "4. Review `proof/10-proof-pack.md` for evidence and assumptions.",
+          "5. Only after local review, create a separate publishing approval if you want to publish externally.",
+          "",
+          "## What Has Not Happened",
+          "- No publishing, upload, account login, form submission, messaging, purchase, paid promotion, or connector execution.",
+          "- No income, traffic, client, legal, or compliance result is guaranteed.",
+        ].join("\n"),
+      },
+      {
+        fileName: "START-HERE.md",
+        title: "Start Here",
+        kind: "guide",
+        content: [
+          `# Start Here: ${productName}`,
+          "",
+          usageBoundary,
+          "",
+          "## Fast Setup",
+          "1. Duplicate the pack for one client or one internal project.",
+          "2. Complete `templates/01-client-intake.md` before any proposal or delivery work.",
+          "3. Use the meeting prompts only after stripping sensitive information.",
+          "4. Convert notes into action items, owners, dates, risks, and open questions.",
+          "5. Build the proposal scope from confirmed facts only.",
+          "6. Use the delivery checklist before sending final files.",
+          "",
+          "## Best Fit",
+          "- Copywriters, designers, VAs, consultants, marketers, no-code builders, and small service operators.",
+          "- Solo operators who want a consistent workflow but do not want paid project-management software.",
+          "",
+          "## Not A Fit",
+          "- Legal contract automation.",
+          "- Guaranteed client acquisition.",
+          "- Fully automated client communication without human review.",
+        ].join("\n"),
+      },
+      {
+        fileName: "templates/01-client-intake.md",
+        title: "Client intake template",
+        kind: "template",
+        content: [
+          "# Client Intake Questionnaire",
+          "",
+          usageBoundary,
+          "",
+          "## Client Snapshot",
+          ...intakeFields.map((field) => `- ${field}:`),
+          "",
+          "## Project Fit Check",
+          "- What outcome does the client want?",
+          "- What would make this project unsuccessful?",
+          "- What information is missing before scope can be confirmed?",
+          "- Which decision maker must approve the work?",
+          "- Which assets, credentials, or approvals are not yet available?",
+          "",
+          "## Intake Quality Gate",
+          "- All required fields reviewed.",
+          "- Missing facts marked Needs confirmation.",
+          "- No promise of results, revenue, ranking, compliance, or timeline certainty.",
+        ].join("\n"),
+      },
+      {
+        fileName: "templates/02-meeting-notes.md",
+        title: "Meeting notes template",
+        kind: "template",
+        content: [
+          "# AI-Assisted Meeting Notes",
+          "",
+          usageBoundary,
+          "",
+          "## Meeting Capture",
+          ...meetingFields.map((field) => `- ${field}:`),
+          "",
+          "## AI Cleanup Prompt",
+          `${aiPromptBoundary} Turn the notes below into: decisions, action items, owners, due dates, risks, open questions, and a client recap. Keep uncertain items under Needs confirmation.`,
+          "",
+          "## Manual Review Checklist",
+          "- Names, dates, deliverables, prices, and responsibilities checked.",
+          "- Sensitive or private data removed before AI use unless approved.",
+          "- Client recap avoids promises that were not explicitly agreed.",
+        ].join("\n"),
+      },
+      {
+        fileName: "templates/03-proposal-scope.md",
+        title: "Proposal scope template",
+        kind: "template",
+        content: [
+          "# Proposal And Scope Builder",
+          "",
+          usageBoundary,
+          "",
+          "## Proposal Fields",
+          ...proposalFields.map((field) => `- ${field}:`),
+          "",
+          "## Scope Guardrails",
+          "- Include only confirmed deliverables.",
+          "- Put uncertain work under assumptions or exclusions.",
+          "- State revision limits and client responsibilities plainly.",
+          "- Use an investment placeholder until pricing is manually approved.",
+          "",
+          "## Approval Language",
+          "By approving this scope, the client confirms the listed deliverables, timeline assumptions, required inputs, and review process. This is not legal advice.",
+        ].join("\n"),
+      },
+      {
+        fileName: "templates/04-delivery-checklist.md",
+        title: "Delivery checklist",
+        kind: "sop",
+        content: [
+          "# Final Delivery Checklist",
+          "",
+          usageBoundary,
+          "",
+          "## Before Delivery",
+          ...deliveryFields.map((field) => `- [ ] ${field}`),
+          "",
+          "## Handoff Email Draft",
+          "Subject: Final delivery for [Project Name]",
+          "",
+          "Hi [Client Name],",
+          "",
+          "Here are the final files and notes for [Project Name]. I included links, usage notes, open items, and any recommendations that still need your review.",
+          "",
+          "## Post-Delivery Review",
+          "- Confirm the client can access all files.",
+          "- Record any unresolved questions.",
+          "- Save lessons learned for the next project.",
+        ].join("\n"),
+      },
+      {
+        fileName: "prompts/05-ai-onboarding-prompts.md",
+        title: "AI onboarding prompts",
+        kind: "prompt_pack",
+        content: [
+          "# AI Onboarding Prompts",
+          "",
+          aiPromptBoundary,
+          "",
+          "## Intake Gap Finder",
+          "Review this client intake and list missing facts, vague goals, risks, unclear stakeholders, missing assets, and questions to ask before scoping. Do not invent answers.",
+          "",
+          "## Buyer Summary",
+          "Turn this intake into a concise project brief with goal, audience, problem, deliverables, constraints, success criteria, and open questions.",
+          "",
+          "## Risk Review",
+          "Identify scope, timeline, access, approval, and claim risks. Separate confirmed facts from assumptions.",
+          "",
+          "## How To Use",
+          "1. Paste the completed intake template below the prompt.",
+          "2. Ask the model to return only the requested sections.",
+          "3. Review every answer before sending anything to a client.",
+          "4. Move unresolved questions back into the intake template instead of guessing.",
+          "",
+          "## Output Format",
+          "- Confirmed facts",
+          "- Missing information",
+          "- Questions to ask",
+          "- Risks and assumptions",
+          "- Suggested next safe step",
+        ].join("\n"),
+      },
+      {
+        fileName: "prompts/06-ai-meeting-notes-prompts.md",
+        title: "AI meeting notes prompts",
+        kind: "prompt_pack",
+        content: [
+          "# AI Meeting Notes Prompts",
+          "",
+          aiPromptBoundary,
+          "",
+          "## Notes Cleaner",
+          "Convert these rough notes into decisions, action items, owners, due dates, risks, and unanswered questions. Preserve uncertainty.",
+          "",
+          "## Client Recap",
+          "Draft a polite recap email from these confirmed notes. Do not add promises, guarantees, or new scope.",
+          "",
+          "## Follow-Up Questions",
+          "List the questions that must be answered before proposal, production, or delivery can continue.",
+          "",
+          "## How To Use",
+          "1. Paste transcript notes or bullet notes under the prompt.",
+          "2. Ask for a decision log, owner list, and action list.",
+          "3. Compare the recap against the original notes before sending it.",
+          "4. Keep uncertain items in the open questions section.",
+          "",
+          "## Output Format",
+          "- Decisions made",
+          "- Action items with owners",
+          "- Due dates or timing assumptions",
+          "- Risks",
+          "- Questions for the client",
+        ].join("\n"),
+      },
+      {
+        fileName: "prompts/07-ai-proposal-prompts.md",
+        title: "AI proposal prompts",
+        kind: "prompt_pack",
+        content: [
+          "# AI Proposal Prompts",
+          "",
+          aiPromptBoundary,
+          "",
+          "## Proposal Draft",
+          "Using only the confirmed intake and meeting notes, draft a proposal with problem, objective, solution, deliverables, timeline assumptions, exclusions, and approval step.",
+          "",
+          "## Scope Tightener",
+          "Review this proposal and flag vague deliverables, unsupported claims, missing exclusions, unclear client responsibilities, and pricing assumptions.",
+          "",
+          "## Plain-English Rewrite",
+          "Rewrite the proposal in direct client-friendly language while preserving the scope boundaries.",
+          "",
+          "## How To Use",
+          "1. Feed the model the intake brief, meeting notes, and any hard limits.",
+          "2. Ask it to draft the proposal without inventing pricing, guarantees, or deliverables.",
+          "3. Review the scope, exclusions, and assumptions manually.",
+          "4. Replace pricing placeholders only after the user decides the offer and budget.",
+          "",
+          "## Output Format",
+          "- Project objective",
+          "- Recommended deliverables",
+          "- Timeline assumptions",
+          "- Client responsibilities",
+          "- Exclusions",
+          "- Approval step",
+        ].join("\n"),
+      },
+      {
+        fileName: "prompts/08-ai-delivery-prompts.md",
+        title: "AI delivery prompts",
+        kind: "prompt_pack",
+        content: [
+          "# AI Delivery Prompts",
+          "",
+          aiPromptBoundary,
+          "",
+          "## Delivery QA",
+          "Review this delivery checklist and flag missing files, unclear links, unconfirmed access, unresolved client questions, and claims that need human review.",
+          "",
+          "## Handoff Email",
+          "Draft a final handoff email that lists delivered items, access notes, open items, and next review steps. Do not imply guaranteed outcomes.",
+          "",
+          "## Lessons Learned",
+          "Summarize what should be improved in the next project workflow based on the completed checklist.",
+          "",
+          "## How To Use",
+          "1. Paste the completed delivery checklist and final notes.",
+          "2. Ask for missing deliverables, unclear links, unresolved questions, and client-facing handoff wording.",
+          "3. Confirm that every file/link exists before sending a handoff email.",
+          "4. Save the lessons learned to the next project SOP.",
+          "",
+          "## Output Format",
+          "- Delivered items",
+          "- Access and usage notes",
+          "- Open items",
+          "- Client review request",
+          "- Internal lessons learned",
+        ].join("\n"),
+      },
+      {
+        fileName: "examples/09-use-cases.md",
+        title: "Use cases",
+        kind: "examples",
+        content: [
+          "# Example Use Cases",
+          "",
+          "These examples are fictional and for local product review only.",
+          "",
+          "## Web Designer",
+          "Uses intake to collect brand assets, hosting access, approval owner, page list, and launch constraints before scoping.",
+          "",
+          "## Copywriter",
+          "Uses meeting notes to capture offer details, audience language, claims to avoid, and revision boundaries.",
+          "",
+          "## Consultant",
+          "Turns discovery notes into a proposal with clear objectives, assumptions, deliverables, exclusions, and approval steps.",
+          "",
+          "## Virtual Assistant",
+          "Uses delivery checklist to document recurring admin handoffs, open items, permissions, and client review notes.",
+          "",
+          "## No-Code Builder",
+          "Tracks scope, access, testing, client feedback, and final handoff for a small automation or website project.",
+        ].join("\n"),
+      },
+      {
+        fileName: "proof/10-proof-pack.md",
+        title: "Proof pack",
+        kind: "proof_pack",
+        content: [
+          "# Product Proof Pack",
+          "",
+          "## Evidence Basis",
+          proofPack,
+          "",
+          "## Product Completeness Evidence",
+          "- Intake, notes, proposal, delivery, prompt, example, safety, and review files exist as separate local files.",
+          "- The pack has a zero-spend path using Markdown/plain text.",
+          "- External publishing or platform action is still locked behind separate approval.",
+          "",
+          "## Assumptions To Validate",
+          ...proposal.risks.map((risk) => `- ${risk}`),
+          "",
+          "## Success Test",
+          proposal.zeroBudgetValidationTest,
+        ].join("\n"),
+      },
+      {
+        fileName: "compliance/11-claims-safety-check.md",
+        title: "Claims & Safety Check",
+        kind: "claims_safety",
+        content: [
+          "# Claims & Safety Check",
+          "",
+          PRODUCT_ARTIFACT_SAFETY_BOUNDARY,
+          "",
+          "## Allowed Claims",
+          "- Editable template pack.",
+          "- Helps organize intake, meeting notes, proposal scope, delivery, and handoff.",
+          "- Can be used with free text editors and optional AI drafting tools.",
+          "",
+          "## Blocked Claims",
+          "- Guaranteed income, clients, sales, rankings, productivity, legal compliance, or perfect AI accuracy.",
+          "- Claims that the product has been externally published, sold, reviewed, endorsed, or validated unless separately proven.",
+          "- Fake reviews, spam, misleading outreach, or hidden automation.",
+          "",
+          "## User Review Required",
+          "- Review platform terms before publishing.",
+          "- Remove confidential client information before using any AI tool.",
+          "- Confirm any pricing, refund, license, or support wording manually.",
+        ].join("\n"),
+      },
+      {
+        fileName: "sales/sales-page.md",
+        title: "Sales page draft",
+        kind: "landing_page",
+        content: [
+          "# Sales Page Draft",
+          "",
+          `## Headline\n${productName}`,
+          "",
+          "## Subheadline",
+          "Editable templates and AI prompts for freelancers who want a cleaner path from client intake to final handoff.",
+          "",
+          "## What You Get",
+          "- Client intake questionnaire.",
+          "- Meeting notes and recap system.",
+          "- Proposal and scope builder.",
+          "- Delivery checklist and handoff prompt.",
+          "- AI prompt pack with privacy and fact-checking boundaries.",
+          "",
+          "## CTA",
+          "Review the local draft, adapt it to your workflow, and validate demand before publishing or selling.",
+          "",
+          "## Disclosure",
+          "This is a template pack, not legal advice, business automation, or a guarantee of income, clients, productivity, or results.",
+        ].join("\n"),
+      },
+    ];
+  }
   return [
     { fileName: "product-full-draft.md", title: "Full product draft", kind: "full_product", content: fullProduct },
     { fileName: "platform-fields.json", title: "Platform fields", kind: "platform_fields", content: JSON.stringify(exactFields, null, 2) },
@@ -2010,7 +2723,13 @@ function productFileQualityCheck(file: { fileName: string; content: string }, tr
     checks.push("Does not look like a refusal or acknowledgement.");
   }
 
-  if (/previous agent handoff excerpts|you must write the artifact now|use these exact markdown headings|required deliverables:/i.test(content)) {
+  const promptLeakPatterns = [
+    /previous agent handoff excerpts/i,
+    /you must write the artifact now/i,
+    /use these exact markdown headings/i,
+    /required deliverables:[\s\S]{0,500}\b(previous agent handoff excerpts|you must write the artifact now|use these exact markdown headings)\b/i,
+  ];
+  if (promptLeakPatterns.some((pattern) => pattern.test(content))) {
     issues.push("Prompt/instruction text leaked into the product file.");
   } else {
     checks.push("No obvious prompt leakage found.");
@@ -2033,6 +2752,19 @@ function productFileQualityCheck(file: { fileName: string; content: string }, tr
     if (lowerName === "packages.md") requiredSignals.push([/basic|standard|premium|package/i.test(content), "Package file includes package tiers or package scope."]);
     if (lowerName === "faq.md") requiredSignals.push([/faq|\?|question|answer/i.test(content), "FAQ file includes questions/answers."]);
     if (lowerName === "buyer-requirements.md") requiredSignals.push([/buyer|requirement|intake|question|client/i.test(content), "Buyer requirements include intake/request details."]);
+  }
+  if (track.type === "digital_template_pack") {
+    if (lowerName === "readme.md") requiredSignals.push([/what this is|included files|review order|what has not happened/i.test(content), "README explains package contents and review boundary."]);
+    if (lowerName === "start-here.md") requiredSignals.push([/fast setup|best fit|not a fit|review/i.test(content), "START-HERE gives setup and fit guidance."]);
+    if (lowerName.includes("01-client-intake")) requiredSignals.push([/client snapshot|project fit|success criteria|open questions/i.test(content), "Client intake includes buyer/project fields and fit checks."]);
+    if (lowerName.includes("02-meeting-notes")) requiredSignals.push([/decisions|action items|owners|due dates|recap/i.test(content), "Meeting notes template includes decisions, owners, and recap fields."]);
+    if (lowerName.includes("03-proposal-scope")) requiredSignals.push([/deliverables|assumptions|exclusions|approval step|revision/i.test(content), "Proposal scope includes deliverables, assumptions, exclusions, and approval step."]);
+    if (lowerName.includes("04-delivery-checklist")) requiredSignals.push([/scope confirmed|handoff|open items|feedback|final/i.test(content), "Delivery checklist includes handoff and final review steps."]);
+    if (lowerName.includes("prompts/")) requiredSignals.push([/do not invent facts|needs confirmation|review|prompt/i.test(content), "Prompt file includes fact-boundary and review instructions."]);
+    if (lowerName.includes("09-use-cases")) requiredSignals.push([/web designer|copywriter|consultant|virtual assistant|no-code/i.test(content), "Use case file includes concrete buyer scenarios."]);
+    if (lowerName.includes("10-proof-pack")) requiredSignals.push([/evidence|assumptions|success test|external publishing/i.test(content), "Proof pack includes evidence, assumptions, and validation test."]);
+    if (lowerName.includes("11-claims-safety")) requiredSignals.push([/allowed claims|blocked claims|guaranteed income|user review/i.test(content), "Claims safety file includes allowed and blocked claims."]);
+    if (lowerName.includes("sales-page")) requiredSignals.push([/headline|subheadline|what you get|cta|disclosure/i.test(content), "Sales page includes headline, offer, CTA, and disclosure."]);
   }
   if (lowerName.includes("claims")) {
     requiredSignals.push([/no guaranteed|misleading|fake reviews|spam|risks|claims/i.test(content), "Claims & Safety Check covers prohibited claims and risks."]);
@@ -2062,11 +2794,37 @@ function productFileQualityCheck(file: { fileName: string; content: string }, tr
   };
 }
 
-async function buildRealProductProductionBundle(current: AppDataState, proposal: BusinessProposal, businessId: string, questId: string, now: string) {
+type ProductFactoryProgressPhase = "agent_started" | "agent_completed" | "files_written" | "blocked";
+
+type ProductFactoryProgressEvent = {
+  phase: ProductFactoryProgressPhase;
+  runId: string;
+  businessId: string;
+  proposalId: string;
+  agentId?: MissionAgentId;
+  agentName?: string;
+  progress: number;
+  detail: string;
+};
+
+type BuildRealProductProductionOptions = {
+  runId?: string;
+  trackId?: string;
+  onProgress?: (event: ProductFactoryProgressEvent) => Promise<void> | void;
+};
+
+async function buildRealProductProductionBundle(
+  current: AppDataState,
+  proposal: BusinessProposal,
+  businessId: string,
+  questId: string,
+  now: string,
+  options: BuildRealProductProductionOptions = {},
+) {
   const platformPackage = current.platformExecutionPackages.find((item) => proposal.platformExecutionPackageIds.includes(item.id));
   const trackPlan = productTrackForProposal(proposal, platformPackage);
-  const trackId = id("product-track");
-  const runId = id("product-run");
+  const trackId = options.trackId ?? id("product-track");
+  const runId = options.runId ?? id("product-run");
   const track: ProductTrack = {
     id: trackId,
     businessId,
@@ -2091,26 +2849,152 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
   for (const [index, agentId] of productAgentOrder.entries()) {
     const agentName = agentLabel(agentId);
     const startedAt = new Date().toISOString();
+    await options.onProgress?.({
+      phase: "agent_started",
+      runId,
+      businessId,
+      proposalId: proposal.id,
+      agentId,
+      agentName,
+      progress: Math.max(5, Math.round((index / productAgentOrder.length) * 90)),
+      detail: `${agentName} is producing ${track.label} artifact.`,
+    });
     const prompt = productAgentPrompt(agentId, proposal, track, artifacts);
     const requiredHeadings = productAgentRequiredHeadings(agentId, track);
+    const attempts: Array<{
+      commandId: string;
+      prompt: string;
+      result: OpenClawBridgeResult;
+      markdown: string;
+      agentTurnOk: boolean;
+      missingHeadings: string[];
+      validationBlockers: string[];
+      trainingScore: ProductAgentTrainingScore;
+      startedAt: string;
+      completedAt: string;
+      repairOfCommandId?: string;
+    }> = [];
     const result = await openclawService.runAgentTurn({
       agentProfileId: missionAgentProfileId(current, agentId),
       agentRole: agentName,
       message: prompt,
       missionRunId: runId,
-      timeoutSeconds: 75,
+      timeoutSeconds: productAgentTurnTimeoutSeconds,
     });
     const completedAt = new Date().toISOString();
     const commandId = id("cmd-product-agent");
-    const markdown = extractOpenClawArtifact(result.stdout);
+    const markdown = ensureProductArtifactSafetyBoundary(extractOpenClawArtifact(result.stdout));
     const agentTurnOk = result.ok || openClawStdoutStatusOk(result.stdout);
+
+    const trainingScore = scoreProductAgentArtifact(agentId, markdown, requiredHeadings);
     const missingHeadings = agentTurnOk ? missingProductArtifactHeadings(markdown, requiredHeadings) : requiredHeadings;
     const validationBlockers = agentTurnOk
-      ? productArtifactBlockers(agentId, markdown, missingHeadings)
-      : [`Real OpenClaw command failed for ${agentName}: ${result.stderr.trim() || "No stderr returned."}`];
-    const blocked = !agentTurnOk || validationBlockers.length > 0;
-    const runtimeMode: ProductRuntimeMode = blocked ? "blocked" : "real_openclaw";
-    const status: ProductAgentArtifact["status"] = blocked ? "blocked" : "complete";
+      ? productArtifactBlockers(agentId, markdown, requiredHeadings, missingHeadings, trainingScore)
+      : [openClawTurnFailureMessage(result, agentName)];
+    attempts.push({ commandId, prompt, result, markdown, agentTurnOk, missingHeadings, validationBlockers, trainingScore, startedAt, completedAt });
+
+    if (!agentTurnOk) {
+      const retryStartedAt = new Date().toISOString();
+      const retryPrompt = `${prompt}\n\nRetry instruction: the previous gateway-backed OpenClaw turn failed or timed out. Try once more. Return the compact required Markdown directive now; do not acknowledge or wait.`;
+      const retryResult = await openclawService.runAgentTurn({
+        agentProfileId: missionAgentProfileId(current, agentId),
+        agentRole: agentName,
+        message: retryPrompt,
+        missionRunId: `${runId}-retry-${agentId}`,
+        timeoutSeconds: productAgentTurnTimeoutSeconds,
+      });
+      const retryCompletedAt = new Date().toISOString();
+      const retryMarkdown = ensureProductArtifactSafetyBoundary(extractOpenClawArtifact(retryResult.stdout));
+      const retryTurnOk = retryResult.ok || openClawStdoutStatusOk(retryResult.stdout);
+      const retryTrainingScore = scoreProductAgentArtifact(agentId, retryMarkdown, requiredHeadings);
+      const retryMissingHeadings = retryTurnOk ? missingProductArtifactHeadings(retryMarkdown, requiredHeadings) : requiredHeadings;
+      const retryValidationBlockers = retryTurnOk
+        ? productArtifactBlockers(agentId, retryMarkdown, requiredHeadings, retryMissingHeadings, retryTrainingScore)
+        : [
+            openClawTurnFailureMessage(retryResult, agentName, "retry command"),
+            `Initial command failed: ${result.stderr.trim() || result.stdout.trim() || (result.timedOut ? "timed out" : "No output returned.")}`,
+          ];
+      attempts.push({
+        commandId: id("cmd-product-agent"),
+        prompt: retryPrompt,
+        result: retryResult,
+        markdown: retryMarkdown,
+        agentTurnOk: retryTurnOk,
+        missingHeadings: retryMissingHeadings,
+        validationBlockers: retryValidationBlockers,
+        trainingScore: retryTrainingScore,
+        startedAt: retryStartedAt,
+        completedAt: retryCompletedAt,
+        repairOfCommandId: commandId,
+      });
+    }
+
+    if (agentTurnOk && validationBlockers.length > 0 && shouldRepairProductArtifact(missingHeadings, validationBlockers)) {
+      const repairStartedAt = new Date().toISOString();
+      const repairPrompt = productAgentRepairPrompt(agentId, proposal, track, markdown, validationBlockers, missingHeadings, trainingScore);
+      const repairResult = await openclawService.runAgentTurn({
+        agentProfileId: missionAgentProfileId(current, agentId),
+        agentRole: agentName,
+        message: repairPrompt,
+        missionRunId: runId,
+        timeoutSeconds: productAgentTurnTimeoutSeconds,
+      });
+      const repairCompletedAt = new Date().toISOString();
+      const repairMarkdown = ensureProductArtifactSafetyBoundary(extractOpenClawArtifact(repairResult.stdout));
+      const repairTurnOk = repairResult.ok || openClawStdoutStatusOk(repairResult.stdout);
+      const repairTrainingScore = scoreProductAgentArtifact(agentId, repairMarkdown, requiredHeadings);
+      const repairMissingHeadings = repairTurnOk ? missingProductArtifactHeadings(repairMarkdown, requiredHeadings) : requiredHeadings;
+      const repairValidationBlockers = repairTurnOk
+        ? productArtifactBlockers(agentId, repairMarkdown, requiredHeadings, repairMissingHeadings, repairTrainingScore)
+        : [
+            openClawTurnFailureMessage(repairResult, agentName, "repair command"),
+            `Initial validation blockers: ${validationBlockers.join(" ")}`,
+          ];
+      attempts.push({
+        commandId: id("cmd-product-agent"),
+        prompt: repairPrompt,
+        result: repairResult,
+        markdown: repairMarkdown,
+        agentTurnOk: repairTurnOk,
+        missingHeadings: repairMissingHeadings,
+        validationBlockers: repairValidationBlockers,
+        trainingScore: repairTrainingScore,
+        startedAt: repairStartedAt,
+        completedAt: repairCompletedAt,
+        repairOfCommandId: commandId,
+      });
+    }
+
+    const finalAttempt = attempts[attempts.length - 1];
+    if (!finalAttempt) throw new Error(`Product Factory did not create an OpenClaw attempt for ${agentName}.`);
+    const finalCommandId = finalAttempt.commandId;
+    const finalCompletedAt = finalAttempt.completedAt;
+    let finalMarkdown = finalAttempt.markdown;
+    let finalAgentTurnOk = finalAttempt.agentTurnOk;
+    let finalMissingHeadings = finalAttempt.missingHeadings;
+    let finalTrainingScore = finalAttempt.trainingScore;
+    let finalValidationBlockers = finalAttempt.validationBlockers;
+    let finalUsedFallbackLocal = false;
+    if (!finalAgentTurnOk && productTurnUsedEmbeddedFallback(finalAttempt.result)) {
+      const fallbackMarkdown = ensureProductArtifactSafetyBoundary(
+        productAgentLocalFallbackMarkdown(agentId, proposal, track, artifacts, finalAttempt.result.stderr || finalAttempt.result.stdout),
+      );
+      const fallbackTrainingScore = scoreProductAgentArtifact(agentId, fallbackMarkdown, requiredHeadings);
+      const fallbackMissingHeadings = missingProductArtifactHeadings(fallbackMarkdown, requiredHeadings);
+      const fallbackBlockers = productArtifactBlockers(agentId, fallbackMarkdown, requiredHeadings, fallbackMissingHeadings, fallbackTrainingScore);
+      finalMarkdown = fallbackMarkdown;
+      finalAgentTurnOk = false;
+      finalMissingHeadings = fallbackMissingHeadings;
+      finalTrainingScore = fallbackTrainingScore;
+      finalValidationBlockers = [
+        `Fallback Local - Not Accepted: gateway-backed OpenClaw turn failed for ${agentName}.`,
+        ...fallbackBlockers,
+      ];
+      finalUsedFallbackLocal = true;
+    }
+    const finalBlocked = !finalAgentTurnOk || finalValidationBlockers.length > 0 || finalTrainingScore.status === "blocked";
+    const runtimeMode: ProductRuntimeMode = finalUsedFallbackLocal ? "fallback_local" : finalBlocked ? "blocked" : "real_openclaw";
+    const status: ProductAgentArtifact["status"] = finalUsedFallbackLocal ? "fallback_not_accepted" : finalBlocked ? "blocked" : "complete";
     const artifactId = id("product-agent-artifact");
     const artifact: ProductAgentArtifact = {
       id: artifactId,
@@ -2121,43 +3005,63 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
       agentName,
       runtimeMode,
       status,
-      sourcePrompt: prompt,
-      markdown,
+      sourcePrompt: finalAttempt.prompt,
+      markdown: finalMarkdown,
       metadata: {
         track: track.type,
         profile: missionAgentProfileId(current, agentId),
-        command: result.command.join(" "),
+        command: finalAttempt.result.command.join(" "),
+        attempts: String(attempts.length),
+        repair: finalUsedFallbackLocal ? "embedded-fallback-local" : attempts.length > 1 ? "one-shot" : "none",
+        trainingLibraryRoot: TRAINING_LIBRARY_ROOT,
+        trainingScore: String(finalTrainingScore.score),
+        trainingStatus: finalTrainingScore.status,
+        trainingChecks: finalTrainingScore.checks.join(" | "),
+        trainingIssues: finalTrainingScore.issues.join(" | "),
+        runtimeProof: runtimeMode === "real_openclaw" ? "gateway-backed-openclaw" : finalUsedFallbackLocal ? "fallback-local-not-accepted" : "blocked",
       },
       citations: proposal.evidenceCitationIds ?? [],
       claims: proposal.whyMightWork,
-      missingItems: validationBlockers,
+      missingItems: finalValidationBlockers,
       requiredHeadings,
-      missingHeadings,
+      missingHeadings: finalMissingHeadings,
       nextHandoff: productAgentOrder[index + 1],
-      commandId,
-      stdout: result.stdout,
-      stderr: result.stderr,
-      createdAt: completedAt,
-      updatedAt: completedAt,
+      commandId: finalCommandId,
+      stdout: finalAttempt.result.stdout,
+      stderr: finalAttempt.result.stderr,
+      createdAt: finalCompletedAt,
+      updatedAt: finalCompletedAt,
     };
     artifacts.push(artifact);
-    commands.push({
-      id: commandId,
-      command: result.command.join(" "),
-      targetAgentId: missionAgentProfileId(current, agentId),
-      status: blocked ? "failed" : "complete",
-      riskLevel: "medium",
-      approvalRequired: false,
-      resultSummary: blocked ? `${agentName} blocked the real product build: ${validationBlockers.join(" ")}` : `${agentName} produced a validated product artifact.`,
-      createdAt: startedAt,
-      actionKind: "agent_turn",
-      executionMode: agentTurnOk ? "real_local" : "mock",
-      stdout: result.stdout,
-      stderr: result.stderr,
-      exitCode: result.exitCode,
-      startedAt,
-      completedAt,
-      missionRunId: runId,
+    attempts.forEach((attempt) => {
+      const isFinalAttempt = attempt.commandId === finalCommandId;
+      const attemptBlocked = isFinalAttempt ? finalBlocked : true;
+      const attemptTrainingSummary = `Training ${attempt.trainingScore.status} ${attempt.trainingScore.score}/100`;
+      commands.push({
+        id: attempt.commandId,
+        command: attempt.result.command.join(" "),
+        targetAgentId: missionAgentProfileId(current, agentId),
+        status: attemptBlocked ? "failed" : "complete",
+        riskLevel: "medium",
+        approvalRequired: false,
+        resultSummary: isFinalAttempt
+          ? finalBlocked
+            ? `${agentName} blocked the real product build: ${finalValidationBlockers.join(" ")} ${attemptTrainingSummary}.`
+            : finalUsedFallbackLocal
+              ? `${agentName} produced Fallback Local - Not Accepted after the gateway-backed turn failed. ${attemptTrainingSummary}.`
+              : `${agentName} produced a validated real OpenClaw product directive receipt. ${attemptTrainingSummary}.`
+          : `${agentName} product directive failed validation and triggered the one-shot repair prompt: ${attempt.validationBlockers.join(" ")} ${attemptTrainingSummary}.`,
+        createdAt: attempt.startedAt,
+        actionKind: "agent_turn",
+        executionMode: isFinalAttempt && finalUsedFallbackLocal ? "dry_run" : attempt.agentTurnOk ? "real_local" : "mock",
+        stdout: attempt.result.stdout,
+        stderr: attempt.result.stderr,
+        exitCode: attempt.result.exitCode,
+        startedAt: attempt.startedAt,
+        completedAt: attempt.completedAt,
+        retryOfCommandId: attempt.repairOfCommandId,
+        missionRunId: runId,
+      });
     });
     receipts.push({
       id: id("product-receipt"),
@@ -2165,13 +3069,17 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
       businessId,
       proposalId: proposal.id,
       agentId,
-      title: blocked ? `${agentName} product build blocked` : `${agentName} product artifact`,
-      summary: blocked ? validationBlockers.join(" ") : "Real OpenClaw agent turn completed and produced a validated product artifact.",
+      title: finalUsedFallbackLocal ? `${agentName} Fallback Local - Not Accepted` : finalBlocked ? `${agentName} product build blocked` : `${agentName} real directive receipt`,
+      summary: finalUsedFallbackLocal
+        ? `Gateway-backed turn fell back to local output. This artifact is visible for recovery only and is not accepted for Product Factory proof. Training rubric ${finalTrainingScore.status} ${finalTrainingScore.score}/100. ${finalValidationBlockers.join(" ")}`
+        : finalBlocked
+          ? `Training rubric ${finalTrainingScore.status} ${finalTrainingScore.score}/100. ${finalValidationBlockers.join(" ")}`
+          : `Real OpenClaw agent turn completed and produced a validated product directive receipt. Training rubric ${finalTrainingScore.status} ${finalTrainingScore.score}/100.`,
       runtimeMode,
       artifactId,
       fileIds: [],
       externalActionStatus: "none",
-      createdAt: completedAt,
+      createdAt: finalCompletedAt,
     });
     const taskId = id("business-task");
     businessTasks.push({
@@ -2179,38 +3087,56 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
       businessId,
       proposalId: proposal.id,
       huntId: proposal.huntId,
+      productRunId: runId,
       agentId,
       title: `${agentName} product factory step`,
       objective: `Produce ${track.label} deliverable for ${proposal.recommendedIdea}.`,
-      status: blocked ? "blocked" : "done",
-      progress: blocked ? 70 : 100,
+      status: finalBlocked ? "blocked" : "done",
+      progress: finalBlocked ? 70 : 100,
       currentArtifact: artifact.markdown.slice(0, 180),
-      currentSource: runtimeMode === "real_openclaw" ? "OpenClaw local agent turn" : "Blocked real OpenClaw product build",
+      currentSource: runtimeMode === "real_openclaw" ? "OpenClaw local agent turn" : runtimeMode === "fallback_local" ? "Fallback Local - Not Accepted" : "Blocked real OpenClaw product build",
       expectedOutput: track.requiredDeliverables.join(", "),
       approvalRequired: false,
-      logs: [receipts[receipts.length - 1].summary, result.stderr.trim()].filter(Boolean),
+      logs: [
+        receipts[receipts.length - 1].summary,
+        attempts.length > 1 ? `Initial validation blockers: ${attempts[0]?.validationBlockers.join(" ") ?? ""}` : "",
+        finalAttempt.result.stderr.trim(),
+      ].filter(Boolean),
       startedAt,
-      completedAt,
-      updatedAt: completedAt,
+      completedAt: finalCompletedAt,
+      updatedAt: finalCompletedAt,
     });
     sessions.push({
       id: id("agent-work-session"),
       businessId,
       proposalId: proposal.id,
       huntId: proposal.huntId,
+      productRunId: runId,
       agentId,
       stationId: stationIdByAgentId[agentId],
-      status: blocked ? "blocked" : "review",
-      motion: blocked ? "blocked" : "review",
-      currentTask: blocked ? `${agentName} blocked the real product build.` : `${agentName} finished product factory step.`,
+      status: finalBlocked ? "blocked" : "review",
+      motion: finalBlocked ? "blocked" : "review",
+      currentTask: finalUsedFallbackLocal ? `${agentName} produced Fallback Local - Not Accepted.` : finalBlocked ? `${agentName} blocked the real product build.` : `${agentName} finished product factory step.`,
       currentOutput: artifact.markdown.slice(0, 220),
-      currentSource: runtimeMode === "real_openclaw" ? "OpenClaw local agent turn" : "Blocked real OpenClaw product build",
-      progress: blocked ? 70 : 100,
+      currentSource: runtimeMode === "real_openclaw" ? "OpenClaw local agent turn" : runtimeMode === "fallback_local" ? "Fallback Local - Not Accepted" : "Blocked real OpenClaw product build",
+      progress: finalBlocked ? 70 : 100,
       startedAt,
-      updatedAt: completedAt,
+      updatedAt: finalCompletedAt,
+    });
+    await options.onProgress?.({
+      phase: finalBlocked ? "blocked" : "agent_completed",
+      runId,
+      businessId,
+      proposalId: proposal.id,
+      agentId,
+      agentName,
+      progress: finalBlocked ? Math.max(20, Math.round(((index + 1) / productAgentOrder.length) * 80)) : Math.round(((index + 1) / productAgentOrder.length) * 92),
+      detail: finalBlocked
+        ? `${agentName} blocked the Product Factory: ${finalValidationBlockers.join(" ")}`
+        : `${agentName} finished and passed Product Factory QA.`,
     });
 
-    if (blocked) {
+    if (finalBlocked) {
       const rootPath = productRootPath(proposal.recommendedIdea);
       const manifestId = id("product-file-manifest");
       const manifest: ProductFileManifest = {
@@ -2224,7 +3150,7 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
         status: "blocked",
         runtimeMode: "blocked",
         createdAt: now,
-        updatedAt: completedAt,
+        updatedAt: finalCompletedAt,
       };
       const readinessGate: ProductReadinessGate = {
         id: id("product-readiness"),
@@ -2233,39 +3159,127 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
         proposalId: proposal.id,
         status: "blocked",
         requiredDeliverables: track.requiredDeliverables,
-        missingItems: validationBlockers,
-        blockedReasons: validationBlockers,
+        missingItems: finalValidationBlockers,
+        blockedReasons: finalValidationBlockers,
         failedAgentId: agentId,
         requiredFileNames,
         writtenFilePaths: [],
         canRequestPublishApproval: false,
         summary: `Real product build blocked at ${agentName}. No fallback product files were accepted.`,
-        updatedAt: completedAt,
+        updatedAt: finalCompletedAt,
       };
       const run: ProductProductionRun = {
         id: runId,
         businessId,
         proposalId: proposal.id,
         trackId,
-        status: "blocked",
+        status: finalUsedFallbackLocal ? "blocked_fallback_available" : "blocked",
         currentAgentId: agentId,
-        runtimeMode: "blocked",
+        runtimeMode: finalUsedFallbackLocal ? "fallback_local" : "blocked",
         realOpenClawRequired: true,
         fallbackAllowed: false,
         failedAgentId: agentId,
         requiredFileNames,
         writtenFilePaths: [],
-        buildError: validationBlockers.join(" "),
+        buildError: finalUsedFallbackLocal ? `Fallback Local - Not Accepted. ${finalValidationBlockers.join(" ")}` : finalValidationBlockers.join(" "),
         artifactIds: artifacts.map((item) => item.id),
         fileManifestId: manifest.id,
         receiptIds: receipts.map((receipt) => receipt.id),
-        summary: readinessGate.summary,
+        summary: finalUsedFallbackLocal ? `Fallback Local - Not Accepted. ${readinessGate.summary}` : readinessGate.summary,
         startedAt: now,
-        completedAt,
-        updatedAt: completedAt,
+        completedAt: finalCompletedAt,
+        updatedAt: finalCompletedAt,
       };
-      return { track, run, artifacts, commands, receipts, manifest, fileRecords: [], localAssetFiles: [], readinessGate, businessTasks, sessions };
+      const blockedTasks = businessTasks.map((task) =>
+        task.productRunId === runId && task.status !== "done"
+          ? {
+              ...task,
+              status: "blocked" as const,
+              progress: Math.max(task.progress, 70),
+              currentArtifact: finalValidationBlockers.join(" "),
+              logs: [`Product Factory blocked at ${agentName}.`, ...task.logs].slice(0, 8),
+              completedAt: finalCompletedAt,
+              updatedAt: finalCompletedAt,
+            }
+          : task,
+      );
+      return { track, run, artifacts, commands, receipts, manifest, fileRecords: [], localAssetFiles: [], readinessGate, businessTasks: blockedTasks, sessions };
     }
+  }
+
+  const runtimeProofBlockers = artifacts
+    .filter((artifact) => artifact.status !== "complete" || artifact.runtimeMode !== "real_openclaw")
+    .map((artifact) => `${artifact.agentName}: ${artifact.runtimeMode.replace(/_/g, " ")} / ${artifact.status.replace(/_/g, " ")}`);
+  if (artifacts.length !== productAgentOrder.length || runtimeProofBlockers.length > 0) {
+    const rootPath = productRootPath(proposal.recommendedIdea);
+    const manifestId = id("product-file-manifest");
+    const blockerList = artifacts.length !== productAgentOrder.length
+      ? [`Only ${artifacts.length}/${productAgentOrder.length} required real agent artifacts completed.`]
+      : runtimeProofBlockers;
+    const manifest: ProductFileManifest = {
+      id: manifestId,
+      runId,
+      businessId,
+      proposalId: proposal.id,
+      trackId,
+      rootPath,
+      fileIds: [],
+      status: "blocked",
+      runtimeMode: "blocked",
+      createdAt: now,
+      updatedAt: new Date().toISOString(),
+    };
+    const readinessGate: ProductReadinessGate = {
+      id: id("product-readiness"),
+      runId,
+      businessId,
+      proposalId: proposal.id,
+      status: "blocked",
+      requiredDeliverables: track.requiredDeliverables,
+      missingItems: blockerList,
+      blockedReasons: blockerList,
+      requiredFileNames,
+      writtenFilePaths: [],
+      canRequestPublishApproval: false,
+      summary: "Product Factory blocked because the current reliability gate requires every product agent artifact to be real OpenClaw.",
+      updatedAt: new Date().toISOString(),
+    };
+    const run: ProductProductionRun = {
+      id: runId,
+      businessId,
+      proposalId: proposal.id,
+      trackId,
+      status: artifacts.some((artifact) => artifact.runtimeMode === "fallback_local" || artifact.status === "fallback_not_accepted") ? "blocked_fallback_available" : "blocked",
+      currentAgentId: "teamleader1a",
+      runtimeMode: "blocked",
+      realOpenClawRequired: true,
+      fallbackAllowed: false,
+      requiredFileNames,
+      writtenFilePaths: [],
+      buildError: blockerList.join(" "),
+      artifactIds: artifacts.map((artifact) => artifact.id),
+      fileManifestId: manifest.id,
+      receiptIds: receipts.map((receipt) => receipt.id),
+      summary: readinessGate.summary,
+      startedAt: now,
+      completedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    const blockedAt = run.updatedAt;
+    const blockedTasks = businessTasks.map((task) =>
+      task.productRunId === runId && task.status !== "done"
+        ? {
+            ...task,
+            status: "blocked" as const,
+            progress: Math.max(task.progress, 70),
+            currentArtifact: blockerList.join(" "),
+            logs: ["Product Factory blocked before all real agent artifacts completed.", ...task.logs].slice(0, 8),
+            completedAt: blockedAt,
+            updatedAt: blockedAt,
+          }
+        : task,
+    );
+    return { track, run, artifacts, commands, receipts, manifest, fileRecords: [], localAssetFiles: [], readinessGate, businessTasks: blockedTasks, sessions };
   }
 
   const exactFields = platformPackage?.exactFields ?? {
@@ -2279,10 +3293,19 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
     rootPath,
     files: fileDrafts.map((file) => ({ fileName: file.fileName, content: file.content })),
   });
+  await options.onProgress?.({
+    phase: writeResult.ok ? "files_written" : "blocked",
+    runId,
+    businessId,
+    proposalId: proposal.id,
+    progress: writeResult.ok ? 96 : 88,
+    detail: writeResult.message,
+  });
   const manifestId = id("product-file-manifest");
   const fileRecords: ProductFileRecord[] = fileDrafts.map((file) => {
     const written = writeResult.written.find((item) => item.fileName === file.fileName);
     const quality = productFileQualityCheck(file, track);
+    const acceptedWrite = Boolean(writeResult.ok && written?.ok && (writeResult.mode === "tauri-file" || writeResult.mode === "browser-virtual"));
     return {
       id: id("product-file"),
       manifestId,
@@ -2295,8 +3318,8 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
       kind: file.kind,
       path: written?.path ?? `${rootPath}\\${file.fileName}`,
       content: file.content,
-      status: writeResult.mode === "tauri-file" && written?.ok ? "written" : "blocked",
-      runtimeMode: writeResult.mode === "tauri-file" && written?.ok ? "local_file" : "blocked",
+      status: acceptedWrite ? "written" : "blocked",
+      runtimeMode: acceptedWrite ? "local_file" : "blocked",
       qualityStatus: quality.status,
       qualityScore: quality.score,
       qualityChecks: quality.checks,
@@ -2309,6 +3332,7 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
   const writtenFilePaths = fileRecords.filter((file) => file.status === "written").map((file) => file.path);
   const fileQualityIssues = fileRecords.flatMap((file) => (file.qualityStatus === "blocked" ? (file.qualityIssues ?? []).map((issue) => `${file.fileName}: ${issue}`) : []));
   const fileWriteBlocked = !writeResult.ok || writtenFilePaths.length !== requiredFileNames.length || fileQualityIssues.length > 0;
+  const artifactTrainingSummary = productArtifactTrainingSummary(artifacts);
   const manifest: ProductFileManifest = {
     id: manifestId,
     runId,
@@ -2329,8 +3353,8 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
     proposalId: proposal.id,
     title: fileWriteBlocked ? "Real local product file QA blocked" : "Real local product files written and QA checked",
     summary: fileWriteBlocked && fileQualityIssues.length
-      ? `Product files were written, but QA blocked review: ${fileQualityIssues.slice(0, 4).join(" ")}`
-      : writeResult.message,
+      ? `Product files were written, but QA blocked review: ${fileQualityIssues.slice(0, 4).join(" ")} Training scores: ${artifactTrainingSummary}.`
+      : `${writeResult.message} Training scores: ${artifactTrainingSummary}.`,
     runtimeMode: fileWriteBlocked ? "blocked" : "local_file",
     fileIds,
     externalActionStatus: "none",
@@ -2376,7 +3400,7 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
     canRequestPublishApproval: false,
     summary: fileWriteBlocked
       ? `${track.label} product build blocked during local file write or Product QA. No fallback product is accepted.`
-      : `${track.label} generated ${fileRecords.length} real local product file(s) from validated OpenClaw agent artifacts and Product QA passed.`,
+      : `${track.label} generated ${fileRecords.length} real local product file(s) from validated OpenClaw agent directive receipts and Product QA passed.`,
     updatedAt: new Date().toISOString(),
   };
   const run: ProductProductionRun = {
@@ -2403,6 +3427,144 @@ async function buildRealProductProductionBundle(current: AppDataState, proposal:
   return { track, run, artifacts, commands, receipts, manifest, fileRecords, localAssetFiles, readinessGate, businessTasks, sessions };
 }
 
+function buildQueuedProductProductionScaffold(proposal: BusinessProposal, businessId: string, questId: string, now: string) {
+  const platformPackage = undefined;
+  const trackPlan = productTrackForProposal(proposal, platformPackage);
+  const trackId = id("product-track");
+  const runId = id("product-run");
+  const requiredFileNames = requiredProductFileNames({
+    id: trackId,
+    businessId,
+    proposalId: proposal.id,
+    type: trackPlan.type,
+    label: trackPlan.label,
+    promptBasis: [proposal.title, proposal.recommendedIdea, proposal.summary].join(" / "),
+    requiredDeliverables: trackPlan.deliverables,
+    requiredAgentIds: productAgentOrder,
+    readinessState: "generating",
+    missingItems: [],
+    createdAt: now,
+    updatedAt: now,
+  });
+  const track: ProductTrack = {
+    id: trackId,
+    businessId,
+    proposalId: proposal.id,
+    type: trackPlan.type,
+    label: trackPlan.label,
+    promptBasis: [proposal.title, proposal.recommendedIdea, proposal.summary].join(" / "),
+    requiredDeliverables: trackPlan.deliverables,
+    requiredAgentIds: productAgentOrder,
+    readinessState: "generating",
+    missingItems: [],
+    createdAt: now,
+    updatedAt: now,
+  };
+  const rootPath = productRootPath(proposal.recommendedIdea);
+  const manifest: ProductFileManifest = {
+    id: id("product-file-manifest"),
+    runId,
+    businessId,
+    proposalId: proposal.id,
+    trackId,
+    rootPath,
+    fileIds: [],
+    status: "planned",
+    runtimeMode: "real_openclaw",
+    createdAt: now,
+    updatedAt: now,
+  };
+  const run: ProductProductionRun = {
+    id: runId,
+    businessId,
+    proposalId: proposal.id,
+    trackId,
+    status: "queued",
+    currentAgentId: "agent-content",
+    runtimeMode: "real_openclaw",
+    realOpenClawRequired: true,
+    fallbackAllowed: false,
+    requiredFileNames,
+    writtenFilePaths: [],
+    artifactIds: [],
+    fileManifestId: manifest.id,
+    receiptIds: [],
+    summary: `${track.label} Product Factory queued. Local files will be written while the app is open.`,
+    startedAt: now,
+    updatedAt: now,
+  };
+  const readinessGate: ProductReadinessGate = {
+    id: id("product-readiness"),
+    runId,
+    businessId,
+    proposalId: proposal.id,
+    status: "generating",
+    requiredDeliverables: track.requiredDeliverables,
+    missingItems: ["Product Factory is running. Inspect the product after local files are written."],
+    blockedReasons: [],
+    requiredFileNames,
+    writtenFilePaths: [],
+    canRequestPublishApproval: false,
+    summary: "Product Factory queued. Local draft review is locked until real product files exist.",
+    updatedAt: now,
+  };
+  const businessTasks: BusinessTask[] = productAgentOrder.map((agentId, index) => ({
+    id: id("business-task"),
+    businessId,
+    proposalId: proposal.id,
+    huntId: proposal.huntId,
+    productRunId: runId,
+    agentId,
+    title: `${agentLabel(agentId)} product factory step`,
+    objective: `Produce ${track.label} deliverable for ${proposal.recommendedIdea}.`,
+    status: index === 0 ? "now_working" : "queued",
+    progress: index === 0 ? 6 : 0,
+    currentArtifact: index === 0 ? "Starting Product Factory" : "Waiting for previous agent handoff",
+    currentSource: "OpenClaw local Product Factory",
+    dependency: index === 0 ? undefined : agentLabel(productAgentOrder[index - 1]),
+    expectedOutput: track.requiredDeliverables.join(", "),
+    approvalRequired: false,
+    logs: [
+      index === 0
+        ? "Product Factory started in the background; approval returned immediately."
+        : `Queued after ${agentLabel(productAgentOrder[index - 1])}.`,
+    ],
+    startedAt: index === 0 ? now : undefined,
+    updatedAt: now,
+  }));
+  const sessions: AgentWorkSession[] = productAgentOrder.map((agentId, index) => ({
+    id: id("agent-work-session"),
+    businessId,
+    proposalId: proposal.id,
+    huntId: proposal.huntId,
+    productRunId: runId,
+    taskId: businessTasks[index]?.id,
+    agentId,
+    stationId: stationIdByAgentId[agentId],
+    status: index === 0 ? "production" : "idle",
+    motion: index === 0 ? "forge" : "idle",
+    currentTask: index === 0 ? `${agentLabel(agentId)} is starting Product Factory.` : `${agentLabel(agentId)} is queued for Product Factory.`,
+      currentOutput: "Waiting for real OpenClaw product directive receipt.",
+    currentSource: "OpenClaw local Product Factory",
+    progress: index === 0 ? 6 : 0,
+    startedAt: now,
+    updatedAt: now,
+  }));
+  return {
+    track,
+    run,
+    artifacts: [] as ProductAgentArtifact[],
+    commands: [] as OpenClawCommand[],
+    receipts: [] as ProductGenerationReceipt[],
+    manifest,
+    fileRecords: [] as ProductFileRecord[],
+    localAssetFiles: [] as LocalAssetFile[],
+    readinessGate,
+    businessTasks,
+    sessions,
+  };
+}
+
 function buildProductStudioRecords(
   current: AppDataState,
   proposal: BusinessProposal,
@@ -2418,12 +3580,15 @@ function buildProductStudioRecords(
   const blueprintId = id("product-blueprint");
   const previewId = id("product-preview");
   const gateId = id("approval-gate");
-  const productionBlocked = production?.run.status === "blocked";
+  const productionFallbackNotAccepted = productRunHasFallback(production?.run);
+  const productionBlocked = productionFallbackNotAccepted || production?.run.status === "blocked";
+  const productionGenerating = production?.run.status === "queued" || production?.run.status === "running";
   const productionBlockers = productionBlocked
     ? [
-        production.run.buildError ?? "Real OpenClaw product build failed.",
-        ...(production.readinessGate.blockedReasons ?? []),
-      ].filter(Boolean)
+        productionFallbackNotAccepted ? "Fallback Local - Not Accepted. This reliability gate requires gateway-backed real OpenClaw agent receipts before Product Factory can pass." : undefined,
+        production?.run.buildError ?? "Real OpenClaw product build failed.",
+        ...(production?.readinessGate.blockedReasons ?? []),
+      ].filter((item): item is string => Boolean(item))
     : [];
   const exactFields = platformPackage?.exactFields ?? {
     "Product name": proposal.title.replace("Business Proposal: ", ""),
@@ -2432,6 +3597,7 @@ function buildProductStudioRecords(
   };
   const fullDraft = localAssetFiles.map((file) => [`## ${file.title}`, `Path: ${file.intendedPath}`, "", file.content].join("\n\n")).join("\n\n---\n\n");
   const productTrack = production?.track;
+  const templatePackMode = productTrack?.type === "digital_template_pack";
   const sectionBlueprints: Array<{
     kind: ProductPreviewSection["kind"];
     title: string;
@@ -2450,17 +3616,25 @@ function buildProductStudioRecords(
         `Problem solved: ${proposal.summary}`,
         `Offer/deliverable: ${proposal.productionPlan[0] ?? "Local draft package"}`,
         `Intended destination: ${destination?.name ?? publishingPackage.platform}`,
-        productionBlocked ? `Build status: blocked. ${productionBlockers.join(" ")}` : "Build status: real product files ready for local review.",
+        productionBlocked
+          ? `Build status: blocked. ${productionBlockers.join(" ")}`
+          : productionGenerating
+            ? `Build status: ${production.run.status}. Product Factory is writing local files while the app is open.`
+            : "Build status: real product files ready for local review.",
         `Locked actions: publish, spend, message, login automation, form submission, purchase, connector execution.`,
       ].join("\n"),
-      status: productionBlocked ? "blocked" : "passed",
+      status: productionBlocked ? "blocked" : productionGenerating ? "needs_review" : "passed",
     },
     {
       kind: "full_draft",
       title: "Full local draft",
       summary: "Exact product content to inspect before any publish request.",
-      content: productionBlocked ? "No real product files were created because the real OpenClaw product build is blocked." : fullDraft,
-      status: productionBlocked ? "blocked" : fullDraft.trim() ? "passed" : "missing",
+      content: productionBlocked
+        ? "No real product files were created because the real OpenClaw product build is blocked."
+        : productionGenerating
+          ? "Product Factory is still running. The full product will appear here when local files are written."
+          : fullDraft,
+      status: productionBlocked ? "blocked" : productionGenerating ? "needs_review" : fullDraft.trim() ? "passed" : "missing",
     },
     {
       kind: "platform_fields",
@@ -2468,14 +3642,18 @@ function buildProductStudioRecords(
       summary: "Exact fields that would later be submitted only after a separate approval.",
       content: Object.entries(exactFields).map(([key, value]) => `${key}: ${value}`).join("\n"),
       fields: exactFields,
-      status: productionBlocked ? "blocked" : Object.keys(exactFields).length ? "passed" : "missing",
+      status: productionBlocked ? "blocked" : productionGenerating ? "needs_review" : Object.keys(exactFields).length ? "passed" : "missing",
     },
     {
       kind: "assets",
       title: "Product Files",
       summary: "Local files and content created by agents.",
-      content: productionBlocked ? productionBlockers.map((item) => `- ${item}`).join("\n") : localAssetFiles.map((file) => `- ${file.title}: ${file.intendedPath}`).join("\n"),
-      status: productionBlocked ? "blocked" : localAssetFiles.length ? "passed" : "needs_review",
+      content: productionBlocked
+        ? productionBlockers.map((item) => `- ${item}`).join("\n")
+        : productionGenerating
+          ? (production?.run.requiredFileNames ?? []).map((fileName) => `- Pending: ${fileName}`).join("\n")
+          : localAssetFiles.map((file) => `- ${file.title}: ${file.intendedPath}`).join("\n"),
+      status: productionBlocked ? "blocked" : productionGenerating ? "needs_review" : localAssetFiles.length ? "passed" : "needs_review",
     },
     {
       kind: "claims_safety",
@@ -2488,7 +3666,7 @@ function buildProductStudioRecords(
         "- Manual platform terms review is still required before external use.",
         ...(platformPackage?.policyChecks.map((check) => `- ${check}`) ?? []),
       ].join("\n"),
-      status: productionBlocked ? "blocked" : "needs_review",
+      status: productionBlocked ? "blocked" : productionGenerating ? "needs_review" : "needs_review",
     },
     {
       kind: "publishing_preview",
@@ -2500,7 +3678,7 @@ function buildProductStudioRecords(
         "What the app will not do from local draft approval: publish, spend, message, log in, submit forms, purchase, execute connectors, or change external accounts.",
         publishingPackage.approvalBoundary,
       ].join("\n"),
-      status: productionBlocked ? "blocked" : "needs_review",
+      status: productionBlocked ? "blocked" : productionGenerating ? "needs_review" : "needs_review",
     },
     {
       kind: "revision_requests",
@@ -2534,11 +3712,13 @@ function buildProductStudioRecords(
     valueProposition: proposal.whyMightWork[0] ?? "Validation-first local draft; results are not guaranteed.",
     intendedDestination: destination?.name ?? publishingPackage.platform,
     zeroBudgetDeliveryPath: proposal.budgetPlan.zeroBudgetPath,
-    stage: productionBlocked ? "blocked" : "review",
+    stage: productionBlocked ? "blocked" : productionGenerating ? "local_draft" : "review",
     readinessScore: proposal.validationScore,
     requiredAssetIds: localAssetFiles.map((file) => file.id),
     blockedExternalActions: ["publish", "message", "spend", "login_automation", "submit_form", "purchase", "connector_execute"],
-    nextProductionStep: "View the product, then approve the local draft or request revision.",
+    nextProductionStep: productionGenerating
+      ? "Wait for Product Factory to finish writing local files."
+      : "View the product, then approve the local draft or request revision.",
     createdAt: now,
     updatedAt: now,
   };
@@ -2555,8 +3735,12 @@ function buildProductStudioRecords(
     sectionIds: sections.map((section) => section.id),
     assetFileIds: localAssetFiles.map((file) => file.id),
     claimsSafetyStatus: productionBlocked ? "blocked" : "needs_review",
-    missingItems: productionBlocked ? productionBlockers : localAssetFiles.length ? [] : ["At least one real local product file is required before a publish approval."],
-    readinessScore: productionBlocked ? 0 : proposal.validationScore,
+    missingItems: productionBlocked
+      ? productionBlockers
+      : productionGenerating
+        ? ["Product Factory is running. Local draft approval unlocks only after files are written and QA passes."]
+        : localAssetFiles.length ? [] : ["At least one real local product file is required before a publish approval."],
+    readinessScore: productionBlocked ? 0 : productionGenerating ? Math.min(40, proposal.validationScore) : proposal.validationScore,
     renderedPreviewIds: [`rendered-${previewId}`],
     productionRunId: production?.run.id,
     fileManifestId: production?.manifest.id,
@@ -2571,12 +3755,20 @@ function buildProductStudioRecords(
     id: `rendered-${previewId}`,
     previewId,
     businessId,
-    mode: fiverrMode ? "fiverr_mockup" : "landing_page",
+    mode: fiverrMode ? "fiverr_mockup" : templatePackMode ? "template_sop" : "landing_page",
     title: productionBlocked
       ? `${proposal.title.replace("Business Proposal: ", "")} product build blocked`
-      : fiverrMode ? `${proposal.title.replace("Business Proposal: ", "")} Fiverr gig preview` : `${proposal.title.replace("Business Proposal: ", "")} landing page preview`,
+      : productionGenerating
+        ? `${proposal.title.replace("Business Proposal: ", "")} Product Factory running`
+      : fiverrMode
+        ? `${proposal.title.replace("Business Proposal: ", "")} Fiverr gig preview`
+        : templatePackMode
+          ? `${proposal.title.replace("Business Proposal: ", "")} template pack preview`
+          : `${proposal.title.replace("Business Proposal: ", "")} landing page preview`,
     summary: productionBlocked
       ? "No rendered product is available because the real OpenClaw product build is blocked."
+      : productionGenerating
+        ? "Rendered preview will appear after Product Factory writes local files."
       : "Rendered local product preview for inspection before any publish approval can be requested.",
     textPreview: productionBlocked
       ? [
@@ -2589,6 +3781,16 @@ function buildProductStudioRecords(
           "",
           "Next action: retry the failed agent or retry the full product build after fixing OpenClaw runtime/output issues.",
         ].join("\n")
+      : productionGenerating
+        ? [
+            "PRODUCT FACTORY RUNNING",
+            "",
+            `Status: ${production.run.status}`,
+            `Current agent: ${production.run.currentAgentId ?? "agent-content"}`,
+            `Required files: ${(production.run.requiredFileNames ?? []).join(", ")}`,
+            "",
+            "The app is working in the background. No external action is running.",
+          ].join("\n")
       : fiverrMode
       ? [
           "FIVERR GIG LOCAL PREVIEW",
@@ -2612,6 +3814,23 @@ function buildProductStudioRecords(
           "Safety Boundary",
           "Local preview only. No Fiverr login, form submission, publication, messaging, or purchase occurred.",
         ].join("\n")
+      : templatePackMode
+      ? [
+          "TEMPLATE PACK PREVIEW",
+          "",
+          `Product: ${proposal.title.replace("Business Proposal: ", "")}`,
+          `Audience: ${proposal.targetAudience}`,
+          `Folder: ${production?.manifest.rootPath ?? "Product folder pending"}`,
+          "",
+          "Included Files",
+          ...localAssetFiles.map((file) => `- ${file.fileName}: ${file.title}`),
+          "",
+          "Full Product Draft",
+          fullDraft,
+          "",
+          "Safety Boundary",
+          "Local preview only. No publishing, login, form submission, messaging, spending, purchases, or connector action occurred.",
+        ].join("\n")
       : [
           "LANDING PAGE PREVIEW",
           "",
@@ -2628,7 +3847,7 @@ function buildProductStudioRecords(
           "Local draft only. Review claims, policies, and citations before publishing.",
         ].join("\n"),
     sourceSectionIds: sections.map((section) => section.id),
-    status: productionBlocked ? "blocked" : "ready",
+    status: productionBlocked ? "blocked" : productionGenerating ? "draft" : "ready",
     createdAt: now,
     updatedAt: now,
   };
@@ -2647,8 +3866,12 @@ function buildProductStudioRecords(
     previewId,
     gate: "publish",
     status: productionBlocked ? "blocked" : "needs_product_review",
-    label: productionBlocked ? "Real Product Build Blocked" : "Needs Product Review",
-    reason: productionBlocked ? productionBlockers.join(" ") : "Inspect and approve the local draft before requesting a publish approval.",
+    label: productionBlocked ? "Real Product Build Blocked" : productionGenerating ? "Product Factory Running" : "Needs Product Review",
+    reason: productionBlocked
+      ? productionBlockers.join(" ")
+      : productionGenerating
+        ? "Product Factory is still writing local files. Review unlocks after QA passes."
+        : "Inspect and approve the local draft before requesting a publish approval.",
     actionLabel: "Open Product Studio",
     linkedPath: "/#/production",
     updatedAt: now,
@@ -2704,6 +3927,157 @@ function buildPublishPayloadPreview(
     status: "frozen",
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+function withProductFactoryProgress(current: AppDataState, event: ProductFactoryProgressEvent): AppDataState {
+  const now = new Date().toISOString();
+  const run = current.productProductionRuns.find((item) => item.id === event.runId);
+  const agentId = event.agentId;
+  const runStatus: ProductProductionRun["status"] = event.phase === "blocked" ? "blocked" : "running";
+  const stationId = agentId ? stationIdByAgentId[agentId] : undefined;
+  const nextAgentIndex = agentId ? productAgentOrder.indexOf(agentId) + 1 : -1;
+  const nextAgentId = nextAgentIndex > 0 ? productAgentOrder[nextAgentIndex] : undefined;
+
+  return {
+    ...current,
+    productProductionRuns: current.productProductionRuns.map((item) =>
+      item.id === event.runId
+        ? {
+            ...item,
+            status: runStatus,
+            currentAgentId: agentId ?? item.currentAgentId,
+            runtimeMode: event.phase === "blocked" ? "blocked" : item.runtimeMode,
+            buildError: event.phase === "blocked" ? event.detail : item.buildError,
+            summary: event.detail,
+            updatedAt: now,
+          }
+        : item,
+    ),
+    productTracks: current.productTracks.map((track) =>
+      track.id === run?.trackId ? { ...track, readinessState: event.phase === "blocked" ? "blocked" : "generating", updatedAt: now } : track,
+    ),
+    productReadinessGates: current.productReadinessGates.map((gate) =>
+      gate.runId === event.runId
+        ? {
+            ...gate,
+            status: event.phase === "blocked" ? "blocked" : "generating",
+            summary: event.detail,
+            blockedReasons: event.phase === "blocked" ? [event.detail] : gate.blockedReasons,
+            updatedAt: now,
+          }
+        : gate,
+    ),
+    businessTasks: current.businessTasks.map((task) => {
+      if (task.productRunId !== event.runId) return task;
+      if (event.phase === "blocked") {
+        return {
+          ...task,
+          status: "blocked",
+          progress: Math.max(task.progress, event.progress, 70),
+          currentArtifact: task.agentId === agentId ? event.detail : `Skipped because ${event.agentName ?? "a Product Factory agent"} blocked this run.`,
+          currentSource: "OpenClaw local Product Factory",
+          logs: [task.agentId === agentId ? event.detail : `Blocked by prior Product Factory step: ${event.detail}`, ...task.logs].slice(0, 8),
+          completedAt: now,
+          updatedAt: now,
+        };
+      }
+      if (event.phase === "files_written") {
+        return {
+          ...task,
+          status: "done",
+          progress: 100,
+          currentArtifact: task.currentArtifact || "Product Factory completed local files.",
+          logs: ["Product Factory finished writing local files.", ...task.logs].slice(0, 8),
+          completedAt: now,
+          updatedAt: now,
+        };
+      }
+      if (agentId && task.agentId === agentId) {
+        return {
+          ...task,
+          status: event.phase === "agent_completed" ? "done" : "now_working",
+          progress: event.phase === "agent_completed" ? 100 : event.progress,
+          currentArtifact: event.detail,
+          currentSource: "OpenClaw local Product Factory",
+          logs: [event.detail, ...task.logs].slice(0, 8),
+          startedAt: task.startedAt ?? now,
+          completedAt: event.phase === "agent_completed" ? now : task.completedAt,
+          updatedAt: now,
+        };
+      }
+      if (nextAgentId && task.agentId === nextAgentId && event.phase === "agent_completed") {
+        return {
+          ...task,
+          status: "queued",
+          progress: Math.max(task.progress, 1),
+          logs: [`Queued after ${event.agentName}.`, ...task.logs].slice(0, 8),
+          updatedAt: now,
+        };
+      }
+      return task;
+    }),
+    agentWorkSessions: current.agentWorkSessions.map((session) => {
+      if (session.productRunId !== event.runId) return session;
+      if (event.phase === "blocked") {
+        return {
+          ...session,
+          status: "blocked",
+          motion: "blocked",
+          currentTask: session.agentId === agentId ? event.detail : `Skipped because ${event.agentName ?? "a Product Factory agent"} blocked this run.`,
+          currentOutput: event.detail,
+          progress: Math.max(session.progress, event.progress, 70),
+          updatedAt: now,
+        };
+      }
+      if (event.phase === "files_written") {
+        return {
+          ...session,
+          status: "review",
+          motion: "review",
+          currentTask: "Product Factory completed local files.",
+          currentOutput: event.detail,
+          progress: 100,
+          updatedAt: now,
+        };
+      }
+      if (agentId && session.agentId === agentId) {
+        return {
+          ...session,
+          status: event.phase === "agent_completed" ? "review" : "production",
+          motion: event.phase === "agent_completed" ? "review" : "forge",
+          currentTask: event.detail,
+          currentOutput: event.detail,
+          progress: event.phase === "agent_completed" ? 100 : event.progress,
+          updatedAt: now,
+        };
+      }
+      return session;
+    }),
+    guildOfficeStations: current.guildOfficeStations.map((station) => {
+      const belongsToProductStation = productAgentOrder.some((item) => station.agentId === item);
+      if (event.phase === "files_written" && belongsToProductStation) {
+        return {
+          ...station,
+          status: "idle",
+          motion: "idle",
+          currentTask: "Product Factory finished this run.",
+          lastOutput: "Local product files are ready in Product Studio.",
+          progress: 100,
+          updatedAt: now,
+        };
+      }
+      if (!stationId || station.id !== stationId) return station;
+      return {
+        ...station,
+        status: event.phase === "blocked" ? "blocked" : event.phase === "agent_completed" ? "review" : "production",
+        motion: event.phase === "blocked" ? "blocked" : event.phase === "agent_completed" ? "review" : "forge",
+        currentTask: event.detail,
+        lastOutput: event.detail,
+        progress: event.phase === "agent_completed" ? 100 : event.progress,
+        updatedAt: now,
+      };
+    }),
   };
 }
 
@@ -3102,6 +4476,18 @@ function buildOpportunityHuntState(
         },
       ]
     : [];
+  const platformBlockers = [
+    ...externalPlatformRequirements
+      .filter((item) => item.publishStatus === "blocked")
+      .map((item) => `${item.platform} platform requirement is blocked: ${item.notes}`),
+    ...platformExecutionPackages
+      .filter((item) => item.status === "blocked")
+      .map((item) => `${item.platform} platform package is blocked: ${item.approvalBoundary}`),
+  ];
+  const proposalReviewStatus: BusinessProposal["status"] =
+    proposalGateStatus === "proposal_ready" && budgetPlan.approvalBlockers.length === 0 && platformBlockers.length === 0
+      ? "ready_for_review"
+      : "drafting";
   const firstFetchedSource = publicResearch?.fetches.find((fetch) => fetch.status === "fetched") ?? publicResearch?.fetches[0];
   const firstBrowserArtifact = publicResearch?.browserResearch?.artifacts[0];
   const browserArtifactCount = publicResearch?.browserResearch?.artifacts.length ?? 0;
@@ -3112,21 +4498,22 @@ function buildOpportunityHuntState(
     agentId: task.agentId,
     title: task.title,
     objective: `${task.objective} Budget context: portfolio ${money(budgetPlan.portfolioStartingCapital)}, remaining ${money(budgetPlan.portfolioRemainingCapital)}, business cap ${money(budgetPlan.businessBudgetCap)}, required spend ${money(budgetPlan.requiredSpend)}. ${fiverrMode ? "Platform context: Fiverr requires manual user login and a separate publish approval." : ""}`,
-    status: index < 3 ? "now_working" : "queued",
-    progress: index < 3 ? 18 + index * 8 : 0,
+    status: "done",
+    progress: 100,
     currentArtifact: index < 2 && browserArtifactCount ? `${task.artifact} + browser evidence receipt` : task.artifact,
     currentSource: index < 2 && firstBrowserArtifact ? firstBrowserArtifact.url : index < 2 && firstFetchedSource ? firstFetchedSource.url : task.source,
     dependency: index === 0 ? undefined : taskBlueprints[index - 1].title,
     expectedOutput: task.expectedOutput,
     approvalRequired: false,
     logs: [
-      `${agentLabel(task.agentId)} accepted the task from TeamLeader1A.`,
+      `${agentLabel(task.agentId)} completed the task from TeamLeader1A.`,
       `Budget guard: cap ${money(budgetPlan.businessBudgetCap)}, required spend ${money(budgetPlan.requiredSpend)}, recommended spend ${money(budgetPlan.recommendedSpend)}.`,
       browserArtifactCount ? `Browser guard: ${browserArtifactCount} public read artifact(s) captured through the safe browser broker; no login, forms, publishing, messaging, or spend.` : "Browser guard: no browser artifact was required for this task.",
       fiverrMode ? "Platform guard: Fiverr publish/login/form submission are locked behind a separate approval." : "Platform guard: external publishing stays locked until approval.",
     ],
-    startedAt: index < 3 ? now : undefined,
+    startedAt: now,
     updatedAt: now,
+    completedAt: now,
   }));
   const proposal: BusinessProposal = {
     id: proposalId,
@@ -3223,7 +4610,7 @@ function buildOpportunityHuntState(
       { label: "Approval", status: "needs_review", detail: "Business approval starts internal work only; external execution needs a separate approval." },
     ],
     qualityScore: fiverrMode ? winningScorecard?.totalScore ?? 76 : winningScorecard?.totalScore ?? 74,
-    missingRequirements: fiverrMode ? ["User must manually log in to Fiverr before any future publish approval can execute."] : [],
+    missingRequirements: [...(fiverrMode ? ["User must manually log in to Fiverr before any future publish approval can execute."] : []), ...platformBlockers],
     zeroBudgetValidationTest:
       fiverrMode
         ? "Create the Fiverr gig package locally, compare safe public marketplace positioning, then request a separate exact publish approval only after the user logs in manually. Success is measured by approved publish readiness and early platform signals, not guaranteed orders."
@@ -3242,7 +4629,7 @@ function buildOpportunityHuntState(
       fiverrMode
         ? "Proceed to review after the agent tasks finish. This is a zero-spend Fiverr draft candidate, but business approval will only create local packages. Fiverr login, publishing, messaging, paid promotion, and form submission require a separate exact approval."
         : "Proceed to review after the agent tasks finish. This is a strong zero-budget validation candidate, but publishing and any connector action remain approval-gated.",
-    status: proposalGateStatus === "proposal_ready" ? "drafting" : "drafting",
+    status: proposalReviewStatus,
     createdAt: now,
     updatedAt: now,
   };
@@ -3462,11 +4849,16 @@ function advanceOpportunityWorkState(current: AppDataState): AppDataState | null
           }
         : hunt,
     ),
-    businessProposals: current.businessProposals.map((proposal) =>
-      proposal.huntId === activeHunt.id
-        ? { ...proposal, status: allDone && proposalReady ? "ready_for_review" : "drafting", updatedAt: now }
-        : proposal,
-    ),
+    businessProposals: current.businessProposals.map((proposal) => {
+      if (proposal.huntId !== activeHunt.id) return proposal;
+      if (["approved", "rejected", "revision_requested"].includes(proposal.status)) return proposal;
+      const nextProposalStatus =
+        proposalReady && (allDone || proposal.status === "ready_for_review")
+          ? "ready_for_review"
+          : "drafting";
+      if (proposal.status === nextProposalStatus) return proposal;
+      return { ...proposal, status: nextProposalStatus, updatedAt: now };
+    }),
     activityLogs: [
       {
         id: id("log-opportunity-tick"),
@@ -3497,7 +4889,7 @@ const phase5BlockedBehaviors = [
 ];
 
 function payloadSummary(payload: OpenClawApprovalPayload) {
-  if (payload.actionKind === "gateway_start") return "Start the local loopback OpenClaw gateway.";
+  if (payload.actionKind === "gateway_start") return "Start the mission-control loopback OpenClaw gateway on port 19789.";
   if (payload.actionKind === "agent_turn") return payload.message;
   if (payload.actionKind === "mission_start") return `${payload.title}: ${payload.stepCount} approved local agent turns.`;
   if (payload.actionKind === "url_research") return `${payload.purpose} / ${payload.urls.join(", ")}`;
@@ -3505,11 +4897,11 @@ function payloadSummary(payload: OpenClawApprovalPayload) {
 }
 
 function commandForPayload(payload: OpenClawApprovalPayload) {
-  if (payload.actionKind === "gateway_start") return "openclaw.cmd gateway start";
-  if (payload.actionKind === "agent_turn") return `openclaw.cmd agent --agent ${payload.agentProfileId} --message <approved> --json`;
+  if (payload.actionKind === "gateway_start") return "openclaw.cmd --profile mission-control gateway start [OPENCLAW_GATEWAY_PORT=19789]";
+  if (payload.actionKind === "agent_turn") return `openclaw.cmd --profile mission-control agent --agent ${payload.agentProfileId} --message <approved> --json [OPENCLAW_GATEWAY_PORT=19789]`;
   if (payload.actionKind === "mission_start") return `mission batch: ${payload.stepCount} local OpenClaw agent turns`;
-  if (payload.actionKind === "url_research") return "openclaw.cmd agent --agent main --message <approved-url-research> --json";
-  return `openclaw.cmd message send --channel ${payload.channel} --target ${payload.target} --message <approved>${payload.dryRun ? " --dry-run" : ""} --json`;
+  if (payload.actionKind === "url_research") return "openclaw.cmd --profile mission-control agent --agent main --message <approved-url-research> --json [OPENCLAW_GATEWAY_PORT=19789]";
+  return `openclaw.cmd --profile mission-control message send --channel ${payload.channel} --target ${payload.target} --message <approved>${payload.dryRun ? " --dry-run" : ""} --json [OPENCLAW_GATEWAY_PORT=19789]`;
 }
 
 function connectorForPayload(payload: OpenClawApprovalPayload): CommandLedgerEntry["connector"] {
@@ -4577,20 +5969,64 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const opportunityIntervalRef = useRef<number | null>(null);
   const operatingAutopilotIntervalRef = useRef<number | null>(null);
   const dataRef = useRef<AppDataState>(initialAppDataState);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const executeApprovedActionRef = useRef<((approval: ApprovalRequest) => Promise<void>) | null>(null);
+  const productFactoryRunRef = useRef<Set<string>>(new Set());
 
-  const persist = useCallback(async (next: AppDataState) => {
-    const nextAdapter = await persistenceService.saveState(next);
-    dataRef.current = next;
-    setData(next);
+  const saveSnapshot = useCallback(async (next: AppDataState) => {
+    const save = saveQueueRef.current
+      .catch(() => undefined)
+      .then(() => persistenceService.saveState(next));
+    saveQueueRef.current = save.then(
+      () => undefined,
+      () => undefined,
+    );
+    const nextAdapter = await save;
     setAdapter(nextAdapter);
   }, []);
 
-  const persistOptimistic = useCallback(async (next: AppDataState) => {
+  const saveSnapshotSlices = useCallback(async (next: AppDataState, keys: Array<keyof AppDataState>) => {
+    const save = saveQueueRef.current
+      .catch(() => undefined)
+      .then(() => persistenceService.saveStateSlices(next, keys));
+    saveQueueRef.current = save.then(
+      () => undefined,
+      () => undefined,
+    );
+    const nextAdapter = await save;
+    setAdapter(nextAdapter);
+  }, []);
+
+  const persist = useCallback(
+    async (next: AppDataState) => {
+      dataRef.current = next;
+      setData(next);
+      await saveSnapshot(next);
+    },
+    [saveSnapshot],
+  );
+
+  const persistOptimistic = useCallback(
+    async (next: AppDataState) => {
+      dataRef.current = next;
+      setData(next);
+      await saveSnapshot(next);
+    },
+    [saveSnapshot],
+  );
+
+  const persistOptimisticSlices = useCallback(
+    async (next: AppDataState, keys: Array<keyof AppDataState>) => {
+      dataRef.current = next;
+      setData(next);
+      await saveSnapshotSlices(next, keys);
+    },
+    [saveSnapshotSlices],
+  );
+
+  const applyLocalState = useCallback((next: AppDataState) => {
     dataRef.current = next;
     setData(next);
-    const nextAdapter = await persistenceService.saveState(next);
-    setAdapter(nextAdapter);
   }, []);
 
   const refresh = useCallback(async () => {
@@ -6138,7 +7574,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const requestGatewayStart = useCallback(async () => {
     await createOpenClawApproval({
       actionKind: "gateway_start",
-      expectedResult: "OpenClaw loopback gateway starts locally.",
+      expectedResult: "OpenClaw mission-control loopback gateway starts locally on port 19789.",
     });
   }, [createOpenClawApproval]);
 
@@ -6381,6 +7817,334 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
   }, [persistOptimistic]);
 
+  const startProductFactoryRun = useCallback(
+    (runId: string) => {
+      if (productFactoryRunRef.current.has(runId)) return;
+      productFactoryRunRef.current.add(runId);
+      void (async () => {
+        try {
+          let current = dataRef.current;
+          const run = current.productProductionRuns.find((item) => item.id === runId);
+          if (!run) throw new Error(`Product Factory runner could not find run ${runId} in the loaded app state.`);
+          if (!["queued", "running"].includes(run.status)) return;
+          const proposal = current.businessProposals.find((item) => item.id === run.proposalId);
+          const business = current.approvedBusinesses.find((item) => item.id === run.businessId);
+          if (!proposal) throw new Error(`Product Factory runner could not find proposal ${run.proposalId} for run ${runId}.`);
+          if (!business) throw new Error(`Product Factory runner could not find approved business ${run.businessId} for run ${runId}.`);
+          const questId = business.questId ?? proposal.questId ?? id("quest-product-factory");
+          const startedAt = new Date().toISOString();
+
+          const attachedState = withProductFactoryProgress(current, {
+            phase: "agent_started",
+            runId,
+            businessId: business.id,
+            proposalId: proposal.id,
+            agentId: "agent-content",
+            agentName: "AgentContent",
+            progress: 6,
+            detail: "Product Factory runner attached. Preflight is checking gateway 19789, profile mission-control, and all mapped agents.",
+          });
+          applyLocalState(attachedState);
+          void saveSnapshot(attachedState).catch((error) => {
+            console.error("Failed to persist Product Factory runner attachment", error);
+          });
+
+          const preflight = await ensureRealOpenClawProductFactoryPreflight(dataRef.current);
+          applyLocalState({
+            ...dataRef.current,
+            agents: applyProfilesToAgents(dataRef.current.agents, preflight.profiles, dataRef.current.userSettings),
+            openClawRuntimeStatus: preflight.gateway,
+          });
+
+          const productProduction = await buildRealProductProductionBundle(dataRef.current, proposal, business.id, questId, startedAt, {
+            runId,
+            trackId: run.trackId,
+            onProgress: (event) => {
+              const progressState = withProductFactoryProgress(dataRef.current, event);
+              applyLocalState(progressState);
+              void saveSnapshot(progressState).catch((error) => {
+                console.error("Failed to persist Product Factory progress", error);
+              });
+            },
+          });
+
+          current = dataRef.current;
+          const existingPreview = current.productPreviews.find((item) => item.productionRunId === runId);
+          const oldPreviewIds = new Set(existingPreview ? [existingPreview.id] : []);
+          const oldBlueprintIds = new Set(existingPreview ? [existingPreview.blueprintId] : []);
+          const oldGateIds = new Set(existingPreview?.approvalGateStateId ? [existingPreview.approvalGateStateId] : []);
+          const existingPublishingPackage =
+            (existingPreview?.publishingPackageId ? current.publishingPackages.find((item) => item.id === existingPreview.publishingPackageId) : undefined) ??
+            current.publishingPackages.find((item) => item.businessId === business.id) ??
+            {
+              id: id("publishing-package"),
+              businessId: business.id,
+              platform: "Manual / no connector",
+              title: `${business.name} local publishing package`,
+              status: "local_draft",
+              localAssetFileIds: [],
+              approvalBoundary: "No publishing, login, forms, messaging, spending, purchases, or connector execution without a separate exact approval.",
+              requiredUserSteps: ["Review the local product draft.", "Approve the local draft before requesting any publish approval."],
+              connectorActionsBlocked: ["publish", "login", "submit_form", "purchase", "message", "spend"],
+              createdAt: startedAt,
+              updatedAt: startedAt,
+            } satisfies PublishingPackage;
+          const addPublishingPackage = !current.publishingPackages.some((item) => item.id === existingPublishingPackage.id);
+          const productStudio = buildProductStudioRecords(current, proposal, business.id, new Date().toISOString(), productProduction.localAssetFiles, existingPublishingPackage, productProduction);
+          const productRun: ProductProductionRun = { ...productProduction.run, previewId: productStudio.preview.id };
+          const productReadinessGate: ProductReadinessGate = { ...productProduction.readinessGate, previewId: productStudio.preview.id };
+          const productRunAccepted = productRunIsAcceptedReal(productProduction.run);
+          const queuedTaskIds = new Set(current.businessTasks.filter((task) => task.productRunId === runId).map((task) => task.id));
+          const productLocalFileIds = productProduction.localAssetFiles.map((file) => file.id);
+          const next: AppDataState = {
+            ...current,
+            productTracks: [productProduction.track, ...current.productTracks.filter((item) => item.id !== run.trackId)],
+            productProductionRuns: [productRun, ...current.productProductionRuns.filter((item) => item.id !== runId)],
+            productAgentArtifacts: [...productProduction.artifacts, ...current.productAgentArtifacts.filter((item) => item.runId !== runId)],
+            productFileManifests: [productProduction.manifest, ...current.productFileManifests.filter((item) => item.runId !== runId)],
+            productFileRecords: [...productProduction.fileRecords, ...current.productFileRecords.filter((item) => item.runId !== runId)],
+            productGenerationReceipts: [...productProduction.receipts, ...current.productGenerationReceipts.filter((item) => item.runId !== runId)],
+            productReadinessGates: [productReadinessGate, ...current.productReadinessGates.filter((item) => item.runId !== runId)],
+            productBlueprints: [productStudio.blueprint, ...current.productBlueprints.filter((item) => !oldBlueprintIds.has(item.id))],
+            productPreviews: [productStudio.preview, ...current.productPreviews.filter((item) => !oldPreviewIds.has(item.id))],
+            renderedProductPreviews: [productStudio.renderedPreview, ...current.renderedProductPreviews.filter((item) => !oldPreviewIds.has(item.previewId))],
+            productPreviewSections: [...productStudio.sections, ...current.productPreviewSections.filter((item) => !oldPreviewIds.has(item.previewId))],
+            productDraftApprovals: [productStudio.draftApproval, ...current.productDraftApprovals.filter((item) => !oldPreviewIds.has(item.previewId))],
+            approvalGateStates: [productStudio.gateState, ...current.approvalGateStates.filter((item) => !oldGateIds.has(item.id) && !oldPreviewIds.has(item.previewId ?? ""))],
+            localAssetFiles: [...productProduction.localAssetFiles, ...current.localAssetFiles],
+            publishingPackages: addPublishingPackage ? [existingPublishingPackage, ...current.publishingPackages] : current.publishingPackages,
+            businessTasks: [...productProduction.businessTasks, ...current.businessTasks.filter((task) => task.productRunId !== runId)],
+            agentWorkSessions: [...productProduction.sessions, ...current.agentWorkSessions.filter((session) => session.productRunId !== runId)],
+            openClawCommands: [...productProduction.commands, ...current.openClawCommands.filter((command) => command.missionRunId !== runId)],
+            approvedBusinesses: current.approvedBusinesses.map((item) =>
+              item.id === business.id
+                ? {
+                    ...item,
+                    activeTaskIds: [
+                      ...productProduction.businessTasks.map((task) => task.id),
+                      ...item.activeTaskIds.filter((taskId) => !queuedTaskIds.has(taskId)),
+                    ],
+                    nextAction:
+                      productRunAccepted
+                        ? "Open Product Studio and inspect the real local product file tree."
+                        : "Open Product Studio and repair the blocked Product Factory step.",
+                    updatedAt: new Date().toISOString(),
+                  }
+                : item,
+            ),
+            approvedBusinessCockpits: current.approvedBusinessCockpits.map((cockpit) =>
+              cockpit.businessId === business.id
+                ? {
+                    ...cockpit,
+                    latestProductPreviewId: productStudio.preview.id,
+                    localAssetFileIds: [...productLocalFileIds, ...cockpit.localAssetFileIds],
+                    executionReceiptIds: [...productProduction.receipts.map((receipt) => receipt.id), ...cockpit.executionReceiptIds],
+                    nextBestActions:
+                      productRunAccepted
+                        ? ["Open Product Studio and inspect the real local product files.", ...cockpit.nextBestActions]
+                        : ["Repair or regenerate the blocked Product Factory run.", ...cockpit.nextBestActions],
+                    updatedAt: new Date().toISOString(),
+                  }
+                : cockpit,
+            ),
+            teamLeaderChatMessages: [
+              ...current.teamLeaderChatMessages,
+              {
+                id: id("tl-chat-product-factory-complete"),
+                role: "teamleader",
+                content:
+                  productRunAccepted
+                    ? `Product Factory finished. I wrote ${productProduction.fileRecords.length} local product file(s) under ${productProduction.manifest.rootPath}. Open Product Studio to inspect the exact product before any publish approval.`
+                    : `Product Factory stopped before an accepted product could be created: ${productProduction.run.buildError || productProduction.readinessGate.summary}. No fallback product was accepted.`,
+                createdAt: new Date().toISOString(),
+                mode: "local",
+                relatedApprovedBusinessId: business.id,
+                relatedBusinessProposalId: proposal.id,
+              } satisfies TeamLeaderChatMessage,
+            ].slice(-120),
+            activityLogs: [
+              {
+                id: id("log-product-factory-complete"),
+                category: "system",
+                title: productRunAccepted ? "Product Factory completed" : "Product Factory blocked",
+                detail:
+                  productRunAccepted
+                    ? `${business.name}: ${productProduction.fileRecords.length} local product file(s) written under ${productProduction.manifest.rootPath}. No external action executed.`
+                    : `${business.name}: ${productProduction.run.buildError || productProduction.readinessGate.summary}`,
+                severity: productRunAccepted ? "success" : "warning",
+                createdAt: new Date().toISOString(),
+                relatedQuestId: business.questId,
+              } satisfies ActivityLog,
+              ...current.activityLogs,
+            ].slice(0, 80),
+            dashboardSummary: {
+              ...current.dashboardSummary,
+              latestTeamLeaderRecommendation:
+                productRunAccepted
+                  ? `${business.name} has real local product files. Review Product Studio before any publish approval.`
+                  : `${business.name} Product Factory is blocked. Product Studio shows the repair path.`,
+            },
+          };
+          await persistOptimistic(next);
+        } catch (error) {
+          const current = dataRef.current;
+          const now = new Date().toISOString();
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          const runPreviewIds = new Set(current.productPreviews.filter((preview) => preview.productionRunId === runId).map((preview) => preview.id));
+          await persistOptimistic({
+            ...current,
+            productProductionRuns: current.productProductionRuns.map((run) =>
+              run.id === runId
+                ? {
+                    ...run,
+                    status: "blocked",
+                    runtimeMode: "blocked",
+                    buildError: errorMessage,
+                    summary: `Product Factory failed safely: ${errorMessage}`,
+                    completedAt: now,
+                    updatedAt: now,
+                  }
+                : run,
+            ),
+            productReadinessGates: current.productReadinessGates.map((gate) =>
+              gate.runId === runId
+                  ? {
+                    ...gate,
+                    status: "blocked",
+                    blockedReasons: [errorMessage],
+                    summary: `Product Factory failed safely: ${errorMessage}`,
+                    updatedAt: now,
+                  }
+                : gate,
+            ),
+            productPreviews: current.productPreviews.map((preview) =>
+              preview.productionRunId === runId
+                ? {
+                    ...preview,
+                    status: "blocked",
+                    claimsSafetyStatus: "blocked",
+                    missingItems: [errorMessage],
+                    updatedAt: now,
+                  }
+                : preview,
+            ),
+            approvalGateStates: current.approvalGateStates.map((gate) =>
+              gate.previewId && runPreviewIds.has(gate.previewId)
+                ? {
+                    ...gate,
+                    status: "locked",
+                    label: "Locked",
+                    reason: `Real Product Build Blocked: ${errorMessage}`,
+                    blockedReasons: [errorMessage],
+                    updatedAt: now,
+                  }
+                : gate,
+            ),
+            businessTasks: current.businessTasks.map((task) =>
+              task.productRunId === runId ? { ...task, status: "blocked", progress: Math.max(task.progress, 70), updatedAt: now } : task,
+            ),
+            agentWorkSessions: current.agentWorkSessions.map((session) =>
+              session.productRunId === runId
+                ? {
+                    ...session,
+                    status: "blocked",
+                    motion: "blocked",
+                    currentTask: `Product Factory failed safely: ${errorMessage}`,
+                    progress: Math.max(session.progress, 70),
+                    updatedAt: now,
+                  }
+                : session,
+            ),
+            activityLogs: [
+              {
+                id: id("log-product-factory-error"),
+                category: "system",
+                title: "Product Factory failed safely",
+                detail: errorMessage,
+                severity: "danger",
+                createdAt: now,
+              } satisfies ActivityLog,
+              ...current.activityLogs,
+            ].slice(0, 80),
+          });
+        } finally {
+          productFactoryRunRef.current.delete(runId);
+        }
+      })();
+    },
+    [applyLocalState, persistOptimistic, saveSnapshot],
+  );
+
+  useEffect(() => {
+    if (isLoading) return;
+    const staleCutoffMs = Date.now() - 45 * 60 * 1000;
+    const staleRunIds = new Set(
+      data.productProductionRuns
+        .filter((run) => ["queued", "running"].includes(run.status))
+        .filter((run) => {
+          const lastChangedAt = Date.parse(run.updatedAt || run.startedAt || "");
+          return Number.isFinite(lastChangedAt) && lastChangedAt < staleCutoffMs;
+        })
+        .map((run) => run.id),
+    );
+    if (staleRunIds.size > 0) {
+      const now = new Date().toISOString();
+      void persistOptimistic({
+        ...data,
+        productProductionRuns: data.productProductionRuns.map((run) =>
+          staleRunIds.has(run.id)
+            ? {
+                ...run,
+                status: "blocked",
+                runtimeMode: "blocked",
+                buildError: "Product Factory runner recovered a stale queued/running record after restart. Start a fresh Product Factory run.",
+                summary: "Stale Product Factory record recovered safely; no external action executed.",
+                completedAt: now,
+                updatedAt: now,
+              }
+            : run,
+        ),
+        businessTasks: data.businessTasks.map((task) =>
+          task.productRunId && staleRunIds.has(task.productRunId)
+            ? {
+                ...task,
+                status: "blocked",
+                progress: Math.max(task.progress, 70),
+                logs: ["Recovered stale Product Factory task after restart.", ...task.logs].slice(0, 8),
+                updatedAt: now,
+              }
+            : task,
+        ),
+        agentWorkSessions: data.agentWorkSessions.map((session) =>
+          session.productRunId && staleRunIds.has(session.productRunId)
+            ? {
+                ...session,
+                status: "blocked",
+                motion: "blocked",
+                currentTask: "Recovered stale Product Factory session after restart.",
+                progress: Math.max(session.progress, 70),
+                updatedAt: now,
+              }
+            : session,
+        ),
+        activityLogs: [
+          {
+            id: id("log-product-factory-stale-recovery"),
+            category: "system",
+            title: "Stale Product Factory run recovered",
+            detail: `${staleRunIds.size} queued/running Product Factory record(s) were marked blocked after restart. No external action executed.`,
+            severity: "warning",
+            createdAt: now,
+          } satisfies ActivityLog,
+          ...data.activityLogs,
+        ].slice(0, 80),
+      });
+      return;
+    }
+    const pendingRun = data.productProductionRuns.find((run) => ["queued", "running"].includes(run.status));
+    if (pendingRun) startProductFactoryRun(pendingRun.id);
+  }, [data, isLoading, persistOptimistic, startProductFactoryRun]);
+
   const approveBusinessProposal = useCallback(
     async (proposalId: string) => {
       const current = dataRef.current;
@@ -6388,6 +8152,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (!proposal) throw new Error("Business proposal not found.");
       const now = new Date().toISOString();
       const budgetBlockers = proposalBudgetBlockers(proposal);
+      const platformBlockers = proposalPlatformBlockers(proposal, current.externalPlatformRequirements, current.platformExecutionPackages);
       const proposalGate = current.proposalSubmissionGates.find((gate) => gate.proposalId === proposalId);
       const factCheckBlockers =
         proposalGate && proposalGate.status !== "proposal_ready"
@@ -6395,7 +8160,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           : proposal.factCheckRunId
             ? []
             : ["FactCheck Station has not verified this proposal yet."];
-      const blockers = [...budgetBlockers, ...factCheckBlockers].filter(Boolean);
+      const blockers = [...budgetBlockers, ...factCheckBlockers, ...platformBlockers].filter(Boolean);
       if (blockers.length > 0) {
         await persistOptimistic({
           ...current,
@@ -6516,37 +8281,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         updatedAt: now,
       };
       const operatingBundle = buildBusinessOperatingBundle(current, proposal, businessId, questId, now);
-      await persistOptimistic({
-        ...current,
-        teamLeaderChatMessages: [
-          ...current.teamLeaderChatMessages,
-          {
-            id: id("tl-chat-business-approval-started"),
-            role: "teamleader",
-            content: `Approval received for "${proposal.title.replace("Business Proposal: ", "")}". I am promoting it into an active business and starting the Real Product Factory now. This may take a few minutes, but the app should stay responsive. No publishing, spending, messaging, login, forms, purchases, or connector action will run.`,
-            createdAt: now,
-            mode: "local",
-            relatedBusinessProposalId: proposalId,
-          } satisfies TeamLeaderChatMessage,
-        ].slice(-120),
-        activityLogs: [
-          {
-            id: id("log-business-approval-started"),
-            category: "quest",
-            title: "Business approval received",
-            detail: "Mission Control started the local business promotion and Real Product Factory. External actions remain locked.",
-            severity: "info",
-            createdAt: now,
-            relatedQuestId: proposal.questId,
-          } satisfies ActivityLog,
-          ...current.activityLogs,
-        ].slice(0, 80),
-        dashboardSummary: {
-          ...current.dashboardSummary,
-          latestTeamLeaderRecommendation: `Business approval received for ${proposal.title.replace("Business Proposal: ", "")}. Real Product Factory is starting locally; external actions remain locked.`,
-        },
-      });
-      const productProduction = await buildRealProductProductionBundle(current, proposal, businessId, questId, now);
+      // Keep the approval click responsive: persist a queued Product Factory run now, then let the foreground app runner
+      // write the real product files agent-by-agent while the app stays usable.
+      const productProduction = buildQueuedProductProductionScaffold(proposal, businessId, questId, now);
       const productStudio = buildProductStudioRecords(current, proposal, businessId, now, productProduction.localAssetFiles, operatingBundle.publishingPackage, productProduction);
       const productRun: ProductProductionRun = { ...productProduction.run, previewId: productStudio.preview.id };
       const productReadinessGate: ProductReadinessGate = { ...productProduction.readinessGate, previewId: productStudio.preview.id };
@@ -6614,7 +8351,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             ...operatingBundle.cockpit,
             localAssetFileIds: [...productLocalFileIds, ...operatingBundle.cockpit.localAssetFileIds],
             executionReceiptIds: [...productProduction.receipts.map((receipt) => receipt.id), ...operatingBundle.cockpit.executionReceiptIds],
-            nextBestActions: ["Open Product Studio and inspect the real local product files.", ...operatingBundle.cockpit.nextBestActions],
+            nextBestActions: ["Product Factory is running. Watch Tasks/Guild Office, then inspect Product Studio when files are ready.", ...operatingBundle.cockpit.nextBestActions],
           },
           ...current.approvedBusinessCockpits,
         ],
@@ -6661,10 +8398,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             id: id("tl-chat-business-approved"),
             role: "teamleader",
-            content:
-              productProduction.run.status === "complete"
-                ? `Approved. I promoted "${quest.title}" into an active business and the Real Product Factory wrote ${productProduction.fileRecords.length} local product file(s) under ${productProduction.manifest.rootPath}. Runtime: ${productProduction.run.runtimeMode.replace(/_/g, " ")}. Publishing, spending, messaging, connector execution, login, launch, and form submission are still approval-gated.`
-                : `Approved. I promoted "${quest.title}" into an active business, but the Real Product Factory is blocked before product files are accepted: ${productProduction.run.buildError || productProduction.readinessGate.summary}. No fallback product was created. Fix the blocked agent/file step from Product Studio, then regenerate.`,
+            content: `Approved. I promoted "${quest.title}" into an active business and started the Product Factory in the background. Watch Tasks or Guild Office for agent progress; Product Studio will show the exact local product files when QA passes. Publishing, spending, messaging, connector execution, login, launch, and form submission are still approval-gated.`,
             createdAt: now,
             mode: "local",
             relatedApprovedBusinessId: businessId,
@@ -6676,11 +8410,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("log-business-approved"),
             category: "quest",
             title: "Business proposal approved",
-            detail:
-              productProduction.run.status === "complete"
-                ? `${quest.title} is now active. Real Product Factory wrote ${productProduction.fileRecords.length} local product file record(s). No external action executed.`
-                : `${quest.title} is now active, but real product generation is blocked: ${productProduction.run.buildError || productProduction.readinessGate.summary}. No fallback product was accepted.`,
-            severity: productProduction.run.status === "complete" ? "success" : "warning",
+            detail: `${quest.title} is now active. Product Factory queued ${productProduction.run.requiredFileNames?.length ?? 0} required local file(s) and returned immediately. No external action executed.`,
+            severity: "success",
             createdAt: now,
             relatedQuestId: questId,
           } satisfies ActivityLog,
@@ -6688,16 +8419,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         ].slice(0, 80),
         dashboardSummary: {
           ...current.dashboardSummary,
-          latestTeamLeaderRecommendation:
-            productProduction.run.status === "complete"
-              ? `${quest.title} is active. Open Product Studio to inspect the generated local product files. External execution remains approval-gated.`
-              : `${quest.title} is active, but product creation is blocked. Open Product Studio, fix the blocked real OpenClaw build, then regenerate.`,
+          latestTeamLeaderRecommendation: `${quest.title} is active. Product Factory is running locally; inspect Tasks/Guild Office for progress and Product Studio for the completed product.`,
         },
       };
-      await persistOptimistic(next);
+      dataRef.current = next;
+      setData(next);
+      void saveSnapshot(next).catch((error) => {
+        console.error("Failed to persist approved business before Product Factory start", error);
+      });
+      startProductFactoryRun(productRun.id);
       return businessId;
     },
-    [persistOptimistic],
+    [persistOptimistic, saveSnapshot, startProductFactoryRun],
   );
 
   const regenerateProductWithAgents = useCallback(
@@ -6711,7 +8444,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (!proposal) throw new Error("Source proposal not found.");
       const now = new Date().toISOString();
       const questId = business.questId ?? proposal.questId ?? id("quest-product-regenerate");
-      const productProduction = await buildRealProductProductionBundle(current, proposal, business.id, questId, now);
+      const preflight = await ensureRealOpenClawProductFactoryPreflight(current);
+      const productProduction = await buildRealProductProductionBundle(
+        {
+          ...current,
+          agents: applyProfilesToAgents(current.agents, preflight.profiles, current.userSettings),
+          openClawRuntimeStatus: preflight.gateway,
+        },
+        proposal,
+        business.id,
+        questId,
+        now,
+      );
       const existingPublishingPackage =
         (preview.publishingPackageId ? current.publishingPackages.find((item) => item.id === preview.publishingPackageId) : undefined) ??
         current.publishingPackages.find((item) => item.businessId === business.id) ??
@@ -6733,11 +8477,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const productStudio = buildProductStudioRecords(current, proposal, business.id, now, productProduction.localAssetFiles, existingPublishingPackage, productProduction);
       const productRun: ProductProductionRun = { ...productProduction.run, previewId: productStudio.preview.id };
       const productReadinessGate: ProductReadinessGate = { ...productProduction.readinessGate, previewId: productStudio.preview.id };
+      const productRunAccepted = productRunIsAcceptedReal(productProduction.run);
       const oldPreviewIds = new Set([preview.id]);
       const oldBlueprintIds = new Set([preview.blueprintId]);
       const oldGateIds = new Set(preview.approvalGateStateId ? [preview.approvalGateStateId] : []);
       const next: AppDataState = {
         ...current,
+        agents: applyProfilesToAgents(current.agents, preflight.profiles, current.userSettings),
+        openClawRuntimeStatus: preflight.gateway,
         productTracks: [productProduction.track, ...current.productTracks],
         productProductionRuns: [productRun, ...current.productProductionRuns],
         productAgentArtifacts: [...productProduction.artifacts, ...current.productAgentArtifacts],
@@ -6784,7 +8531,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             id: id("tl-chat-product-regenerated"),
             role: "teamleader",
             content:
-              productProduction.run.status === "complete"
+              productRunAccepted
                 ? `I regenerated the local product package for "${business.name}". Product files were written under ${productProduction.manifest.rootPath}. Runtime: ${productProduction.run.runtimeMode.replace(/_/g, " ")}. Nothing was published, submitted, messaged, purchased, or spent.`
                 : `I tried to regenerate "${business.name}", but the Real Product Factory is blocked before files are accepted: ${productProduction.run.buildError || productProduction.readinessGate.summary}. No fallback product was created, and nothing external happened.`,
             createdAt: now,
@@ -6799,10 +8546,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             category: "system",
             title: "Real Product Factory regenerated product",
             detail:
-              productProduction.run.status === "complete"
+              productRunAccepted
                 ? `${business.name}: ${productProduction.fileRecords.length} local product file record(s) written at ${productProduction.manifest.rootPath}.`
                 : `${business.name}: product regeneration blocked before accepted files were created. ${productProduction.run.buildError || productProduction.readinessGate.summary}`,
-            severity: productProduction.run.status === "complete" ? "success" : "warning",
+            severity: productRunAccepted ? "success" : "warning",
             createdAt: now,
             relatedQuestId: business.questId,
           } satisfies ActivityLog,
@@ -6811,7 +8558,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         dashboardSummary: {
           ...current.dashboardSummary,
           latestTeamLeaderRecommendation:
-            productProduction.run.status === "complete"
+            productRunAccepted
               ? `${business.name} product files were regenerated. Inspect Product Studio before any publish approval.`
               : `${business.name} product regeneration is blocked. Product Studio shows the failed agent/file step and no fallback draft is accepted.`,
         },
@@ -7015,15 +8762,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const manifest = preview.fileManifestId ? current.productFileManifests.find((item) => item.id === preview.fileManifestId) : undefined;
       const writtenFiles = manifest ? current.productFileRecords.filter((file) => manifest.fileIds.includes(file.id) && file.status === "written") : [];
       const buildBlockedReason =
-        productionRun?.status === "blocked"
-          ? productionRun.buildError ?? "Real OpenClaw product build is blocked."
-          : !productionRun || productionRun.status !== "complete"
+        productionRun && !productRunIsAcceptedReal(productionRun)
+          ? productionRun.buildError ?? (productRunHasFallback(productionRun) ? "Fallback Local - Not Accepted. Run the real gateway-backed Product Factory before local draft approval." : "Real OpenClaw product build is blocked or incomplete.")
+          : !productionRun
             ? "Real OpenClaw product build is not complete."
             : !manifest || manifest.status !== "written" || writtenFiles.length === 0
               ? "Real local product files do not exist yet."
               : "";
       if (buildBlockedReason) {
-        await persistOptimistic({
+        await persistOptimisticSlices({
           ...current,
           approvalGateStates: current.approvalGateStates.map((item) =>
             item.id === preview.approvalGateStateId
@@ -7049,7 +8796,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             } satisfies ActivityLog,
             ...current.activityLogs,
           ].slice(0, 80),
-        });
+        }, ["approvalGateStates", "activityLogs"]);
         return;
       }
       const payloadPreview = buildPublishPayloadPreview(current, preview, now);
@@ -7069,7 +8816,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         nextAction: "Prepare a publish approval only if the exact product preview looks right.",
         createdAt: now,
       };
-      await persistOptimistic({
+      await persistOptimisticSlices({
         ...current,
         productPreviews: current.productPreviews.map((item) =>
           item.id === previewId
@@ -7126,9 +8873,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           } satisfies ActivityLog,
           ...current.activityLogs,
         ].slice(0, 80),
-      });
+      }, [
+        "productPreviews",
+        "productDraftApprovals",
+        "productBlueprints",
+        "publishPayloadPreviews",
+        "executionReceipts",
+        "approvalGateStates",
+        "activityLogs",
+      ]);
     },
-    [persistOptimistic],
+    [persistOptimisticSlices],
   );
 
   const requestProductRevision = useCallback(
@@ -7265,9 +9020,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const productionRun = preview.productionRunId ? current.productProductionRuns.find((item) => item.id === preview.productionRunId) : undefined;
       const manifest = preview.fileManifestId ? current.productFileManifests.find((item) => item.id === preview.fileManifestId) : undefined;
       const writtenFiles = manifest ? current.productFileRecords.filter((file) => manifest.fileIds.includes(file.id) && file.status === "written") : [];
-      const blockedReason = productionRun?.status === "blocked"
-        ? productionRun.buildError ?? "Real OpenClaw product build is blocked. Retry the build before requesting publish approval."
-        : !productionRun || productionRun.status !== "complete"
+      const blockedReason = productionRun && !productRunIsAcceptedReal(productionRun)
+        ? productionRun.buildError ?? (productRunHasFallback(productionRun) ? "Fallback Local - Not Accepted. Retry the real gateway-backed Product Factory before requesting publish approval." : "Real OpenClaw product build is blocked or incomplete.")
+        : !productionRun
           ? "Real OpenClaw product build must complete before a publish approval can be requested."
           : !manifest || manifest.status !== "written" || writtenFiles.length === 0
             ? "Real local product files must exist before a publish approval can be requested."
@@ -7281,7 +9036,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
               ? `Missing product items: ${preview.missingItems.join(", ")}`
               : "";
       if (blockedReason) {
-        await persistOptimistic({
+        await persistOptimisticSlices({
           ...current,
           approvalGateStates: current.approvalGateStates.map((item) =>
             item.id === preview.approvalGateStateId
@@ -7307,7 +9062,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             } satisfies ActivityLog,
             ...current.activityLogs,
           ].slice(0, 80),
-        });
+        }, ["approvalGateStates", "activityLogs"]);
         return "";
       }
       const payloadPreview = preview.publishPayloadPreviewId
@@ -7353,7 +9108,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         nextAction: "Open Approvals and inspect the exact publish payload.",
         createdAt: now,
       };
-      await persistOptimistic({
+      await persistOptimisticSlices({
         ...current,
         approvalRequests: [approval, ...current.approvalRequests],
         publishPayloadPreviews: current.publishPayloadPreviews.some((item) => item.id === payloadPreview.id)
@@ -7396,10 +9151,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           } satisfies ActivityLog,
           ...current.activityLogs,
         ],
-      });
+      }, [
+        "approvalRequests",
+        "publishPayloadPreviews",
+        "productPreviews",
+        "approvalGateStates",
+        "platformExecutionPackages",
+        "publishingPackages",
+        "executionReceipts",
+        "activityLogs",
+      ]);
       return approvalId;
     },
-    [persistOptimistic],
+    [persistOptimisticSlices],
   );
 
   const preparePlatformPublishApproval = useCallback(
@@ -9449,13 +11213,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     opportunityIntervalRef.current = window.setInterval(() => {
-      setData((current) => {
-        const next = advanceOpportunityWorkState(current);
-        if (!next) return current;
-        dataRef.current = next;
-        void persistenceService.saveState(next).then(setAdapter);
-        return next;
-      });
+      const current = dataRef.current;
+      const hasActiveHunt = current.opportunityHunts.some((hunt) => !["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status));
+      if (!hasActiveHunt) return;
+      const next = advanceOpportunityWorkState(current);
+      if (!next) return;
+      dataRef.current = next;
+      setData(next);
+      void persistenceService.saveState(next).then(setAdapter);
     }, 4_000);
 
     return () => {
@@ -10047,3 +11812,4 @@ export function useAppData() {
   }
   return context;
 }
+

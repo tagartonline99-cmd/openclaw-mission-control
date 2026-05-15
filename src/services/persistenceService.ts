@@ -643,12 +643,14 @@ export const entityConfigs: EntityConfig[] = [
   { stateKey: "publishPayloadPreviews", tableName: "publish_payload_previews" },
   { stateKey: "approvalGateStates", tableName: "approval_gate_states" },
   { stateKey: "productTracks", tableName: "product_tracks" },
-  { stateKey: "productProductionRuns", tableName: "product_production_runs" },
   { stateKey: "productAgentArtifacts", tableName: "product_agent_artifacts" },
   { stateKey: "productFileManifests", tableName: "product_file_manifests" },
   { stateKey: "productFileRecords", tableName: "product_file_records" },
   { stateKey: "productGenerationReceipts", tableName: "product_generation_receipts" },
   { stateKey: "productReadinessGates", tableName: "product_readiness_gates" },
+  // Persist file records and readiness first so external acceptance readers never see a completed run
+  // before the product files it points at are durable.
+  { stateKey: "productProductionRuns", tableName: "product_production_runs" },
   { stateKey: "agentEvidenceTrails", tableName: "agent_evidence_trails" },
   { stateKey: "agentEvidenceItems", tableName: "agent_evidence_items" },
   { stateKey: "approvalActionHints", tableName: "approval_action_hints" },
@@ -1016,6 +1018,10 @@ async function loadTable<T>(db: SqlDatabase, tableName: string): Promise<T[]> {
 }
 
 async function saveSqlState(db: SqlDatabase, state: AppDataState) {
+  // Saves are serialized by AppDataContext before they reach this function. Avoid
+  // explicit BEGIN/COMMIT here: the Tauri SQL plugin may wrap individual execute
+  // calls internally, and nested transactions caused installed-app saves to fail
+  // under Product Factory load.
   for (const config of entityConfigs) {
     await replaceTable(db, config.tableName, state[config.stateKey]);
   }
@@ -1749,6 +1755,22 @@ function ensureCanonicalOpenClawRoster(state: AppDataState) {
       ...((state.userSettings ?? baseline.userSettings).obsidianDefaultFolders ?? {}),
     },
   };
+  if (state.userSettings.obsidianVaultPath === "C:\\Users\\User\\Obsidian\\OpenClaw") {
+    state.userSettings.obsidianVaultPath = "C:\\Users\\User\\.openclaw\\obsidian-vault";
+  }
+  if (state.userSettings.openClawGatewayPort === 18789) {
+    state.userSettings.openClawGatewayPort = 19789;
+  }
+  if (state.userSettings.openClawEndpoint === "ws://127.0.0.1:18789") {
+    state.userSettings.openClawEndpoint = "ws://127.0.0.1:19789";
+  }
+  if (state.openClawRuntimeStatus?.endpoint === "ws://127.0.0.1:18789") {
+    state.openClawRuntimeStatus = {
+      ...state.openClawRuntimeStatus,
+      endpoint: "ws://127.0.0.1:19789",
+      notes: state.openClawRuntimeStatus.notes.replace("loopback gateway", "mission-control loopback gateway"),
+    };
+  }
 
   const savedAgents = Array.isArray(state.agents) ? state.agents : [];
   const savedByName = new Map(savedAgents.map((agent) => [agent.name, agent]));
@@ -1873,6 +1895,155 @@ function reconcileCompletedOpportunityWork(state: AppDataState) {
       ...state.activityLogs,
     ].slice(0, 80);
   }
+}
+
+function reconcileCompletedProductFactoryWork(state: AppDataState) {
+  const terminalRuns = new Map(
+    state.productProductionRuns
+      .filter((run) => ["complete", "blocked", "blocked_fallback_available", "fallback_complete"].includes(run.status))
+      .map((run) => [run.id, run]),
+  );
+  if (terminalRuns.size === 0) return;
+
+  const now = nowIso();
+  const reconciledTaskIds = new Set<string>();
+  state.businessTasks = state.businessTasks.map((task) => {
+    if (!task.productRunId || !terminalRuns.has(task.productRunId) || !unfinishedTaskStatuses.has(task.status) || task.approvalRequired) return task;
+    const run = terminalRuns.get(task.productRunId);
+    const nextStatus: BusinessTask["status"] = run?.status === "complete" && run.runtimeMode === "real_openclaw" ? "done" : "blocked";
+    reconciledTaskIds.add(task.id);
+    const completionLog =
+      nextStatus === "done"
+        ? `${agentDisplayName(task.agentId)} product step reconciled from completed Product Factory run.`
+        : `${agentDisplayName(task.agentId)} product step reconciled from blocked Product Factory run.`;
+    return {
+      ...task,
+      status: nextStatus,
+      progress: nextStatus === "done" ? 100 : Math.max(task.progress, 70),
+      logs: [completionLog, ...task.logs.filter((log) => log !== completionLog)].slice(0, 6),
+      completedAt: nextStatus === "done" ? task.completedAt ?? now : task.completedAt,
+      updatedAt: now,
+    };
+  });
+
+  if (reconciledTaskIds.size === 0) return;
+
+  state.agentWorkSessions = state.agentWorkSessions.map((session) => {
+    if (!session.taskId || !reconciledTaskIds.has(session.taskId)) return session;
+    const task = state.businessTasks.find((item) => item.id === session.taskId);
+    return {
+      ...session,
+      status: task?.status === "blocked" ? "blocked" : "idle",
+      motion: task?.status === "blocked" ? "blocked" : "idle",
+      currentTask: task?.status === "blocked" ? "Product Factory step needs repair." : "Finished Product Factory step.",
+      currentOutput: task?.currentArtifact || "Product Factory artifact ready",
+      progress: task?.status === "blocked" ? Math.max(session.progress, 70) : 100,
+      updatedAt: now,
+    };
+  });
+
+  state.guildOfficeStations = state.guildOfficeStations.map((station) => {
+    if (!station.taskId || !reconciledTaskIds.has(station.taskId)) return station;
+    const task = state.businessTasks.find((item) => item.id === station.taskId);
+    return {
+      ...station,
+      status: task?.status === "blocked" ? "blocked" : "idle",
+      motion: task?.status === "blocked" ? "blocked" : "idle",
+      currentTask: task?.status === "blocked" ? "Product Factory step needs repair." : "Finished Product Factory step.",
+      lastOutput: task?.currentArtifact || "Product Factory artifact ready",
+      progress: task?.status === "blocked" ? Math.max(station.progress, 70) : 100,
+      updatedAt: now,
+    };
+  });
+}
+
+function recoverInterruptedProductFactoryRuns(state: AppDataState) {
+  const now = nowIso();
+  const nowMs = Date.now();
+  const interruptedAfterMs = 5 * 60 * 1000;
+  const interruptedRunIds = new Set<string>();
+
+  state.productProductionRuns = state.productProductionRuns.map((run) => {
+    if (!["queued", "running"].includes(run.status)) return run;
+    const updatedMs = Date.parse(run.updatedAt || run.startedAt || "");
+    if (!updatedMs || nowMs - updatedMs < interruptedAfterMs) return run;
+    interruptedRunIds.add(run.id);
+    return {
+      ...run,
+      status: "blocked",
+      runtimeMode: "blocked",
+      buildError: "Product Factory was interrupted before completion. Regenerate the local product package to continue.",
+      summary: "Interrupted Product Factory run recovered safely. No external action ran.",
+      completedAt: now,
+      updatedAt: now,
+    } satisfies ProductProductionRun;
+  });
+
+  if (interruptedRunIds.size === 0) return;
+
+  state.productReadinessGates = state.productReadinessGates.map((gate) =>
+    interruptedRunIds.has(gate.runId)
+      ? {
+          ...gate,
+          status: "blocked",
+          blockedReasons: ["Product Factory was interrupted before completion."],
+          summary: "Regenerate the local product package before review or publishing approval.",
+          updatedAt: now,
+        }
+      : gate,
+  );
+
+  state.businessTasks = state.businessTasks.map((task) =>
+    task.productRunId && interruptedRunIds.has(task.productRunId) && unfinishedTaskStatuses.has(task.status)
+      ? {
+          ...task,
+          status: "blocked",
+          progress: Math.max(task.progress, 70),
+          logs: ["Recovered as interrupted Product Factory work. Regenerate to continue.", ...task.logs].slice(0, 6),
+          updatedAt: now,
+        }
+      : task,
+  );
+
+  state.agentWorkSessions = state.agentWorkSessions.map((session) =>
+    session.productRunId && interruptedRunIds.has(session.productRunId)
+      ? {
+          ...session,
+          status: "blocked",
+          motion: "blocked",
+          currentTask: "Product Factory was interrupted before completion.",
+          currentOutput: "Regenerate local product package",
+          progress: Math.max(session.progress, 70),
+          updatedAt: now,
+        }
+      : session,
+  );
+
+  state.guildOfficeStations = state.guildOfficeStations.map((station) => {
+    const task = station.taskId ? state.businessTasks.find((item) => item.id === station.taskId) : undefined;
+    if (!task?.productRunId || !interruptedRunIds.has(task.productRunId)) return station;
+    return {
+      ...station,
+      status: "blocked",
+      motion: "blocked",
+      currentTask: "Product Factory was interrupted before completion.",
+      lastOutput: "Regenerate local product package",
+      progress: Math.max(station.progress, 70),
+      updatedAt: now,
+    };
+  });
+
+  state.activityLogs = [
+    {
+      id: `log-product-factory-interrupted-${now}`,
+      category: "system",
+      title: "Interrupted Product Factory recovered safely",
+      detail: `${interruptedRunIds.size} unfinished local product run(s) were marked blocked after app restart. No external action ran.`,
+      severity: "warning",
+      createdAt: now,
+    } satisfies ActivityLog,
+    ...state.activityLogs,
+  ].slice(0, 80);
 }
 
 function normalizePhase6BState(state: AppDataState) {
@@ -2006,6 +2177,8 @@ function normalizePhase6BState(state: AppDataState) {
     };
   });
   reconcileCompletedOpportunityWork(state);
+  recoverInterruptedProductFactoryRuns(state);
+  reconcileCompletedProductFactoryWork(state);
   ensureCompleteGuildOfficeStations(state);
   ensureProductPreviewRecords(state);
   ensureRenderedProductPreviewRecords(state);
@@ -2067,21 +2240,13 @@ export const persistenceService = {
     if (db) {
       const state = await loadSqlState(db);
       normalizePhase6BState(state);
-      if (markInterruptedCommands(state)) {
-        await saveSqlState(db, state);
-      } else {
-        await saveSqlState(db, state);
-      }
+      markInterruptedCommands(state);
       return { state, adapter: "tauri-sqlite" };
     }
 
     const state = loadBrowserState();
     normalizePhase6BState(state);
-    if (markInterruptedCommands(state)) {
-      saveBrowserState(state);
-    } else {
-      saveBrowserState(state);
-    }
+    markInterruptedCommands(state);
     return { state, adapter: "browser-local-storage" };
   },
 
@@ -2090,6 +2255,33 @@ export const persistenceService = {
     if (db) {
       await migrate(db);
       await saveSqlState(db, state);
+      return "tauri-sqlite";
+    }
+
+    saveBrowserState(state);
+    return "browser-local-storage";
+  },
+
+  async saveStateSlices(state: AppDataState, keys: Array<keyof AppDataState>): Promise<StorageAdapter> {
+    const db = await getSqlDatabase();
+    if (db) {
+      await migrate(db);
+      const keySet = new Set<keyof AppDataState>(keys);
+      for (const config of entityConfigs) {
+        if (keySet.has(config.stateKey)) {
+          await replaceTable(db, config.tableName, state[config.stateKey]);
+        }
+      }
+      for (const config of singletonConfigs) {
+        if (keySet.has(config.stateKey)) {
+          await upsertRecord(db, config.tableName, state[config.stateKey], config.id);
+        }
+      }
+      if (keySet.has("researchQueue")) await writeMetadata(db, "research_queue", JSON.stringify(state.researchQueue));
+      if (keySet.has("experimentQueue")) await writeMetadata(db, "experiment_queue", JSON.stringify(state.experimentQueue));
+      if (keySet.has("improvementQueue")) await writeMetadata(db, "improvement_queue", JSON.stringify(state.improvementQueue));
+      if (keySet.has("safetyRules")) await writeMetadata(db, "safety_rules", JSON.stringify(state.safetyRules));
+      await writeMetadata(db, SEED_METADATA_KEY, "true");
       return "tauri-sqlite";
     }
 

@@ -37,6 +37,7 @@ export function AgentEvidenceTrailPanel({
   taskId?: string;
 }) {
   const { data } = useAppData();
+  const itemLimit = compact ? 2 : 8;
   const storedTrails = data.agentEvidenceTrails
     .filter((trail) => {
       if (trailId) return trail.id === trailId;
@@ -95,7 +96,7 @@ export function AgentEvidenceTrailPanel({
         {visibleTrails.map((trail: AgentEvidenceTrail) => {
           const fallbackTask = "fallbackTaskId" in trail && trail.fallbackTaskId ? data.businessTasks.find((task) => task.id === trail.fallbackTaskId) : undefined;
           const items = data.agentEvidenceItems.filter((item) => trail.itemIds.includes(item.id));
-          const visibleItems = items.length || !fallbackTask
+          const trailItems = items.length || !fallbackTask
             ? items
             : [
                 {
@@ -111,6 +112,7 @@ export function AgentEvidenceTrailPanel({
                   createdAt: fallbackTask.startedAt ?? fallbackTask.updatedAt,
                 },
               ];
+          const visibleItems = trailItems.slice(0, itemLimit);
           const agent = data.agents.find((item) => item.id === trail.agentId);
           return (
             <div key={trail.id} className="rounded-lg border border-white/10 bg-black/25 p-4">
@@ -123,9 +125,14 @@ export function AgentEvidenceTrailPanel({
                   <h3 className="mt-3 font-display text-lg font-semibold text-stone-100">{trail.title}</h3>
                   <p className="mt-1 text-sm text-slate-400">{agent?.name ?? trail.agentId} / {formatDateTime(trail.updatedAt)}</p>
                 </div>
-                <Badge tone="slate">{visibleItems.length} item{visibleItems.length === 1 ? "" : "s"}</Badge>
+                <Badge tone="slate">{trailItems.length} item{trailItems.length === 1 ? "" : "s"}</Badge>
               </div>
               <p className="mt-3 text-sm leading-6 text-slate-300">{trail.summary}</p>
+              {trailItems.length > visibleItems.length ? (
+                <p className="mt-3 rounded-md border border-teal-300/20 bg-teal-400/8 p-2 text-xs text-teal-100">
+                  Current-first evidence view: showing {visibleItems.length} of {trailItems.length} items.
+                </p>
+              ) : null}
               <div className="mt-4 space-y-3">
                 {visibleItems.map((item) => {
                   const citations = data.evidenceCitations.filter((citation) => item.citationIds.includes(citation.id));

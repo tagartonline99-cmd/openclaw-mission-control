@@ -17,5 +17,6 @@ src-tauri/target
 .DS_Store
 Thumbs.db
 acceptance-backups/
+test-results/
 release-artifacts/
 latest.json

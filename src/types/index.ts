@@ -250,8 +250,8 @@ export type ProductTrackType =
   | "sop_checklist_pack"
   | "lead_gen_site"
   | "micro_product";
-export type ProductProductionRunStatus = "running" | "complete" | "blocked" | "fallback_complete";
-export type ProductAgentArtifactStatus = "complete" | "blocked" | "fallback_local";
+export type ProductProductionRunStatus = "queued" | "running" | "complete" | "blocked" | "blocked_fallback_available" | "fallback_complete";
+export type ProductAgentArtifactStatus = "complete" | "blocked" | "fallback_local" | "fallback_not_accepted";
 export type ProductRuntimeMode = "real_openclaw" | "real_tavily" | "local_file" | "fallback_local" | "blocked";
 export type ProductFileRecordStatus = "planned" | "written" | "blocked" | "virtual";
 export type ProductPreviewStatus = "needs_product_review" | "local_draft_approved" | "revision_requested" | "blocked";
@@ -834,6 +834,7 @@ export interface BusinessTask {
   huntId?: string;
   proposalId?: string;
   businessId?: string;
+  productRunId?: string;
   agentId: MissionAgentId;
   title: string;
   objective: string;
@@ -858,6 +859,7 @@ export interface AgentWorkSession {
   huntId?: string;
   proposalId?: string;
   businessId?: string;
+  productRunId?: string;
   taskId?: string;
   stationId: string;
   status: AgentWorkSessionStatus;
@@ -1199,7 +1201,7 @@ export interface ProductReadinessGate {
   businessId: string;
   proposalId: string;
   previewId?: string;
-  status: "ready_for_review" | "needs_revision" | "blocked";
+  status: "generating" | "ready_for_review" | "needs_revision" | "blocked";
   requiredDeliverables: string[];
   missingItems: string[];
   blockedReasons: string[];

@@ -18,14 +18,27 @@ const groups: Array<{ status: BusinessTaskStatus; title: string; icon: React.Rea
   { status: "done", title: "Done", icon: <CheckCircle2 className="h-4 w-4 text-emerald-100" />, tone: "emerald" },
 ];
 
+const TASK_HISTORY_LIMIT = 8;
+const UNCAPPED_TASK_STATUSES = new Set<BusinessTaskStatus>(["now_working", "blocked", "needs_approval"]);
+
 function taskAgentName(agentId: string) {
   return agentId.replace("agent-", "Agent").replace("teamleader1a", "TeamLeader1A");
+}
+
+function byNewestTaskUpdate(left: { updatedAt?: string; startedAt?: string }, right: { updatedAt?: string; startedAt?: string }) {
+  return (right.updatedAt ?? right.startedAt ?? "").localeCompare(left.updatedAt ?? left.startedAt ?? "");
 }
 
 export function BusinessTasksBoard() {
   const { data } = useAppData();
   const [teamLeaderOnly, setTeamLeaderOnly] = useState(true);
+  const [expandedGroups, setExpandedGroups] = useState<Partial<Record<BusinessTaskStatus, boolean>>>({});
   const displayTasks = useMemo(() => {
+    const activeHuntIds = new Set(
+      data.opportunityHunts
+        .filter((hunt) => !["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status))
+        .map((hunt) => hunt.id),
+    );
     const completedHuntIds = new Set(
       data.opportunityHunts
         .filter((hunt) => ["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status) || /finished the proposal|review it in mission briefs|proposal draft exists/i.test(hunt.currentPhase ?? ""))
@@ -39,17 +52,20 @@ export function BusinessTasksBoard() {
     return data.businessTasks.map((task) => {
       const staleFinished =
         task.status !== "done" &&
+        !(task.huntId && activeHuntIds.has(task.huntId)) &&
         ((task.huntId && completedHuntIds.has(task.huntId)) || (task.proposalId && completedProposalIds.has(task.proposalId))) &&
         !task.approvalRequired;
       return staleFinished ? { ...task, status: "done" as const, progress: 100 } : task;
-    });
+    }).sort(byNewestTaskUpdate);
   }, [data.businessProposals, data.businessTasks, data.opportunityHunts]);
   const visibleTasks = useMemo(
     () => teamLeaderOnly ? displayTasks.filter((task) => task.huntId || task.proposalId || task.businessId) : displayTasks,
     [displayTasks, teamLeaderOnly],
   );
   const [selectedTaskId, setSelectedTaskId] = useState(visibleTasks[0]?.id ?? "");
-  const selectedTask = visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks[0];
+  const selectedTask = visibleTasks.find((task) => task.id === selectedTaskId) ?? visibleTasks.find((task) => task.status === "now_working" || task.approvalRequired) ?? visibleTasks[0];
+  const selectedTaskLogs = selectedTask?.logs.slice(0, TASK_HISTORY_LIMIT) ?? [];
+  const hiddenSelectedLogCount = (selectedTask?.logs.length ?? 0) - selectedTaskLogs.length;
   const taskCounts = useMemo(
     () => Object.fromEntries(groups.map((group) => [group.status, visibleTasks.filter((task) => task.status === group.status).length])),
     [visibleTasks],
@@ -78,7 +94,7 @@ export function BusinessTasksBoard() {
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-white/10 bg-black/25 p-3">
           <div>
             <p className="text-sm font-semibold text-stone-100">Task view filter</p>
-            <p className="text-xs text-slate-400">Keep primary work focused on TeamLeader-created tasks and hide legacy/sample clutter.</p>
+            <p className="text-xs text-slate-400">Recent-first task view keeps active, blocked, and approval-needed records visible while capping older done/queued history.</p>
           </div>
           <button
             type="button"
@@ -105,6 +121,9 @@ export function BusinessTasksBoard() {
         {groups.map((group) => {
           const tasks = visibleTasks.filter((task) => task.status === group.status);
           if (tasks.length === 0) return null;
+          const groupExpanded = !!expandedGroups[group.status];
+          const visibleGroupTasks = UNCAPPED_TASK_STATUSES.has(group.status) || groupExpanded ? tasks : tasks.slice(0, TASK_HISTORY_LIMIT);
+          const hiddenGroupTaskCount = tasks.length - visibleGroupTasks.length;
           return (
             <Card key={group.status}>
               <CardHeader>
@@ -114,7 +133,7 @@ export function BusinessTasksBoard() {
                 </CardTitle>
               </CardHeader>
               <CardContent className="grid gap-3 lg:grid-cols-2">
-                {tasks.map((task) => {
+                {visibleGroupTasks.map((task) => {
                   const proposal = data.businessProposals.find((item) => item.id === task.proposalId);
                   const business = data.approvedBusinesses.find((item) => item.id === task.businessId);
                   const budgetPlan = proposal?.budgetPlan ?? business?.budgetPlan;
@@ -156,6 +175,20 @@ export function BusinessTasksBoard() {
                     </button>
                   );
                 })}
+                {hiddenGroupTaskCount > 0 ? (
+                  <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100 lg:col-span-2">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <span>Recent-first history cap: showing {visibleGroupTasks.length} of {tasks.length} {group.title.toLowerCase()} tasks.</span>
+                      <button
+                        type="button"
+                        className="rounded-md border border-teal-300/30 bg-teal-400/10 px-3 py-2 text-xs font-semibold text-teal-100 transition hover:bg-teal-400/15"
+                        onClick={() => setExpandedGroups((current) => ({ ...current, [group.status]: !current[group.status] }))}
+                      >
+                        {groupExpanded ? "Show fewer tasks" : "View all task history"}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
           );
@@ -209,11 +242,16 @@ export function BusinessTasksBoard() {
               </div>
               <div className="space-y-2">
                 <p className="text-xs font-semibold uppercase text-slate-500">Live log</p>
-                {selectedTask.logs.map((log) => (
+                {selectedTaskLogs.map((log) => (
                   <div key={log} className="rounded-md border border-white/10 bg-black/25 p-3 text-sm text-slate-300">
                     {log}
                   </div>
                 ))}
+                {hiddenSelectedLogCount > 0 ? (
+                  <p className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-xs text-teal-100">
+                    Showing the latest {selectedTaskLogs.length} log entries; {hiddenSelectedLogCount} older entries are capped.
+                  </p>
+                ) : null}
               </div>
               {selectedTask.proposalId ? (
                 <a className="inline-flex items-center gap-2 text-sm font-semibold text-teal-100 hover:text-teal-50" href={`#/mission-briefs?proposal=${selectedTask.proposalId}`}>

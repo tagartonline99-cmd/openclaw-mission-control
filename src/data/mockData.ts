@@ -2195,18 +2195,18 @@ export const openClawPermissions: OpenClawPermission[] = [
 export const openClawRuntimeStatus: OpenClawRuntimeStatus = {
   id: "runtime-mock",
   status: "offline",
-  endpoint: "ws://127.0.0.1:18789",
+  endpoint: "ws://127.0.0.1:19789",
   lastCheckedAt: "2026-05-09T11:20:00+08:00",
   nextCheckAt: "2026-05-09T12:20:00+08:00",
   healthScore: 35,
-  notes: "Real local OpenClaw bridge is available. Refresh status to probe the loopback gateway; starting the gateway requires approval.",
+  notes: "Real local OpenClaw bridge is available. Refresh status to probe the mission-control loopback gateway; starting the gateway requires approval.",
 };
 
 export const userSettings: UserSettings = {
   totalStartingCapital: 500,
   riskTolerance: "medium",
   preferredBusinessModels: ["Content websites", "Affiliate marketing", "Digital products", "Templates", "Newsletters", "SEO projects"],
-  obsidianVaultPath: "C:\\Users\\User\\Obsidian\\OpenClaw",
+  obsidianVaultPath: "C:\\Users\\User\\.openclaw\\obsidian-vault",
   obsidianDefaultFolders: {
     quests: "OpenClaw/Quests",
     research: "OpenClaw/Research",
@@ -2216,8 +2216,8 @@ export const userSettings: UserSettings = {
     reports: "OpenClaw/Reports",
   },
   openClawRuntimePath: "C:\\Users\\User\\.openclaw\\runtime",
-  openClawEndpoint: "ws://127.0.0.1:18789",
-  openClawGatewayPort: 18789,
+  openClawEndpoint: "ws://127.0.0.1:19789",
+  openClawGatewayPort: 19789,
   openClawGatewayStartMode: "prompt",
   defaultOpportunityHuntDepth: "fast",
   openClawRoleMap: {

@@ -2,10 +2,13 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::env;
 use std::fs;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::net::TcpStream;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
 use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -217,8 +220,247 @@ fn npm_program() -> &'static str {
     }
 }
 
+const MISSION_CONTROL_OPENCLAW_PROFILE: &str = "mission-control";
+const MISSION_CONTROL_GATEWAY_PORT: &str = "19789";
+const MISSION_CONTROL_GATEWAY_URL: &str = "ws://127.0.0.1:19789";
+static MISSION_CONTROL_GATEWAY_LAST_OK: OnceLock<Mutex<Option<Instant>>> = OnceLock::new();
+static OPENCLAW_CLI_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+static MISSION_CONTROL_GATEWAY_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+fn mission_control_gateway_cache() -> &'static Mutex<Option<Instant>> {
+    MISSION_CONTROL_GATEWAY_LAST_OK.get_or_init(|| Mutex::new(None))
+}
+
+fn openclaw_cli_lock() -> &'static Mutex<()> {
+    OPENCLAW_CLI_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn mission_control_gateway_start_lock() -> &'static Mutex<()> {
+    MISSION_CONTROL_GATEWAY_START_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+fn mark_mission_control_gateway_ok() {
+    if let Ok(mut last_ok) = mission_control_gateway_cache().lock() {
+        *last_ok = Some(Instant::now());
+    }
+}
+
+fn clear_mission_control_gateway_ok() {
+    if let Ok(mut last_ok) = mission_control_gateway_cache().lock() {
+        *last_ok = None;
+    }
+}
+
+fn mission_control_gateway_recently_ok(max_age: Duration) -> bool {
+    mission_control_gateway_cache()
+        .lock()
+        .ok()
+        .and_then(|last_ok| *last_ok)
+        .is_some_and(|instant| instant.elapsed() <= max_age)
+}
+
+fn mission_control_gateway_port_open() -> bool {
+    ["127.0.0.1:19789", "[::1]:19789"].iter().any(|address| {
+        address
+            .parse()
+            .ok()
+            .and_then(|socket_addr| TcpStream::connect_timeout(&socket_addr, Duration::from_millis(750)).ok())
+            .is_some()
+    })
+}
+
+fn synthetic_gateway_status(ok: bool, detail: &str) -> OpenClawBridgeResult {
+    OpenClawBridgeResult {
+        ok,
+        command: vec![
+            "openclaw-mission-control".into(),
+            "gateway".into(),
+            "tcp-preflight".into(),
+            "--port".into(),
+            MISSION_CONTROL_GATEWAY_PORT.into(),
+        ],
+        stdout: json!({
+            "gateway": {
+                "bindMode": "loopback",
+                "bindHost": "127.0.0.1",
+                "port": 19789,
+                "probeUrl": MISSION_CONTROL_GATEWAY_URL,
+            },
+            "port": {
+                "port": 19789,
+                "status": if ok { "busy" } else { "free" },
+            },
+            "rpc": {
+                "ok": ok,
+                "kind": "tcp-preflight",
+                "capability": if ok { "listener_detected" } else { "unknown" },
+                "url": MISSION_CONTROL_GATEWAY_URL,
+            },
+            "note": detail,
+        })
+        .to_string(),
+        stderr: if ok { String::new() } else { detail.into() },
+        exit_code: Some(if ok { 0 } else { 1 }),
+        timed_out: false,
+    }
+}
+
 fn clamp_timeout(value: Option<u64>, default_seconds: u64, max_seconds: u64) -> u64 {
     value.unwrap_or(default_seconds).clamp(5, max_seconds)
+}
+
+fn safe_session_id(value: &str) -> String {
+    let mut output = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    while output.contains("--") {
+        output = output.replace("--", "-");
+    }
+    let trimmed = output.trim_matches('-').to_string();
+    if trimmed.is_empty() {
+        "mission-control-empty".into()
+    } else if trimmed.len() <= 56 {
+        trimmed
+    } else {
+        let mut hasher = DefaultHasher::new();
+        trimmed.hash(&mut hasher);
+        let suffix = format!("{:08x}", hasher.finish() as u32);
+        let prefix = trimmed.chars().take(47).collect::<String>().trim_matches('-').to_string();
+        format!("{prefix}-{suffix}")
+    }
+}
+
+fn gateway_rpc_ok(result: &OpenClawBridgeResult) -> bool {
+    serde_json::from_str::<Value>(&result.stdout)
+        .ok()
+        .and_then(|value| value.pointer("/rpc/ok").and_then(Value::as_bool))
+        == Some(true)
+}
+
+fn agent_turn_gateway_problem(result: &OpenClawBridgeResult) -> bool {
+    let text = format!("{}\n{}", result.stderr, result.stdout).to_lowercase();
+    result.timed_out
+        || text.contains("embedded fallback")
+        || text.contains("gateway closed")
+        || text.contains("gatewaytransporterror")
+        || text.contains("gateway crashed")
+        || text.contains("gateway target")
+        || text.contains("transport closed")
+        || text.contains("not reachable")
+        || text.contains("token mismatch")
+        || (text.contains("gateway") && (text.contains("fallback") || text.contains("unauthorized") || text.contains("closed")))
+}
+
+fn force_agent_turn_failure_for_gateway_problem(result: &mut OpenClawBridgeResult) {
+    if agent_turn_gateway_problem(result) {
+        result.ok = false;
+        if !result.stderr.to_lowercase().contains("gateway-backed openclaw turn was not accepted") {
+            result.stderr.push_str(
+                "\nMission Control: gateway-backed OpenClaw turn was not accepted. Fallback/local output is recovery only and cannot pass Product Factory proof.\n",
+            );
+        }
+    }
+}
+
+fn concise_bridge_diagnostic(result: &OpenClawBridgeResult) -> String {
+    let stderr = result.stderr.trim();
+    let stdout = result.stdout.trim();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+    format!(
+        "ok={} exitCode={:?} timedOut={} detail={}",
+        result.ok,
+        result.exit_code,
+        result.timed_out,
+        detail.chars().take(420).collect::<String>()
+    )
+}
+
+fn kill_stale_mission_control_gateway_listeners(result: &OpenClawBridgeResult, stdout: &mut String, stderr: &mut String) {
+    let Ok(value) = serde_json::from_str::<Value>(&result.stdout) else {
+        kill_stale_mission_control_gateway_processes(stdout, stderr);
+        return;
+    };
+    let Some(listeners) = value.pointer("/port/listeners").and_then(Value::as_array) else {
+        return;
+    };
+    for listener in listeners {
+        let Some(pid) = listener.get("pid").and_then(Value::as_i64) else {
+            continue;
+        };
+        let command_line = listener
+            .get("commandLine")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_lowercase();
+        let safe_target = command_line.contains("openclaw")
+            && command_line.contains("gateway run")
+            && command_line.contains(MISSION_CONTROL_OPENCLAW_PROFILE)
+            && command_line.contains(MISSION_CONTROL_GATEWAY_PORT);
+        if !safe_target {
+            continue;
+        }
+        #[cfg(windows)]
+        {
+            match Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+            {
+                Ok(status) if status.success() => stdout.push_str(&format!("\nKilled stale mission-control gateway listener PID {pid}.\n")),
+                Ok(status) => stderr.push_str(&format!("\nFailed to kill stale mission-control gateway listener PID {pid}; taskkill exit {:?}.\n", status.code())),
+                Err(error) => stderr.push_str(&format!("\nCould not run taskkill for stale mission-control gateway listener PID {pid}: {error}\n")),
+            }
+        }
+    }
+    kill_stale_mission_control_gateway_processes(stdout, stderr);
+}
+
+#[cfg(windows)]
+fn kill_stale_mission_control_gateway_processes(stdout: &mut String, stderr: &mut String) {
+    let script = r#"
+$processes = Get-CimInstance Win32_Process | Where-Object {
+  $_.CommandLine -like '*openclaw*' -and
+  $_.CommandLine -like '*--profile mission-control*' -and
+  $_.CommandLine -like '*gateway run*' -and
+  $_.CommandLine -like '*--port 19789*'
+}
+foreach ($process in $processes) {
+  Stop-Process -Id $process.ProcessId -Force
+  Write-Output "Killed stale mission-control gateway process $($process.ProcessId)"
+}
+"#;
+    match Command::new("powershell")
+        .args(["-NoProfile", "-NonInteractive", "-Command", script])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+    {
+        Ok(output) => {
+            let out = String::from_utf8_lossy(&output.stdout);
+            let err = String::from_utf8_lossy(&output.stderr);
+            if !out.trim().is_empty() {
+                stdout.push('\n');
+                stdout.push_str(out.trim());
+                stdout.push('\n');
+            }
+            if !output.status.success() || !err.trim().is_empty() {
+                stderr.push_str(&format!("\nMission-control gateway process cleanup warning: {}\n", err.trim()));
+            }
+        }
+        Err(error) => stderr.push_str(&format!("\nCould not run mission-control gateway process cleanup: {error}\n")),
+    }
+}
+
+#[cfg(not(windows))]
+fn kill_stale_mission_control_gateway_processes(_stdout: &mut String, _stderr: &mut String) {
 }
 
 fn reject_control_chars(value: &str, label: &str) -> Result<(), String> {
@@ -229,7 +471,45 @@ fn reject_control_chars(value: &str, label: &str) -> Result<(), String> {
 }
 
 fn reject_blocked_intent(value: &str) -> Result<(), String> {
-    let lower = value.to_lowercase();
+    let mut lower = value.to_lowercase();
+    // Mission Control often passes explicit *negative* safety boundaries to local agents
+    // (for example: "No publishing ... purchases ... without separate approval").
+    // Those guardrail phrases must be allowed through so agents can include the boundary
+    // in local artifacts; actual affirmative/actionable unsafe intent remains blocked below.
+    let allowed_safety_references = [
+        "local-only review artifact. no publishing, spending, messaging, login, launch, connector execution, purchases, or external automation may run without separate approval.",
+        "no publishing, spending, messaging, login, launch, connector execution, purchases, or external automation may run without separate approval",
+        "no browsing, spending, publishing, messaging, login, forms, purchases, connector execution, or external action",
+        "no browsing, spending, publishing, messaging, login, forms, purchases, connector execution, or external actions",
+        "no browsing, spending, publishing, messaging, login, forms, purchases, connector execution, or external work",
+        "no publishing, spend, login, form submission, purchases, messages, or connector execution happened",
+        "no publishing, messaging, spending, login, form submission, purchase, or connector action runs",
+        "no publishing, messaging, spending, login, form submission, purchases, or connector actions run",
+        "no login, forms, purchases, or publishing",
+        "no purchase or spend",
+        "no spending, purchase, paid promotion, or connector execution",
+        "no purchases, paid promotion, login automation, form submission, or connector execution",
+        "no publish, form submission, paid promotion, purchase, or messaging occurs",
+        "do not purchase",
+        "do not log in",
+        "do not submit forms",
+        "do not publish externally",
+        "do not bypass captcha",
+        "do not bypass paywalls",
+        "no login",
+        "no purchases",
+        "no purchase",
+        "no publishing",
+        "no external publishing",
+        "manual login",
+        "approval-gated",
+        "separate approval",
+    ];
+
+    for phrase in allowed_safety_references {
+        lower = lower.replace(phrase, " ");
+    }
+
     let blocked = [
         "--deliver",
         "broadcast",
@@ -846,10 +1126,45 @@ fn validate_channel_target(value: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn run_program(program: &str, args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridgeResult, String> {
+fn bridge_temp_output_paths() -> Result<(PathBuf, PathBuf), String> {
+    let dir = env::temp_dir().join("openclaw-mission-control-bridge");
+    fs::create_dir_all(&dir)
+        .map_err(|error| format!("Could not create OpenClaw bridge temp directory: {error}"))?;
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let base = format!("bridge-{}-{stamp}", std::process::id());
+    Ok((dir.join(format!("{base}.stdout.log")), dir.join(format!("{base}.stderr.log"))))
+}
+
+fn read_and_remove_output(path: &PathBuf) -> String {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    let _ = fs::remove_file(path);
+    text
+}
+
+fn run_program_with_env(
+    program: &str,
+    args: Vec<String>,
+    timeout_seconds: u64,
+    env_overrides: &[(&str, &str)],
+) -> Result<OpenClawBridgeResult, String> {
     let timeout = Duration::from_secs(timeout_seconds);
+    let (stdout_path, stderr_path) = bridge_temp_output_paths()?;
+    let stdout_file = fs::File::create(&stdout_path)
+        .map_err(|error| format!("Could not create OpenClaw stdout temp file: {error}"))?;
+    let stderr_file = fs::File::create(&stderr_path)
+        .map_err(|error| format!("Could not create OpenClaw stderr temp file: {error}"))?;
     let mut command = Command::new(program);
-    command.args(&args).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_file))
+        .stderr(Stdio::from(stderr_file));
+    for (key, value) in env_overrides {
+        command.env(key, value);
+    }
 
     #[cfg(windows)]
     {
@@ -864,16 +1179,24 @@ fn run_program(program: &str, args: Vec<String>, timeout_seconds: u64) -> Result
 
     loop {
         if started.elapsed() > timeout {
+            #[cfg(windows)]
+            {
+                let _ = Command::new("taskkill")
+                    .args(["/PID", &child.id().to_string(), "/T", "/F"])
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .status();
+            }
             let _ = child.kill();
-            let output = child
-                .wait_with_output()
-                .map_err(|error| format!("Failed to collect timed out OpenClaw output: {error}"))?;
+            let status = child
+                .wait()
+                .map_err(|error| format!("Failed to wait for timed out OpenClaw process: {error}"))?;
             return Ok(OpenClawBridgeResult {
                 ok: false,
                 command: std::iter::once(program.to_string()).chain(args).collect(),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                exit_code: output.status.code(),
+                stdout: read_and_remove_output(&stdout_path),
+                stderr: read_and_remove_output(&stderr_path),
+                exit_code: status.code(),
                 timed_out: true,
             });
         }
@@ -883,15 +1206,15 @@ fn run_program(program: &str, args: Vec<String>, timeout_seconds: u64) -> Result
             .map_err(|error| format!("Failed while waiting for OpenClaw CLI: {error}"))?
             .is_some()
         {
-            let output = child
-                .wait_with_output()
-                .map_err(|error| format!("Failed to collect OpenClaw output: {error}"))?;
+            let status = child
+                .wait()
+                .map_err(|error| format!("Failed to collect OpenClaw process status: {error}"))?;
             return Ok(OpenClawBridgeResult {
-                ok: output.status.success(),
+                ok: status.success(),
                 command: std::iter::once(program.to_string()).chain(args).collect(),
-                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
-                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
-                exit_code: output.status.code(),
+                stdout: read_and_remove_output(&stdout_path),
+                stderr: read_and_remove_output(&stderr_path),
+                exit_code: status.code(),
                 timed_out: false,
             });
         }
@@ -900,8 +1223,67 @@ fn run_program(program: &str, args: Vec<String>, timeout_seconds: u64) -> Result
     }
 }
 
+fn run_program(program: &str, args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridgeResult, String> {
+    run_program_with_env(program, args, timeout_seconds, &[])
+}
+
+fn mission_control_openclaw_args(args: Vec<String>) -> Vec<String> {
+    let mut scoped = vec!["--profile".into(), MISSION_CONTROL_OPENCLAW_PROFILE.into()];
+    scoped.extend(args);
+    scoped
+}
+
 fn run_openclaw(args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridgeResult, String> {
-    run_program(openclaw_program(), args, timeout_seconds)
+    let _cli_guard = openclaw_cli_lock()
+        .lock()
+        .map_err(|_| "OpenClaw CLI supervisor lock was poisoned".to_string())?;
+    run_program_with_env(
+        openclaw_program(),
+        mission_control_openclaw_args(args),
+        timeout_seconds,
+        &[
+            ("OPENCLAW_PROFILE", MISSION_CONTROL_OPENCLAW_PROFILE),
+            ("OPENCLAW_GATEWAY_PORT", MISSION_CONTROL_GATEWAY_PORT),
+        ],
+    )
+}
+
+fn spawn_mission_control_gateway_run() -> Result<(), String> {
+    let mut command = Command::new(openclaw_program());
+    command
+        .args(mission_control_openclaw_args(vec![
+            "gateway".into(),
+            "run".into(),
+            "--port".into(),
+            MISSION_CONTROL_GATEWAY_PORT.into(),
+            "--bind".into(),
+            "loopback".into(),
+            "--ws-log".into(),
+            "compact".into(),
+        ]))
+        .env("OPENCLAW_PROFILE", MISSION_CONTROL_OPENCLAW_PROFILE)
+        .env("OPENCLAW_GATEWAY_PORT", MISSION_CONTROL_GATEWAY_PORT)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+    }
+
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Could not start mission-control gateway run process: {error}"))
+}
+
+async fn run_openclaw_off_main_thread(args: Vec<String>, timeout_seconds: u64) -> Result<OpenClawBridgeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || run_openclaw(args, timeout_seconds))
+        .await
+        .map_err(|error| format!("OpenClaw worker task failed: {error}"))?
 }
 
 fn append_result(label: &str, result: &OpenClawBridgeResult, stdout: &mut String, stderr: &mut String) {
@@ -1020,23 +1402,47 @@ fn json_arg(value: serde_json::Value) -> String {
 }
 
 #[tauri::command]
-fn openclaw_gateway_status() -> Result<OpenClawBridgeResult, String> {
-    run_openclaw(vec!["gateway".into(), "status".into(), "--json".into()], 45)
+async fn openclaw_gateway_status() -> Result<OpenClawBridgeResult, String> {
+    let result = run_openclaw_off_main_thread(
+        vec![
+            "gateway".into(),
+            "status".into(),
+            "--json".into(),
+            "--url".into(),
+            MISSION_CONTROL_GATEWAY_URL.into(),
+        ],
+        90,
+    )
+    .await?;
+    if gateway_rpc_ok(&result) {
+        mark_mission_control_gateway_ok();
+        return Ok(result);
+    }
+    clear_mission_control_gateway_ok();
+    if result.timed_out && mission_control_gateway_port_open() {
+        let mut honest = synthetic_gateway_status(
+            false,
+            "Mission Control gateway has a loopback listener, but RPC status timed out. Treating as degraded until RPC proves healthy.",
+        );
+        honest.timed_out = true;
+        return Ok(honest);
+    }
+    Ok(result)
 }
 
 #[tauri::command]
-fn openclaw_agents_list() -> Result<OpenClawBridgeResult, String> {
-    run_openclaw(vec!["agents".into(), "list".into(), "--json".into()], 60)
+async fn openclaw_agents_list() -> Result<OpenClawBridgeResult, String> {
+    run_openclaw_off_main_thread(vec!["agents".into(), "list".into(), "--json".into()], 180).await
 }
 
 #[tauri::command]
-fn openclaw_tasks_list() -> Result<OpenClawBridgeResult, String> {
-    run_openclaw(vec!["tasks".into(), "list".into(), "--json".into()], 45)
+async fn openclaw_tasks_list() -> Result<OpenClawBridgeResult, String> {
+    run_openclaw_off_main_thread(vec!["tasks".into(), "list".into(), "--json".into()], 45).await
 }
 
 #[tauri::command]
-fn openclaw_mcp_list() -> Result<OpenClawBridgeResult, String> {
-    run_openclaw(vec!["mcp".into(), "list".into(), "--json".into()], 45)
+async fn openclaw_mcp_list() -> Result<OpenClawBridgeResult, String> {
+    run_openclaw_off_main_thread(vec!["mcp".into(), "list".into(), "--json".into()], 45).await
 }
 
 #[tauri::command]
@@ -1171,8 +1577,155 @@ fn openclaw_mcp_install_local_kit(request: McpInstallRequest) -> Result<OpenClaw
 }
 
 #[tauri::command]
-fn openclaw_gateway_start() -> Result<OpenClawBridgeResult, String> {
-    run_openclaw(vec!["gateway".into(), "start".into()], 60)
+async fn openclaw_gateway_start() -> Result<OpenClawBridgeResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _start_guard = mission_control_gateway_start_lock()
+            .lock()
+            .map_err(|_| "Mission Control gateway supervisor lock was poisoned".to_string())?;
+        let mut stdout = String::from("Mission Control gateway preflight\n");
+        let mut stderr = String::new();
+        if mission_control_gateway_recently_ok(Duration::from_secs(600)) && mission_control_gateway_port_open() {
+            let cached_probe = run_openclaw(
+                vec![
+                    "gateway".into(),
+                    "status".into(),
+                    "--json".into(),
+                    "--url".into(),
+                    MISSION_CONTROL_GATEWAY_URL.into(),
+                ],
+                45,
+            )?;
+            append_result("cached gateway rpc verification", &cached_probe, &mut stdout, &mut stderr);
+            if gateway_rpc_ok(&cached_probe) {
+                mark_mission_control_gateway_ok();
+                return Ok(OpenClawBridgeResult {
+                    ok: true,
+                    command: vec![
+                        "openclaw-mission-control".into(),
+                        "gateway".into(),
+                        "already-online".into(),
+                    ],
+                    stdout,
+                    stderr,
+                    exit_code: cached_probe.exit_code,
+                    timed_out: cached_probe.timed_out,
+                });
+            }
+            clear_mission_control_gateway_ok();
+        }
+        let initial = if mission_control_gateway_port_open() {
+            run_openclaw(
+                vec![
+                    "gateway".into(),
+                    "status".into(),
+                    "--json".into(),
+                    "--url".into(),
+                    MISSION_CONTROL_GATEWAY_URL.into(),
+                ],
+                90,
+            )?
+        } else {
+            synthetic_gateway_status(false, "No Mission Control gateway listener was detected before start.")
+        };
+        append_result("initial gateway status", &initial, &mut stdout, &mut stderr);
+        if gateway_rpc_ok(&initial) {
+            mark_mission_control_gateway_ok();
+            return Ok(OpenClawBridgeResult {
+                ok: true,
+                command: vec![
+                    "openclaw-mission-control".into(),
+                    "gateway".into(),
+                    "already-online".into(),
+                ],
+                stdout,
+                stderr,
+                exit_code: initial.exit_code,
+                timed_out: initial.timed_out,
+            });
+        }
+
+        kill_stale_mission_control_gateway_listeners(&initial, &mut stdout, &mut stderr);
+        sleep(Duration::from_millis(1_500));
+        spawn_mission_control_gateway_run()?;
+        stdout.push_str("\nMission Control gateway run process requested on loopback port 19789.\n");
+        let mut last: OpenClawBridgeResult;
+        let mut tcp_detected = false;
+        for attempt in 1..=45 {
+            sleep(Duration::from_millis(1_000));
+            if mission_control_gateway_port_open() {
+                tcp_detected = true;
+                last = synthetic_gateway_status(true, &format!("Mission Control gateway TCP listener detected after start attempt {attempt}."));
+                append_result(&format!("gateway tcp preflight after start attempt {attempt}"), &last, &mut stdout, &mut stderr);
+                break;
+            }
+        }
+        if tcp_detected {
+            for rpc_attempt in 1..=3 {
+                last = run_openclaw(
+                    vec![
+                        "gateway".into(),
+                        "status".into(),
+                        "--json".into(),
+                        "--url".into(),
+                        MISSION_CONTROL_GATEWAY_URL.into(),
+                    ],
+                    90,
+                )?;
+                append_result(&format!("gateway rpc preflight after TCP detection attempt {rpc_attempt}"), &last, &mut stdout, &mut stderr);
+                if gateway_rpc_ok(&last) {
+                    mark_mission_control_gateway_ok();
+                    return Ok(OpenClawBridgeResult {
+                        ok: true,
+                        command: vec![
+                            "openclaw-mission-control".into(),
+                            "gateway".into(),
+                            "run".into(),
+                            "--port".into(),
+                            MISSION_CONTROL_GATEWAY_PORT.into(),
+                        ],
+                        stdout,
+                        stderr,
+                        exit_code: last.exit_code,
+                        timed_out: last.timed_out,
+                    });
+                }
+                sleep(Duration::from_millis(2_000));
+            }
+        }
+        last = run_openclaw(
+            vec![
+                "gateway".into(),
+                "status".into(),
+                "--json".into(),
+                "--url".into(),
+                MISSION_CONTROL_GATEWAY_URL.into(),
+            ],
+            45,
+        )?;
+        append_result("final gateway status after failed tcp preflight", &last, &mut stdout, &mut stderr);
+        clear_mission_control_gateway_ok();
+
+        Ok(OpenClawBridgeResult {
+            ok: false,
+            command: vec![
+                "openclaw-mission-control".into(),
+                "gateway".into(),
+                "run".into(),
+                "--port".into(),
+                MISSION_CONTROL_GATEWAY_PORT.into(),
+            ],
+            stdout,
+            stderr: if stderr.trim().is_empty() {
+                "Mission Control gateway did not become reachable on ws://127.0.0.1:19789.".into()
+            } else {
+                stderr
+            },
+            exit_code: last.exit_code,
+            timed_out: last.timed_out,
+        })
+    })
+    .await
+    .map_err(|error| format!("OpenClaw gateway start worker failed: {error}"))?
 }
 
 #[tauri::command]
@@ -1373,7 +1926,7 @@ async fn browser_public_read(request: BrowserPublicReadRequest) -> Result<Browse
 }
 
 #[tauri::command]
-fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult, String> {
+async fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult, String> {
     validate_agent_message(&request.message)?;
     let agent_profile_id = validate_agent_profile_id(request.agent_profile_id.as_deref())?;
     let agent_role = request.agent_role.as_deref().unwrap_or("OpenClaw agent").trim();
@@ -1383,38 +1936,119 @@ fn openclaw_agent_turn(request: AgentTurnRequest) -> Result<OpenClawBridgeResult
         .as_deref()
         .map(|id| format!("Mission run: {id}. "))
         .unwrap_or_default();
-    let guarded_message = cli_text(&format!(
-        "OpenClaw Mission Control approved local {agent_role} turn. {mission_context}\n\
-         Rules: local planning and artifact drafting only; do not spend money; do not publish externally; \
-         do not deliver messages to external channels; do not run browser automation; do not browse; do not scrape; \
-         do not log in; do not submit forms; do not bypass CAPTCHA or website terms; do not request credentials; \
-         do not use --deliver, broadcast, purchases, fake reviews, spam, or uncontrolled crawling. \
-         If this is a product-production turn, produce a complete publish-ready LOCAL product artifact now, not a summary. \
-         Do not acknowledge, stand by, ask for another instruction, or describe the rules back to the user. \
+    let product_directive_mode = request
+        .message
+        .contains("OPENCLAW_PRODUCT_DIRECTIVE_RECEIPT_V1");
+    let product_instruction = if product_directive_mode {
+        "If this is a product-production turn, return the compact Product Factory directive requested by Mission Control. \
+         Use the exact Markdown headings requested. Keep the response under 900 characters, but make it concrete enough \
+         to guide local product files. Do not create giant drafts in this live turn; Mission Control writes the full local \
+         files only after all real agent directive receipts pass."
+    } else {
+        "If this is a product-production turn, produce a complete publish-ready LOCAL product artifact now, not a summary. \
          Start with the first required Markdown heading. Include every required Markdown heading requested by Mission Control, \
-         concrete buyer-facing copy, exact fields, evidence/assumption notes, risks, missing items, and the next safe handoff. \
-         Never claim the product was published.\n\n\
-         User request:\n{}",
-        request.message.trim()
+         concrete buyer-facing copy, exact fields, evidence/assumption notes, risks, missing items, and the next safe handoff."
+    };
+    let session_id = safe_session_id(&format!(
+        "mission-control-product-factory-{}-{}",
+        request.mission_run_id.as_deref().unwrap_or("adhoc"),
+        agent_profile_id
     ));
+    let guarded_message = if product_directive_mode {
+        cli_text(request.message.trim())
+    } else {
+        cli_text(&format!(
+            "OpenClaw Mission Control approved local {agent_role} turn. {mission_context}\n\
+             Rules: local planning and artifact drafting only; do not spend money; do not publish externally; \
+             do not deliver messages to external channels; do not run browser automation; do not browse; do not scrape; \
+             do not log in; do not submit forms; do not bypass CAPTCHA or website terms; do not request credentials; \
+             do not use --deliver, broadcast, purchases, fake reviews, spam, or uncontrolled crawling. \
+             {product_instruction} \
+             Do not acknowledge, stand by, ask for another instruction, or describe the rules back to the user. \
+             Never claim the product was published.\n\n\
+             User request:\n{}",
+            request.message.trim()
+        ))
+    };
 
-    run_openclaw(
-        vec![
-            "agent".into(),
-            "--agent".into(),
-            agent_profile_id,
-            "--message".into(),
-            guarded_message,
-            "--json".into(),
-            "--timeout".into(),
-            clamp_timeout(request.timeout_seconds, 45, 180).to_string(),
-        ],
-        clamp_timeout(request.timeout_seconds, 45, 180) + 15,
-    )
+    if product_directive_mode {
+        // Product Factory proof must be gateway-backed. Clear any cached "healthy"
+        // state so every product agent turn re-validates RPC instead of trusting a
+        // stale TCP listener.
+        clear_mission_control_gateway_ok();
+    }
+    let gateway_preflight = openclaw_gateway_start().await?;
+    if !gateway_preflight.ok {
+        clear_mission_control_gateway_ok();
+        return Ok(OpenClawBridgeResult {
+            ok: false,
+            command: gateway_preflight.command,
+            stdout: gateway_preflight.stdout,
+            stderr: format!(
+                "Mission Control gateway preflight failed before {agent_role} turn. {}",
+                gateway_preflight.stderr
+            ),
+            exit_code: gateway_preflight.exit_code,
+            timed_out: gateway_preflight.timed_out,
+        });
+    }
+
+    let mut args = vec![
+        "agent".into(),
+        "--agent".into(),
+        agent_profile_id,
+        "--session-id".into(),
+        session_id,
+        "--message".into(),
+        guarded_message,
+    ];
+    if !product_directive_mode {
+        args.push("--json".into());
+    }
+    args.extend([
+        "--thinking".into(),
+        "off".into(),
+        "--timeout".into(),
+        clamp_timeout(request.timeout_seconds, 45, 300).to_string(),
+    ]);
+
+    let run_timeout = clamp_timeout(request.timeout_seconds, 45, 300) + 15;
+    let mut result = run_openclaw_off_main_thread(args.clone(), run_timeout).await?;
+    if product_directive_mode && agent_turn_gateway_problem(&result) {
+        let first_diagnostic = concise_bridge_diagnostic(&result);
+        clear_mission_control_gateway_ok();
+        let _ = run_openclaw_off_main_thread(vec!["gateway".into(), "stop".into()], 45).await;
+        let _ = tauri::async_runtime::spawn_blocking(|| sleep(Duration::from_millis(1_500))).await;
+        let retry_preflight = openclaw_gateway_start().await?;
+        if !retry_preflight.ok {
+            result.ok = false;
+            result.stderr.push_str(&format!(
+                "\nMission Control retry preflight failed after first product turn problem: {}\n{}",
+                first_diagnostic,
+                retry_preflight.stderr
+            ));
+            return Ok(result);
+        }
+        let mut retry_result = run_openclaw_off_main_thread(args, run_timeout).await?;
+        retry_result.stderr = format!(
+            "Mission Control retried this product agent turn after a gateway reset. First attempt: {}\n{}",
+            first_diagnostic,
+            retry_result.stderr
+        );
+        result = retry_result;
+    }
+
+    force_agent_turn_failure_for_gateway_problem(&mut result);
+    if result.ok {
+        mark_mission_control_gateway_ok();
+    } else if agent_turn_gateway_problem(&result) {
+        clear_mission_control_gateway_ok();
+    }
+    Ok(result)
 }
 
 #[tauri::command]
-fn openclaw_url_research(request: UrlResearchRequest) -> Result<OpenClawBridgeResult, String> {
+async fn openclaw_url_research(request: UrlResearchRequest) -> Result<OpenClawBridgeResult, String> {
     if request.urls.is_empty() || request.urls.len() > 8 {
         return Err("Approved URL research requires 1-8 explicit URLs".into());
     }
@@ -1446,7 +2080,7 @@ fn openclaw_url_research(request: UrlResearchRequest) -> Result<OpenClawBridgeRe
         request.urls.iter().map(|url| format!("- {}", url.trim())).collect::<Vec<_>>().join("\n")
     ));
 
-    run_openclaw(
+    run_openclaw_off_main_thread(
         vec![
             "agent".into(),
             "--agent".into(),
@@ -1459,10 +2093,11 @@ fn openclaw_url_research(request: UrlResearchRequest) -> Result<OpenClawBridgeRe
         ],
         clamp_timeout(request.timeout_seconds, 300, 900) + 15,
     )
+    .await
 }
 
 #[tauri::command]
-fn openclaw_channel_send(request: ChannelMessageRequest) -> Result<OpenClawBridgeResult, String> {
+async fn openclaw_channel_send(request: ChannelMessageRequest) -> Result<OpenClawBridgeResult, String> {
     let channel = request.channel.trim().to_lowercase();
     validate_channel(&channel)?;
     validate_channel_target(&request.target)?;
@@ -1491,7 +2126,7 @@ fn openclaw_channel_send(request: ChannelMessageRequest) -> Result<OpenClawBridg
         args.push("--dry-run".into());
     }
 
-    run_openclaw(args, clamp_timeout(request.timeout_seconds, 45, 120))
+    run_openclaw_off_main_thread(args, clamp_timeout(request.timeout_seconds, 45, 120)).await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

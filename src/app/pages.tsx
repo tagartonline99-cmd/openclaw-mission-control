@@ -52,7 +52,7 @@ import { QuestBoard } from "../components/quests/QuestBoard";
 import { RealityMeter, RealityPill } from "../components/reality/RealityMeter";
 import { SecondBrainPanel } from "../components/second-brain/SecondBrainPanel";
 import { BusinessTasksBoard } from "../components/tasks/BusinessTasksBoard";
-import { UpdateManager } from "../components/updater/UpdateManager";
+import { UpdateManager, UPDATER_VERIFICATION_MARKER } from "../components/updater/UpdateManager";
 import { ReleaseChecklistPanel } from "../components/updater/ReleaseChecklistPanel";
 import { ValidationGate } from "../components/validation/ValidationGate";
 import { Badge } from "../components/ui/badge";
@@ -989,6 +989,7 @@ export function SettingsPage() {
         action={
           <div className="flex flex-wrap gap-2">
             <Badge tone="teal">Storage: {adapter}</Badge>
+            <Badge tone="amber">{UPDATER_VERIFICATION_MARKER}</Badge>
             <Button variant="outline" onClick={() => void resetLocalData()}>Reset local data</Button>
           </div>
         }
@@ -1118,7 +1119,7 @@ export function SettingsPage() {
               <Input
                 type="number"
                 value={userSettings.openClawGatewayPort}
-                onChange={(event) => saveSettings({ openClawGatewayPort: Number(event.target.value) || 18789 })}
+                onChange={(event) => saveSettings({ openClawGatewayPort: Number(event.target.value) || 19789 })}
               />
             </div>
             <div>

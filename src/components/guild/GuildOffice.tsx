@@ -1,6 +1,6 @@
 import { BookOpen, Crown, Eye, FileText, Hammer, Lock, PenLine, Search, ShieldCheck, Sparkles } from "lucide-react";
 import type React from "react";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAppData } from "../../app/AppDataContext";
 import type { GuildOfficeStation } from "../../types";
 import { formatDateTime } from "../../utils/formatting";
@@ -43,7 +43,14 @@ export function GuildOffice() {
   const activeHunt = data.opportunityHunts.find((hunt) => !["ready_to_review", "approved_as_business", "rejected"].includes(hunt.status)) ?? data.opportunityHunts[0];
   const workingStations = data.guildOfficeStations.filter((station) => station.status !== "idle");
   const selectedStation = data.guildOfficeStations.find((station) => station.id === selectedStationId) ?? data.guildOfficeStations[0];
-  const selectedSession = selectedStation ? data.agentWorkSessions.find((session) => session.stationId === selectedStation.id && session.taskId === selectedStation.taskId) : undefined;
+  const recentSessions = useMemo(
+    () => [...data.agentWorkSessions].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt)).slice(0, 24),
+    [data.agentWorkSessions],
+  );
+  const selectedSession = selectedStation
+    ? recentSessions.find((session) => session.stationId === selectedStation.id && session.taskId === selectedStation.taskId) ??
+      data.agentWorkSessions.find((session) => session.stationId === selectedStation.id && session.taskId === selectedStation.taskId)
+    : undefined;
   const selectedTask = selectedSession ? data.businessTasks.find((task) => task.id === selectedSession.taskId) : undefined;
 
   return (
@@ -59,6 +66,7 @@ export function GuildOffice() {
                   ? `${activeHunt.currentPhase} This is safe autonomous work from your TeamLeader1A command; external actions remain locked.`
                   : "No TeamLeader1A work session is active. Send a command from the Command tab to light up the guild hall."}
               </p>
+              <p className="mt-2 text-xs font-semibold uppercase text-teal-100">Current-first guild view: active stations and recent sessions only.</p>
             </div>
             {activeHunt?.businessProposalId ? (
               <a href={`#/mission-briefs?proposal=${activeHunt.businessProposalId}`}>

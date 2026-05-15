@@ -1,13 +1,13 @@
 {
   "name": "openclaw-mission-control",
   "private": true,
-  "version": "0.1.38",
+  "version": "0.1.54",
   "type": "module",
   "description": "OpenClaw Mission Control desktop MVP for responsible autonomous agent business validation.",
   "scripts": {
-    "dev": "vite --host 127.0.0.1",
-    "build": "tsc && vite build",
-    "preview": "vite preview --host 127.0.0.1",
+    "dev": "vite --host 127.0.0.1 --configLoader runner",
+    "build": "tsc && vite build --configLoader runner",
+    "preview": "vite preview --host 127.0.0.1 --configLoader runner",
     "test:playwright": "playwright test",
     "tauri": "tauri",
     "release:prepare-updater": "node scripts/prepare-updater-release.mjs",

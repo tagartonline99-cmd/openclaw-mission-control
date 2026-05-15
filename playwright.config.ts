@@ -12,9 +12,13 @@ export default defineConfig({
     screenshot: "only-on-failure",
   },
   webServer: {
-    command: "npm.cmd run dev -- --port 4174",
+    command: "npm.cmd run dev -- --port 4174 --strictPort",
     url: "http://127.0.0.1:4174",
-    reuseExistingServer: true,
+    env: {
+      OPENCLAW_PROFILE: "mission-control",
+      OPENCLAW_GATEWAY_PORT: "19789",
+    },
+    reuseExistingServer: false,
     timeout: 120_000,
   },
   projects: [

@@ -31,6 +31,25 @@ function isRunStep(step: MissionAgentStep | MissionDraftStepPlan): step is Missi
   return "id" in step;
 }
 
+const MISSION_LEDGER_LIMIT = 6;
+const MISSION_SECTION_LIMIT = 6;
+const MISSION_EVIDENCE_LIMIT = 8;
+const MISSION_BROWSER_ARTIFACT_LIMIT = 4;
+const MISSION_AGENT_ARTIFACT_LIMIT = 6;
+const MISSION_RECEIPT_LIMIT = 6;
+const MISSION_QUALITY_LIMIT = 8;
+
+function byNewestUpdatedAt<T extends { updatedAt?: string; createdAt?: string; startedAt?: string }>(left: T, right: T) {
+  return (right.updatedAt ?? right.createdAt ?? right.startedAt ?? "").localeCompare(left.updatedAt ?? left.createdAt ?? left.startedAt ?? "");
+}
+
+function includeSelected<T extends { id: string }>(items: T[], selectedId: string | undefined, limit: number) {
+  const selected = selectedId ? items.find((item) => item.id === selectedId) : undefined;
+  const capped = items.slice(0, limit);
+  if (!selected || capped.some((item) => item.id === selected.id)) return capped;
+  return [selected, ...capped.filter((item) => item.id !== selected.id).slice(0, Math.max(0, limit - 1))];
+}
+
 export function MissionBriefWorkbench() {
   const {
     data,
@@ -100,6 +119,14 @@ export function MissionBriefWorkbench() {
     ...((selectedProposal?.risks.filter((risk) => /assumption|weak|validate|manual|platform/i.test(risk))) ?? []),
   ].filter(Boolean);
   const budgetBlockers = selectedProposal?.budgetPlan.approvalBlockers ?? [];
+  const platformBlockers = [
+    ...selectedPlatformRequirements
+      .filter((item) => item.publishStatus === "blocked")
+      .map((item) => `${item.platform} platform requirement is blocked: ${item.notes}`),
+    ...selectedPlatformPackages
+      .filter((item) => item.status === "blocked")
+      .map((item) => `${item.platform} platform package is blocked: ${item.approvalBoundary}`),
+  ];
   const selectedProposalTasks = selectedProposal ? data.businessTasks.filter((task) => task.huntId === selectedProposal.huntId) : [];
   const proposalWorkComplete = selectedProposalTasks.length > 0 && selectedProposalTasks.every((task) => task.status === "done");
   const rawFactCheckBlocks = selectedProposalGate && selectedProposalGate.status !== "proposal_ready" ? selectedProposalGate.missingRequirements : [];
@@ -113,7 +140,7 @@ export function MissionBriefWorkbench() {
     selectedFactCheckRun.uniqueDomainCount >= selectedFactCheckRun.requiredDomains;
   const effectiveProposalGateReady = selectedProposalGate?.status === "proposal_ready" || !selectedProposalGate || legacyExcludedEvidenceReady;
   const proposalReviewReady = selectedProposal?.status === "ready_for_review" || (selectedProposal?.status === "drafting" && proposalWorkComplete && effectiveProposalGateReady);
-  const canApproveBusiness = !!proposalReviewReady && effectiveProposalGateReady && budgetBlockers.length === 0;
+  const canApproveBusiness = !!proposalReviewReady && effectiveProposalGateReady && budgetBlockers.length === 0 && platformBlockers.length === 0;
   const approvalReadinessLabel =
     canApproveBusiness
       ? "Approval Ready"
@@ -170,6 +197,9 @@ export function MissionBriefWorkbench() {
   const [selectedId, setSelectedId] = useState(initialId);
   const [repairNotice, setRepairNotice] = useState("");
   const [approvingProposalId, setApprovingProposalId] = useState("");
+  const [showAllMissionLedger, setShowAllMissionLedger] = useState(false);
+  const [showAllMissionSections, setShowAllMissionSections] = useState(false);
+  const [showAllProposalEvidence, setShowAllProposalEvidence] = useState(false);
 
   const draftFromSelection = useMemo(
     () => data.missionDrafts.find((draft) => draft.id === (requestedDraftId ?? selectedId)) ?? data.missionDrafts.find((draft) => draft.id === selectedId),
@@ -199,6 +229,55 @@ export function MissionBriefWorkbench() {
   const failedStep = runSteps.find((step) => step.status === "failed");
   const nextQueuedStep = runSteps.find((step) => step.status === "queued");
   const approval = selectedRun?.approvalId ? data.approvalRequests.find((request) => request.id === selectedRun.approvalId) : undefined;
+  const missionProgressByRunId = useMemo(() => {
+    const stepsByRunId = new Map<string, MissionAgentStep[]>();
+    for (const step of data.missionAgentSteps) {
+      const existing = stepsByRunId.get(step.missionRunId) ?? [];
+      existing.push(step);
+      stepsByRunId.set(step.missionRunId, existing);
+    }
+    return new Map([...stepsByRunId.entries()].map(([runId, stepsForRun]) => [runId, stepProgress(stepsForRun)]));
+  }, [data.missionAgentSteps]);
+  const sortedMissionRuns = useMemo(() => [...data.missionRuns].sort(byNewestUpdatedAt), [data.missionRuns]);
+  const sortedOpenDrafts = useMemo(
+    () => data.missionDrafts.filter((draft) => !draft.runId).sort(byNewestUpdatedAt),
+    [data.missionDrafts],
+  );
+  const visibleMissionRuns = showAllMissionLedger
+    ? sortedMissionRuns
+    : includeSelected(sortedMissionRuns, selectedRun?.id, MISSION_LEDGER_LIMIT);
+  const visibleMissionDrafts = showAllMissionLedger
+    ? sortedOpenDrafts
+    : includeSelected(sortedOpenDrafts, selectedDraft?.id, MISSION_LEDGER_LIMIT);
+  const hiddenMissionLedgerCount =
+    data.missionRuns.length +
+    sortedOpenDrafts.length -
+    visibleMissionRuns.length -
+    visibleMissionDrafts.length;
+  const visibleSections = showAllMissionSections ? sections : sections.slice(0, MISSION_SECTION_LIMIT);
+  const hiddenSectionCount = sections.length - visibleSections.length;
+  const visibleCitations = showAllProposalEvidence ? selectedCitations : selectedCitations.slice(0, MISSION_EVIDENCE_LIMIT);
+  const visibleProposalEvidence = showAllProposalEvidence ? selectedProposalEvidence : selectedProposalEvidence.slice(0, MISSION_EVIDENCE_LIMIT);
+  const visibleFactCheckClaims = showAllProposalEvidence ? selectedFactCheckClaims : selectedFactCheckClaims.slice(0, MISSION_EVIDENCE_LIMIT);
+  const visibleBrowserArtifacts = showAllProposalEvidence ? selectedBrowserArtifacts : selectedBrowserArtifacts.slice(0, MISSION_BROWSER_ARTIFACT_LIMIT);
+  const visibleAgentArtifacts = showAllProposalEvidence ? selectedAgentArtifacts : selectedAgentArtifacts.slice(0, MISSION_AGENT_ARTIFACT_LIMIT);
+  const visibleReceipts = showAllProposalEvidence ? selectedReceipts : selectedReceipts.slice(0, MISSION_RECEIPT_LIMIT);
+  const visibleEvidenceQuality = showAllProposalEvidence ? selectedEvidenceQuality : selectedEvidenceQuality.slice(0, MISSION_QUALITY_LIMIT);
+  const hiddenProposalEvidenceCount =
+    selectedCitations.length +
+    selectedProposalEvidence.length +
+    selectedFactCheckClaims.length +
+    selectedBrowserArtifacts.length +
+    selectedAgentArtifacts.length +
+    selectedReceipts.length +
+    selectedEvidenceQuality.length -
+    visibleCitations.length -
+    visibleProposalEvidence.length -
+    visibleFactCheckClaims.length -
+    visibleBrowserArtifacts.length -
+    visibleAgentArtifacts.length -
+    visibleReceipts.length -
+    visibleEvidenceQuality.length;
 
   function selectRun(id: string) {
     setSelectedId(id);
@@ -348,8 +427,8 @@ export function MissionBriefWorkbench() {
                   <div className="rounded-md border border-amber-300/20 bg-amber-400/8 p-3">
                     <p className="text-xs font-semibold uppercase text-amber-100">Not ready</p>
                     <div className="mt-2 space-y-1 text-sm leading-6 text-slate-200">
-                      {[...factCheckBlocks, ...budgetBlockers].length > 0 ? (
-                        [...factCheckBlocks, ...budgetBlockers].slice(0, 3).map((reason) => <p key={reason}>- {reason}</p>)
+                      {[...factCheckBlocks, ...budgetBlockers, ...platformBlockers].length > 0 ? (
+                        [...factCheckBlocks, ...budgetBlockers, ...platformBlockers].slice(0, 3).map((reason) => <p key={reason}>- {reason}</p>)
                       ) : (
                         <p>No blocking gaps are active. You can review and approve the business if the proposal makes sense.</p>
                       )}
@@ -522,7 +601,7 @@ export function MissionBriefWorkbench() {
                     </div>
                   ) : null}
                   <div className="mt-4 grid gap-3 lg:grid-cols-3">
-                    {selectedFactCheckClaims.map((claim) => (
+                    {visibleFactCheckClaims.map((claim) => (
                       <div key={claim.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <p className="text-sm font-semibold text-stone-100">{claim.claim}</p>
@@ -659,6 +738,14 @@ export function MissionBriefWorkbench() {
                 huntId={selectedProposal.huntId}
                 compact
               />
+              {hiddenProposalEvidenceCount > 0 ? (
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
+                  <span>Current-first evidence view: showing newest and approval-relevant records first, with {hiddenProposalEvidenceCount} historical item(s) capped.</span>
+                  <Button variant="outline" size="sm" onClick={() => setShowAllProposalEvidence((value) => !value)}>
+                    {showAllProposalEvidence ? "Show less evidence" : "View all evidence history"}
+                  </Button>
+                </div>
+              ) : null}
               <div className="rounded-lg border border-emerald-300/20 bg-emerald-400/8 p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -753,7 +840,7 @@ export function MissionBriefWorkbench() {
                     <Badge tone="teal">{selectedBrowserRun.executionReceipt}</Badge>
                   </div>
                   <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                    {selectedBrowserArtifacts.map((artifact) => {
+                    {visibleBrowserArtifacts.map((artifact) => {
                       const receipt = selectedBrowserReceipts.find((item) => item.id === artifact.safetyReceiptId);
                       const fetch = data.browserResearchFetches.find((item) => item.id === artifact.fetchId);
                       return (
@@ -807,7 +894,7 @@ export function MissionBriefWorkbench() {
                     <Badge tone="emerald">{selectedAgentArtifacts.length} artifacts</Badge>
                   </div>
                   <div className="mt-4 grid gap-3 xl:grid-cols-2">
-                    {selectedAgentArtifacts.map((artifact) => (
+                    {visibleAgentArtifacts.map((artifact) => (
                       <div key={artifact.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-semibold text-stone-100">{artifact.title}</p>
@@ -824,7 +911,7 @@ export function MissionBriefWorkbench() {
                 <div className="rounded-lg border border-amber-300/20 bg-amber-400/8 p-4">
                   <p className="text-xs font-semibold uppercase text-amber-100">Execution receipts</p>
                   <div className="mt-3 grid gap-3 xl:grid-cols-2">
-                    {selectedReceipts.slice(0, 8).map((receipt) => (
+                    {visibleReceipts.map((receipt) => (
                       <div key={receipt.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <div className="flex items-center justify-between gap-2">
                           <p className="font-semibold text-stone-100">{receipt.title}</p>
@@ -841,7 +928,7 @@ export function MissionBriefWorkbench() {
                 <div className="rounded-lg border border-white/10 bg-black/25 p-4">
                   <p className="text-xs font-semibold uppercase text-slate-500">Evidence quality scores</p>
                   <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                    {selectedEvidenceQuality.map((score) => (
+                    {visibleEvidenceQuality.map((score) => (
                       <div key={score.id} className="rounded-md border border-white/10 bg-black/30 p-3">
                         <Badge tone={score.grade === "strong" ? "emerald" : score.grade === "moderate" ? "amber" : "red"}>{score.grade}</Badge>
                         <p className="mt-2 text-sm text-slate-300">Credibility {score.credibility} / relevance {score.relevance} / confidence {score.confidence}</p>
@@ -919,7 +1006,7 @@ export function MissionBriefWorkbench() {
                 <div className="rounded-lg border border-teal-300/20 bg-teal-400/8 p-4">
                   <p className="text-xs font-semibold uppercase text-slate-500">Evidence and links</p>
                   <div className="mt-3 space-y-3">
-                    {selectedCitations.map((item) => (
+                    {visibleCitations.map((item) => (
                       <div key={item.id} className="rounded-md border border-teal-300/15 bg-teal-400/8 p-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <p className="font-semibold text-stone-100">{item.title}</p>
@@ -929,13 +1016,18 @@ export function MissionBriefWorkbench() {
                         <a className="mt-2 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50" href={item.url}>{item.url}</a>
                       </div>
                     ))}
-                    {selectedProposalEvidence.map((item) => (
+                    {visibleProposalEvidence.map((item) => (
                       <div key={item.id} className="rounded-md border border-white/10 bg-black/25 p-3">
                         <p className="font-semibold text-stone-100">{item.title}</p>
                         <p className="mt-1 text-sm leading-6 text-slate-300">{item.summary}</p>
                         <a className="mt-2 inline-flex text-xs font-semibold text-teal-100 hover:text-teal-50" href={item.url}>{item.url}</a>
                       </div>
                     ))}
+                    {selectedCitations.length + selectedProposalEvidence.length > visibleCitations.length + visibleProposalEvidence.length ? (
+                      <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
+                        Evidence history capped here. Use View all evidence history above to inspect older citations and source records.
+                      </div>
+                    ) : null}
                   </div>
                 </div>
                 <div className="rounded-lg border border-white/10 bg-black/25 p-4">
@@ -1074,7 +1166,17 @@ export function MissionBriefWorkbench() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {data.missionRuns.map((run) => (
+            {hiddenMissionLedgerCount > 0 ? (
+              <div className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <span>Current-first mission ledger: showing recent runs and drafts, with {hiddenMissionLedgerCount} historical item(s) capped.</span>
+                  <Button variant="outline" size="sm" onClick={() => setShowAllMissionLedger((value) => !value)}>
+                    {showAllMissionLedger ? "Show less history" : "View all mission history"}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+            {visibleMissionRuns.map((run) => (
               <button
                 key={run.id}
                 type="button"
@@ -1087,10 +1189,10 @@ export function MissionBriefWorkbench() {
                   <p className="font-semibold text-stone-100">{run.title}</p>
                   <span className={`rounded-md border px-2 py-1 text-xs font-semibold uppercase ${statusTone(run.status)}`}>{label(run.status)}</span>
                 </div>
-                <Progress className="mt-3" value={stepProgress(data.missionAgentSteps.filter((step) => step.missionRunId === run.id))} />
+                <Progress className="mt-3" value={missionProgressByRunId.get(run.id) ?? 0} />
               </button>
             ))}
-            {data.missionDrafts.filter((draft) => !draft.runId).map((draft) => (
+            {visibleMissionDrafts.map((draft) => (
               <button
                 key={draft.id}
                 type="button"
@@ -1246,13 +1348,20 @@ export function MissionBriefWorkbench() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Mission Brief Sections</CardTitle>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <CardTitle>Mission Brief Sections</CardTitle>
+                {hiddenSectionCount > 0 ? (
+                  <Button variant="outline" size="sm" onClick={() => setShowAllMissionSections((value) => !value)}>
+                    {showAllMissionSections ? "Show fewer sections" : `View all ${sections.length} sections`}
+                  </Button>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent className="grid gap-3 xl:grid-cols-2">
               {sections.length === 0 ? (
                 <p className="text-sm text-slate-300">Agent artifacts will appear here after the mission start approval executes.</p>
               ) : (
-                sections.map((section) => (
+                visibleSections.map((section) => (
                   <div key={section.id} className="rounded-lg border border-white/10 bg-black/25 p-4">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <Badge tone="teal">{label(section.kind)}</Badge>
@@ -1267,6 +1376,11 @@ export function MissionBriefWorkbench() {
                   </div>
                 ))
               )}
+              {hiddenSectionCount > 0 && !showAllMissionSections ? (
+                <p className="rounded-md border border-teal-300/20 bg-teal-400/8 p-3 text-sm text-teal-100 xl:col-span-2">
+                  Current-first section view: {hiddenSectionCount} older artifact section(s) are capped until you view all.
+                </p>
+              ) : null}
             </CardContent>
           </Card>
         </div>
